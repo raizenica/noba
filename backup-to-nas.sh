@@ -408,6 +408,11 @@ if [ "$ERROR_OCCURRED" = true ] && [ "$DRY_RUN" = false ]; then
     echo "Error log saved to /tmp/backup-error-*.log"
 fi
 
+# Optional desktop notification
+if command -v ~/bin/noba/backup-notify.sh &>/dev/null; then
+    ~/bin/noba/backup-notify.sh
+fi
+
 # Optionally, you may want to keep a limited number of log files.
 # For now, we leave the main log file; it will be overwritten next run.
 
