@@ -449,7 +449,7 @@ ERROR_OCCURRED=$(<"$ERROR_FLAG")
 # Copy first hash to clipboard if requested (only in generate mode and not verify)
 if [ "$COPY" = true ] && [ "$VERIFY" = false ] && [ ${#FILES[@]} -gt 0 ]; then
     # Determine where the hash is stored
-    local hash_file
+    hash_file=""
     if [ "$MANIFEST" = true ] && [ -n "$MANIFEST_FILE" ]; then
         hash_file="$MANIFEST_FILE"
     else

@@ -61,7 +61,6 @@ EOF
 # Check that all required commands are available
 check_dependencies() {
     local required=("find" "sort" "tail" "cp" "rm" "mkdir" "dirname" "mktemp" "shuf" "wc" "cut")
-    local optional=("$CHECKSUM_CMD" "numfmt" "msmtp")
     local missing=()
 
     for cmd in "${required[@]}"; do
@@ -70,7 +69,6 @@ check_dependencies() {
         fi
     done
 
-    # Checksum command might be missing; we'll handle that later
     if [ ${#missing[@]} -gt 0 ]; then
         echo "ERROR: Missing required commands: ${missing[*]}" >&2
         echo "Please install them and try again." >&2
@@ -295,7 +293,6 @@ for file in "${SELECTED[@]}"; do
         # If compare-original is enabled, try to find the original file
         if [ "$COMPARE_ORIGINAL" = true ]; then
             # Guess original path: map based on known patterns
-            # You can extend this by providing a mapping file with --original-map
             original=""
             case "$rel_path" in
                 config/.config/*)
