@@ -70,11 +70,26 @@ reverse_lines() {
     fi
 }
 
-# Process undo log in reverse order
-reverse_lines "$UNDO_LOG" | while IFS=$'\037' read -r src dest _; do
-    # The separator is ASCII unit separator (0x1F)
+# Process undo log in reverse order, handling both old (|) and new (^_) separators
+reverse_lines "$UNDO_LOG" | while IFS= read -r line; do
+    # Remove trailing carriage return if any
+    line=${line%$'\r'}
+    # Try new separator (ASCII unit separator \037)
+    if [[ "$line" == *$'\037'* ]]; then
+        src="${line%%$'\037'*}"
+        rest="${line#*$'\037'}"
+        dest="${rest%%$'\037'*}"
+    # Fallback to old pipe separator
+    elif [[ "$line" == *'|'* ]]; then
+        src="${line%%|*}"
+        dest="${line#*|}"
+    else
+        echo "WARNING: Malformed undo entry, skipping: $line" >&2
+        continue
+    fi
+
     if [ -z "$src" ] || [ -z "$dest" ]; then
-        echo "WARNING: Malformed undo entry, skipping" >&2
+        echo "WARNING: Empty src or dest in entry, skipping: $line" >&2
         continue
     fi
 

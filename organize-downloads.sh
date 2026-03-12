@@ -137,6 +137,10 @@ load_config() {
     if [ ! -f "$config_file" ]; then
         return 1
     fi
+    if [ ! -r "$config_file" ]; then
+        log "Warning: Config file $config_file exists but is not readable. Falling back to defaults."
+        return 1
+    fi
 
     # Determine parser: yq for YAML, jq for JSON
     if command -v yq &>/dev/null && [[ "$config_file" == *.yaml || "$config_file" == *.yml ]]; then
@@ -144,13 +148,17 @@ load_config() {
             log "Warning: jq not installed, cannot parse YAML config. Falling back to defaults."
             return 1
         fi
-        # Convert YAML to JSON, then to shell assignments
         local temp_config
         temp_config=$(mktemp)
-        yq eval -o=json "$config_file" | jq -r '
+        # Convert YAML to JSON, then to shell assignments – suppress errors
+        if ! yq eval -o=json "$config_file" 2>/dev/null | jq -r '
             to_entries | .[] |
             "CATEGORIES[\"" + .key + "\"]=\"" + (.value | join(" ")) + "\""
-        ' > "$temp_config"
+        ' > "$temp_config" 2>/dev/null; then
+            log "Warning: Failed to parse YAML config. Falling back to defaults."
+            rm -f "$temp_config"
+            return 1
+        fi
         # shellcheck source=/dev/null
         source "$temp_config"
         rm -f "$temp_config"
@@ -158,10 +166,14 @@ load_config() {
     elif command -v jq &>/dev/null && [[ "$config_file" == *.json ]]; then
         local temp_config
         temp_config=$(mktemp)
-        jq -r '
+        if ! jq -r '
             to_entries | .[] |
             "CATEGORIES[\"" + .key + "\"]=\"" + (.value | join(" ")) + "\""
-        ' "$config_file" > "$temp_config"
+        ' "$config_file" > "$temp_config" 2>/dev/null; then
+            log "Warning: Failed to parse JSON config. Falling back to defaults."
+            rm -f "$temp_config"
+            return 1
+        fi
         # shellcheck source=/dev/null
         source "$temp_config"
         rm -f "$temp_config"
