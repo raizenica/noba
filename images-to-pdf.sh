@@ -260,6 +260,7 @@ fi
 if [ -n "$METADATA" ]; then
     declare -a KV
     IFS=',' read -ra KV <<< "$METADATA"
+    # shellcheck disable=SC2043  # KV is correctly handled as an array
     for pair in "${KV[@]}"; do
         key="${pair%%=*}"
         value="${pair#*=}"
