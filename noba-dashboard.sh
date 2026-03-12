@@ -15,7 +15,6 @@ NC='\033[0m' # No Color
 # Configuration
 LOG_DIR="$HOME/.local/share"
 BACKUP_LOG="$LOG_DIR/backup-to-nas.log"
-VERIFIER_LOG="$LOG_DIR/backup-verifier.log"
 DISK_LOG="$LOG_DIR/disk-sentinel.log"
 ORGANIZER_LOG="$LOG_DIR/download-organizer.log"
 UNDO_LOG="$LOG_DIR/download-organizer-undo.log"
@@ -38,12 +37,8 @@ system_info() {
 disk_usage() {
     section "Disk Usage"
     df -h | grep -E '^/dev/' | while read -r line; do
-        filesystem=$(echo "$line" | awk '{print $1}')
-        size=$(echo "$line" | awk '{print $2}')
-        used=$(echo "$line" | awk '{print $3}')
-        avail=$(echo "$line" | awk '{print $4}')
-        use_percent=$(echo "$line" | awk '{print $5}')
-        mount=$(echo "$line" | awk '{print $6}')
+        # Use underscore for fields we don't need
+        read -r _ size used _ use_percent mount <<< "$line"
         # Color based on usage
         percent=${use_percent%\%}
         if [ "$percent" -ge 90 ]; then

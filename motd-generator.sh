@@ -8,8 +8,6 @@ set -o pipefail
 QUOTE_FILE="${QUOTE_FILE:-$HOME/.config/quotes.txt}"  # one quote per line, optional
 SHOW_UPDATES=true
 SHOW_BACKUP=true
-SHOW_DISK=true
-SHOW_WEATHER=false
 
 # Colors
 RED='\033[0;31m'
