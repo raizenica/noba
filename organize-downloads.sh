@@ -1,15 +1,16 @@
 #!/bin/bash
-# Download organizer – move files into categorized folders with CLI and config
+# Download organizer – move files into categorized folders with CLI, config, and dated subfolders
 
 set -u
 set -o pipefail
 
 # Defaults
-CONFIG_FILE="$HOME/.config/download-organizer.cfg"
+CONFIG_FILE="$HOME/.config/download-organizer.yaml"   # default config path (YAML or JSON)
 LOG_FILE="$HOME/.local/share/download-organizer.log"
 UNDO_LOG="$HOME/.local/share/download-organizer-undo.log"
 DRY_RUN=false
 QUIET=false
+DATED_SUBFOLDERS=false   # if true, move into subfolders like Images/2025/03/
 
 # Function to show usage
 usage() {
@@ -17,19 +18,31 @@ usage() {
 Usage: $0 [options]
 
 Options:
-  -c, --config FILE   Use custom config file (default: ~/.config/download-organizer.cfg)
+  -c, --config FILE   Use custom config file (default: ~/.config/download-organizer.yaml)
   -d, --dry-run       Show what would be moved without actually moving
   -q, --quiet         Suppress normal output (only errors)
+  --dated             Use dated subfolders (e.g., Images/2026/03/)
   --help              Show this help
 
-The config file should define CATEGORIES as a bash associative array.
-See default config below.
+The config file can be YAML or JSON. Example YAML:
+  Images:
+    - jpg
+    - jpeg
+    - png
+  Documents:
+    - pdf
+    - docx
+    - txt
+  Others: []   # optional
+
+Requires yq (for YAML) or jq (for JSON) if using external config.
 EOF
     exit 0
 }
 
 # Parse command-line arguments
-if ! OPTIONS=$(getopt -o c:dq -l config:,dry-run,quiet,help -- "$@"); then
+OPTIONS=$(getopt -o c:dq -l config:,dry-run,quiet,dated,help -- "$@")
+if [ $? -ne 0 ]; then
     usage
 fi
 eval set -- "$OPTIONS"
@@ -48,6 +61,10 @@ while true; do
             QUIET=true
             shift
             ;;
+        --dated)
+            DATED_SUBFOLDERS=true
+            shift
+            ;;
         --help)
             usage
             ;;
@@ -62,12 +79,84 @@ while true; do
     esac
 done
 
-# Load config file if exists, otherwise use defaults
-if [ -f "$CONFIG_FILE" ]; then
-# shellcheck source=/dev/null
-    source "$CONFIG_FILE"
-else
-    # Default categories
+# Ensure log directories exist
+mkdir -p "$(dirname "$LOG_FILE")"
+mkdir -p "$(dirname "$UNDO_LOG")"
+
+# Logging function
+log() {
+    local msg="$1"
+    if [ "$QUIET" = false ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - $msg" >> "$LOG_FILE"
+        echo "$msg"
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - $msg" >> "$LOG_FILE"
+    fi
+}
+
+# Undo logging
+undo_log() {
+    echo "$1|$2" >> "$UNDO_LOG"
+}
+
+# Check if file is open
+is_file_open() {
+    lsof "$1" >/dev/null 2>&1
+}
+
+# Move file with optional dry-run and undo logging
+move_file() {
+    local src="$1"
+    local dest="$2"
+    if [ "$DRY_RUN" = true ]; then
+        log "[DRY RUN] Would move: $src → $dest"
+    else
+        mkdir -p "$(dirname "$dest")"
+        mv "$src" "$dest"
+        log "Moved: $src → $dest"
+        undo_log "$src" "$dest"
+    fi
+}
+
+# Load configuration from YAML/JSON if available
+declare -A CATEGORIES=()   # global associative array
+
+load_config() {
+    local config_file="$1"
+    if [ ! -f "$config_file" ]; then
+        return 1
+    fi
+
+    # Determine parser: yq for YAML, jq for JSON
+    if command -v yq &>/dev/null && [[ "$config_file" == *.yaml || "$config_file" == *.yml ]]; then
+        # Use yq to convert YAML to JSON, then jq to extract
+        if command -v jq &>/dev/null; then
+            local temp_config
+            temp_config=$(mktemp)
+            yq eval -o=json "$config_file" | jq -r 'to_entries | .[] | "CATEGORIES[\"" + .key + "\"]=\"" + (.value | join(" ")) + "\""' > "$temp_config"
+            source "$temp_config"
+            rm -f "$temp_config"
+            return 0
+        else
+            log "Warning: jq not installed, cannot parse YAML config. Falling back to defaults."
+            return 1
+        fi
+    elif command -v jq &>/dev/null && [[ "$config_file" == *.json ]]; then
+        local temp_config
+        temp_config=$(mktemp)
+        jq -r 'to_entries | .[] | "CATEGORIES[\"" + .key + "\"]=\"" + (.value | join(" ")) + "\""' "$config_file" > "$temp_config"
+        source "$temp_config"
+        rm -f "$temp_config"
+        return 0
+    else
+        log "Warning: No suitable parser found for config file. Install yq (YAML) or jq (JSON). Falling back to defaults."
+        return 1
+    fi
+}
+
+# Try to load config; if fails, use defaults
+if ! load_config "$CONFIG_FILE"; then
+    # Fallback defaults
     declare -A CATEGORIES=(
         ["Images"]="jpg jpeg png gif bmp svg webp tiff"
         ["Documents"]="pdf doc docx txt odt rtf md"
@@ -84,43 +173,6 @@ fi
 # Override with environment variables? (optional)
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
 MIN_AGE_MINUTES="${MIN_AGE_MINUTES:-5}"
-
-# Ensure log directory exists
-mkdir -p "$(dirname "$LOG_FILE")"
-mkdir -p "$(dirname "$UNDO_LOG")"
-
-log() {
-    if [ "$QUIET" = false ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
-        echo "$1"
-    else
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
-    fi
-}
-
-undo_log() {
-    # Record move in undo log (src dest)
-    echo "$1|$2" >> "$UNDO_LOG"
-}
-
-# Function to check if file is open
-is_file_open() {
-    lsof "$1" >/dev/null 2>&1
-}
-
-# Dry-run or real move with undo logging
-move_file() {
-    local src="$1"
-    local dest="$2"
-    if [ "$DRY_RUN" = true ]; then
-        log "[DRY RUN] Would move: $src → $dest"
-    else
-        mkdir -p "$(dirname "$dest")"
-        mv "$src" "$dest"
-        log "Moved: $src → $dest"
-        undo_log "$src" "$dest"
-    fi
-}
 
 # Main loop
 log "=== Starting download organization ==="
@@ -151,6 +203,13 @@ find "$DOWNLOAD_DIR" -maxdepth 1 -type f -not -path '*/\.*' | while read -r file
             break
         fi
     done
+
+    # If dated subfolders enabled, append year/month
+    if [ "$DATED_SUBFOLDERS" = true ] && [ "$dest_folder" != "$DOWNLOAD_DIR/Others" ]; then
+        year=$(date +%Y)
+        month=$(date +%m)
+        dest_folder="$dest_folder/$year/$month"
+    fi
 
     # Skip if already in the correct folder
     if [[ "$(dirname "$file")" == "$dest_folder" ]]; then
