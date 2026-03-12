@@ -118,6 +118,7 @@ run_sudo() {
         local temp_output
         temp_output=$(mktemp)
         # Run command with sudo, capture both stdout and stderr
+                # shellcheck disable=SC2024
         if sudo "$@" > "$temp_output" 2>&1; then
             cat "$temp_output" >> "$LOG_FILE"
             rm -f "$temp_output"
