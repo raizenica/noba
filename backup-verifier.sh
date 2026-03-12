@@ -103,7 +103,7 @@ log() {
 # Verbose logging
 vlog() {
     if [ "$VERBOSE" = true ] && [ "$QUIET" = false ]; then
-        echo "[VERBOSE] $@"
+        echo "[VERBOSE]" "$@"
     fi
 }
 
