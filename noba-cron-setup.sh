@@ -83,7 +83,7 @@ if [ "$REMOVE_MODE" = true ]; then
     for i in "${!jobs[@]}"; do
         echo "$((i+1)). ${jobs[$i]#*:}"
     done
-    read -p "Enter number to remove (or 0 to cancel): " choice
+    read -r -p "Enter number to remove (or 0 to cancel): " choice
     if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -gt 0 ] && [ "$choice" -le ${#jobs[@]} ]; then
         line_num=$(echo "${jobs[$((choice-1))]}" | cut -d: -f1)
         crontab -l | sed "${line_num}d" | crontab -
@@ -108,7 +108,7 @@ for i in "${!AUTOMATION_SCRIPTS[@]}"; do
     fi
 done
 
-read -p "Enter script number to schedule (or 0 to exit): " choice
+read -r -p "Enter script number to schedule (or 0 to exit): " choice
 if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -eq 0 ] || [ "$choice" -gt ${#AUTOMATION_SCRIPTS[@]} ]; then
     echo "Exiting."
     exit 0
@@ -127,7 +127,7 @@ echo "  Daily at 2 AM   : 0 2 * * *"
 echo "  Every 6 hours   : 0 */6 * * *"
 echo "  Hourly          : 0 * * * *"
 echo "  Every Monday at 3 AM: 0 3 * * 1"
-read -p "Enter cron schedule (default: 0 2 * * *): " schedule
+read -r -p "Enter cron schedule (default: 0 2 * * *): " schedule
 schedule=${schedule:-"0 2 * * *"}
 
 # Validate basic cron format (simplified)
@@ -137,7 +137,7 @@ if ! [[ "$schedule" =~ ^([0-9*/-]+[[:space:]]){4}[0-9*/-]+$ ]]; then
 fi
 
 # Ask for quiet mode
-read -p "Add --quiet flag? (y/n, default: y): " quiet
+read -r -p "Add --quiet flag? (y/n, default: y): " quiet
 quiet_flag=""
 if [[ ! "$quiet" =~ ^[Nn]$ ]]; then
     quiet_flag="--quiet"
@@ -153,7 +153,7 @@ cron_line="$schedule $script_path $quiet_flag >> $log_file 2>&1"
 if crontab -l 2>/dev/null | grep -Fq "$script_path"; then
     echo -e "${YELLOW}A job for $script_name already exists:${NC}"
     crontab -l | grep "$script_path"
-    read -p "Overwrite? (y/n): " overwrite
+    read -r -p "Overwrite? (y/n): " overwrite
     if [[ "$overwrite" =~ ^[Yy]$ ]]; then
         crontab -l | grep -vF "$script_path" | crontab -
         (crontab -l 2>/dev/null; echo "$cron_line") | crontab -

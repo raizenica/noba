@@ -66,7 +66,7 @@ _noba_completions() {
             ;;
         config-check.sh)
             # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "--help --verbose" -- "$cur"))
+            COMPREPLY=($(compgen -W "backup-to-nas.sh backup-verifier.sh checksum.sh disk-sentinel.sh images-to-pdf.sh organize-downloads.sh undo-organizer.sh run-hogwarts-trainer.sh motd-generator.sh noba-dashboard.sh backup-notify.sh config-check.sh noba-cron-setup.sh cloud-backup.sh system-report.sh log-rotator.sh temperature-alert.sh service-watch.sh noba-tui.sh noba-web.sh noba-update.sh noba-daily-digest.sh" -- "$cur"))
             return
             ;;
         noba-cron-setup.sh)

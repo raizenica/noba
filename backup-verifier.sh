@@ -259,7 +259,7 @@ WARNINGS=0
 
 for file in "${SELECTED[@]}"; do
     # Compute relative path to restore same structure
-    rel_path="${file#$LATEST_BACKUP/}"
+    rel_path="${file#"$LATEST_BACKUP"/}"
     dest="$TEMP_DIR/$rel_path"
     mkdir -p "$(dirname "$dest")"
 

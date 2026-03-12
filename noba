@@ -1,0 +1,69 @@
+#!/bin/bash
+# noba – Central command for all Nobara automation scripts
+
+set -u
+set -o pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+    cat <<EOF
+Usage: noba <command> [options]
+
+Commands:
+  backup          Run backup-to-nas.sh
+  verify          Run backup-verifier.sh
+  checksum        Run checksum.sh
+  disk            Run disk-sentinel.sh
+  images2pdf      Run images-to-pdf.sh
+  organize        Run organize-downloads.sh
+  undo            Run undo-organizer.sh
+  motd            Show motd-generator.sh
+  dashboard       Show noba-dashboard.sh
+  config-check    Run config-check.sh
+  cron-setup      Run noba-cron-setup.sh
+  cloud-backup    Run cloud-backup.sh
+  system-report   Run system-report.sh
+  log-rotate      Run log-rotator.sh
+  temp-alert      Run temperature-alert.sh
+  service-watch   Run service-watch.sh
+  tui             Launch noba-tui.sh
+  web             Start noba-web.sh
+  update          Run noba-update.sh
+  daily-digest    Run noba-daily-digest.sh
+  help            Show this help
+EOF
+}
+
+if [ $# -eq 0 ]; then
+    usage
+    exit 1
+fi
+
+cmd="$1"
+shift
+
+case "$cmd" in
+    backup)         "$SCRIPT_DIR/backup-to-nas.sh" "$@" ;;
+    verify)         "$SCRIPT_DIR/backup-verifier.sh" "$@" ;;
+    checksum)       "$SCRIPT_DIR/checksum.sh" "$@" ;;
+    disk)           "$SCRIPT_DIR/disk-sentinel.sh" "$@" ;;
+    images2pdf)     "$SCRIPT_DIR/images-to-pdf.sh" "$@" ;;
+    organize)       "$SCRIPT_DIR/organize-downloads.sh" "$@" ;;
+    undo)           "$SCRIPT_DIR/undo-organizer.sh" "$@" ;;
+    motd)           "$SCRIPT_DIR/motd-generator.sh" "$@" ;;
+    dashboard)      "$SCRIPT_DIR/noba-dashboard.sh" "$@" ;;
+    config-check)   "$SCRIPT_DIR/config-check.sh" "$@" ;;
+    cron-setup)     "$SCRIPT_DIR/noba-cron-setup.sh" "$@" ;;
+    cloud-backup)   "$SCRIPT_DIR/cloud-backup.sh" "$@" ;;
+    system-report)  "$SCRIPT_DIR/system-report.sh" "$@" ;;
+    log-rotate)     "$SCRIPT_DIR/log-rotator.sh" "$@" ;;
+    temp-alert)     "$SCRIPT_DIR/temperature-alert.sh" "$@" ;;
+    service-watch)  "$SCRIPT_DIR/service-watch.sh" "$@" ;;
+    tui)            "$SCRIPT_DIR/noba-tui.sh" "$@" ;;
+    web)            "$SCRIPT_DIR/noba-web.sh" "$@" ;;
+    update)         "$SCRIPT_DIR/noba-update.sh" "$@" ;;
+    daily-digest)   "$SCRIPT_DIR/noba-daily-digest.sh" "$@" ;;
+    help|--help|-h) usage ;;
+    *) echo "Unknown command: $cmd"; usage; exit 1 ;;
+esac

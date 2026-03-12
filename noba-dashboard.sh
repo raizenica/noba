@@ -124,7 +124,7 @@ pending_downloads() {
             echo "  $count file(s) waiting in Downloads:"
             find "$download_dir" -maxdepth 1 -type f -printf "    %f\n" | head -5
             if [ "$count" -gt 5 ]; then
-                echo "    ... and $(($count - 5)) more"
+                echo "    ... and $((count - 5)) more"
             fi
         else
             echo "  No files waiting."

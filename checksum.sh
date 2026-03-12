@@ -119,6 +119,7 @@ log() {
     fi
 }
 
+# shellcheck disable=SC2329
 vlog() {
     if [ "$VERBOSE" = true ] && [ "$QUIET" = false ]; then
         echo "[VERBOSE]" "$@"
@@ -322,7 +323,9 @@ fi
 # If no files and not reading from stdin, error
 if [ ${#FILES[@]} -eq 0 ] && [ -t 0 ]; then
     echo "ERROR: No files specified and no input from stdin." >&2
+# shellcheck disable=SC2317
     usage
+# shellcheck disable=SC2317
     exit 1
 fi
 
