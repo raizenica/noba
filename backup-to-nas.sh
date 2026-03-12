@@ -47,7 +47,7 @@ SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
   echo '<div class="stat-card"><div class="stat-label">Destination</div><div class="stat-value">NAS</div></div>'
   echo '</div>'
   echo '<h3>📋 Sync Log:</h3>'
-  echo '<div class="log">'$(tail -20 /tmp/backup.log | sed 's/$/<br>/')'</div>'
+  echo '<div class="log">'"$(tail -20 /tmp/backup.log | sed 's/$/<br>/')"'</div>'
   echo '<div class="footer">'
   echo '✅ Backup automated • '"$(hostname)"' → vnnas'
   echo '</div>'
