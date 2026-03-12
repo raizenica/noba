@@ -134,7 +134,7 @@ random_indices() {
         while [ ${#indices[@]} -lt "$count" ]; do
             i=$((RANDOM % total))
             # Check for duplicates (simple linear search, ok for small counts)
-            if [[ ! " ${indices[*]} " =~ " $i " ]]; then
+            if [[ ! " ${indices[*]} " == *" $i * ]]; then
                 indices+=("$i")
             fi
         done
