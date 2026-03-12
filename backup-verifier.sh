@@ -22,7 +22,7 @@ DRY_RUN=false
 QUIET=false
 VERBOSE=false
 COMPARE_ORIGINAL=false
-CHECKSUM_CMD="md5sum"      # can be overridden with --checksum-cmd
+CHECKSUM_CMD="md5sum"
 TEMP_DIR_BASE="${TMPDIR:-/tmp}"
 
 # -------------------------------------------------------------------
