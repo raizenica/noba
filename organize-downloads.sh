@@ -4,25 +4,44 @@
 set -u
 set -o pipefail
 
-# Defaults
-CONFIG_FILE="$HOME/.config/download-organizer.yaml"   # default config path (YAML or JSON)
+# Source central config if available
+if [ -f "$HOME/.config/automation.conf" ]; then
+    source "$HOME/.config/automation.conf"
+fi
+
+# Defaults (with central config overrides)
+DOWNLOAD_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
+MIN_AGE_MINUTES="${MIN_AGE_MINUTES:-5}"
+CONFIG_FILE="${ORGANIZER_CONFIG:-$HOME/.config/download-organizer.yaml}"
 LOG_FILE="$HOME/.local/share/download-organizer.log"
 UNDO_LOG="$HOME/.local/share/download-organizer-undo.log"
 DRY_RUN=false
 QUIET=false
-DATED_SUBFOLDERS=false   # if true, move into subfolders like Images/2025/03/
+DATED_SUBFOLDERS=false
 
-# Function to show usage
+# Function to show version
+show_version() {
+    if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null; then
+        version=$(git describe --tags --always --dirty 2>/dev/null)
+        echo "$(basename "$0") version $version"
+    else
+        echo "$(basename "$0") version unknown (not in git repo)"
+    fi
+    exit 0
+}
+
+# Usage function
 usage() {
     cat <<EOF
 Usage: $0 [options]
 
 Options:
-  -c, --config FILE   Use custom config file (default: ~/.config/download-organizer.yaml)
+  -c, --config FILE   Use custom config file (default: $CONFIG_FILE)
   -d, --dry-run       Show what would be moved without actually moving
   -q, --quiet         Suppress normal output (only errors)
   --dated             Use dated subfolders (e.g., Images/2026/03/)
   --help              Show this help
+  --version           Show version information
 
 The config file can be YAML or JSON. Example YAML:
   Images:
@@ -41,7 +60,7 @@ EOF
 }
 
 # Parse command-line arguments
-OPTIONS=$(getopt -o c:dq -l config:,dry-run,quiet,dated,help -- "$@")
+OPTIONS=$(getopt -o c:dq -l config:,dry-run,quiet,dated,help,version -- "$@")
 if [ $? -ne 0 ]; then
     usage
 fi
@@ -67,6 +86,9 @@ while true; do
             ;;
         --help)
             usage
+            ;;
+        --version)
+            show_version
             ;;
         --)
             shift
@@ -169,10 +191,6 @@ if ! load_config "$CONFIG_FILE"; then
         ["Others"]=""
     )
 fi
-
-# Override with environment variables? (optional)
-DOWNLOAD_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
-MIN_AGE_MINUTES="${MIN_AGE_MINUTES:-5}"
 
 # Main loop
 log "=== Starting download organization ==="

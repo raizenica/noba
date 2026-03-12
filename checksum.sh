@@ -4,6 +4,11 @@
 set -u
 set -o pipefail
 
+# Source central config if available (optional, can be used for future settings)
+if [ -f "$HOME/.config/automation.conf" ]; then
+    source "$HOME/.config/automation.conf"
+fi
+
 # Defaults
 ALGO="sha256"
 VERIFY=false
@@ -13,6 +18,17 @@ COPY=false
 MANIFEST=false  # generate a single manifest file for all processed files
 PROGRESS=false  # show progress (requires `pv` or simple counter)
 QUIET=false
+
+# Function to show version
+show_version() {
+    if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null; then
+        version=$(git describe --tags --always --dirty 2>/dev/null)
+        echo "$(basename "$0") version $version"
+    else
+        echo "$(basename "$0") version unknown (not in git repo)"
+    fi
+    exit 0
+}
 
 # Function to show usage
 usage() {
@@ -29,6 +45,7 @@ Options:
   -c, --copy          Copy hash to clipboard (X11/Wayland)
   -q, --quiet         Suppress non‑error output
   --help              Show this help
+  --version           Show version information
 
 If no files are given and no options, runs in GUI mode.
 EOF
@@ -82,10 +99,8 @@ show_progress() {
     local msg="$3"
     if $PROGRESS && [ "$QUIET" = false ]; then
         if command -v pv &>/dev/null && [ "$total" -gt 0 ]; then
-            # pv would be used in a pipeline, not here. Instead we'll use a simple percentage.
             printf "\r%s: %d/%d (%d%%)" "$msg" "$current" "$total" $((current * 100 / total)) >&2
         else
-            # Simple counter
             printf "\r%s: %d/%d" "$msg" "$current" "$total" >&2
         fi
     fi
@@ -139,6 +154,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help)
             usage
+            ;;
+        --version)
+            show_version
             ;;
         --)
             shift
@@ -219,10 +237,9 @@ output_hash() {
     fi
 }
 
-# Process each file or directory
+# Count total files for progress (if recursive and directories)
 TOTAL_FILES=0
 if $PROGRESS && ! $VERIFY; then
-    # Count total files for progress (if recursive and directories)
     for item in "${FILES[@]}"; do
         if [ -d "$item" ] && $RECURSIVE; then
             TOTAL_FILES=$((TOTAL_FILES + $(find "$item" -type f | wc -l)))

@@ -4,18 +4,34 @@
 set -u
 set -o pipefail
 
-# Defaults
+# Source central config if available
+if [ -f "$HOME/.config/automation.conf" ]; then
+    source "$HOME/.config/automation.conf"
+fi
+
+# Defaults (can be overridden by config file)
 DEFAULT_SOURCES=("/home/raizen/Documents" "/home/raizen/Pictures" "/home/raizen/.config")
-DEST="/mnt/vnnas/backups/raizen"
-EMAIL="strikerke@gmail.com"
+DEST="${BACKUP_DEST:-/mnt/vnnas/backups/raizen}"
+EMAIL="${EMAIL:-strikerke@gmail.com}"
+RETENTION_DAYS="${RETENTION_DAYS:-7}"
+SPACE_MARGIN_PERCENT="${SPACE_MARGIN_PERCENT:-10}"
+MIN_FREE_SPACE_GB="${MIN_FREE_SPACE_GB:-5}"
 DRY_RUN=false
 LOCK_FILE="/tmp/backup-to-nas.lock"
 LOG_FILE="/tmp/backup.log"
-RETENTION_DAYS=7   # Number of daily backups to keep
-SPACE_MARGIN_PERCENT=10   # Require at least estimated size + this margin
-MIN_FREE_SPACE_GB=5        # Minimum free space in GB, even if estimate is smaller
 
-# Functions
+# Function to show version
+show_version() {
+    if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null; then
+        version=$(git describe --tags --always --dirty 2>/dev/null)
+        echo "$(basename "$0") version $version"
+    else
+        echo "$(basename "$0") version unknown (not in git repo)"
+    fi
+    exit 0
+}
+
+# Usage function
 usage() {
     cat <<EOF
 Usage: $0 [options]
@@ -26,6 +42,7 @@ Options:
   --email ADDR   Set email recipient (default: $EMAIL)
   --dry-run      Simulate backup without copying
   --help         Show this help
+  --version      Show version information
 EOF
     exit 0
 }
@@ -87,7 +104,7 @@ check_space() {
 }
 
 # Parse command-line arguments
-OPTIONS=$(getopt -o '' -l source:,dest:,email:,dry-run,help -- "$@")
+OPTIONS=$(getopt -o '' -l source:,dest:,email:,dry-run,help,version -- "$@")
 if [ $? -ne 0 ]; then
     usage
 fi
@@ -114,6 +131,9 @@ while true; do
             ;;
         --help)
             usage
+            ;;
+        --version)
+            show_version
             ;;
         --)
             shift
