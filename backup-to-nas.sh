@@ -1,8 +1,12 @@
 #!/bin/bash
-# Backup to NAS with HTML email – upgraded version with retention and space check
+# Backup to NAS with HTML email – robust version with retention, space check, and improved error handling
 
 set -u
 set -o pipefail
+
+# -------------------------------------------------------------------
+# Configuration and defaults
+# -------------------------------------------------------------------
 
 # Source central config if available
 # shellcheck source=/dev/null
@@ -10,7 +14,7 @@ if [ -f "$HOME/.config/automation.conf" ]; then
     source "$HOME/.config/automation.conf"
 fi
 
-# Defaults (can be overridden by config file)
+# Defaults (can be overridden by config file or command line)
 DEFAULT_SOURCES=("/home/raizen/Documents" "/home/raizen/Pictures" "/home/raizen/.config")
 DEST="${BACKUP_DEST:-/mnt/vnnas/backups/raizen}"
 EMAIL="${EMAIL:-strikerke@gmail.com}"
@@ -18,10 +22,15 @@ RETENTION_DAYS="${RETENTION_DAYS:-7}"
 SPACE_MARGIN_PERCENT="${SPACE_MARGIN_PERCENT:-10}"
 MIN_FREE_SPACE_GB="${MIN_FREE_SPACE_GB:-5}"
 DRY_RUN=false
-LOCK_FILE="/tmp/backup-to-nas.lock"
-LOG_FILE="/tmp/backup.log"
+VERBOSE=false
 
-# Function to show version
+# Mark constants as readonly
+readonly RETENTION_DAYS MIN_FREE_SPACE_GB SPACE_MARGIN_PERCENT
+
+# -------------------------------------------------------------------
+# Helper functions
+# -------------------------------------------------------------------
+
 show_version() {
     if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null; then
         version=$(git describe --tags --always --dirty 2>/dev/null)
@@ -32,7 +41,6 @@ show_version() {
     exit 0
 }
 
-# Usage function
 usage() {
     cat <<EOF
 Usage: $0 [options]
@@ -42,17 +50,57 @@ Options:
   --dest DIR     Set destination directory (default: $DEST)
   --email ADDR   Set email recipient (default: $EMAIL)
   --dry-run      Simulate backup without copying
+  --verbose      Increase output verbosity
   --help         Show this help
   --version      Show version information
 EOF
     exit 0
 }
 
-# Function to check available space on destination
+# Check that all required commands are available
+check_dependencies() {
+    local required=("rsync" "msmtp" "findmnt" "flock" "du" "df" "mktemp")
+    local missing=()
+    for cmd in "${required[@]}"; do
+        if ! command -v "$cmd" &>/dev/null; then
+            missing+=("$cmd")
+        fi
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "ERROR: Missing required commands: ${missing[*]}" >&2
+        echo "Please install them and try again." >&2
+        exit 1
+    fi
+}
+
+# Send HTML email using msmtp
+send_email() {
+    local subject="$1"
+    local body_file="$2"
+
+    if [ -z "$EMAIL" ]; then
+        echo "No email recipient set. Skipping notification." >&2
+        return
+    fi
+
+    if ! command -v msmtp &>/dev/null; then
+        echo "msmtp not installed. Cannot send email." >&2
+        return
+    fi
+
+    {
+        echo "To: $EMAIL"
+        echo "Subject: $subject"
+        echo "MIME-Version: 1.0"
+        echo "Content-Type: text/html; charset=utf-8"
+        echo ""
+        cat "$body_file"
+    } | msmtp "$EMAIL"
+}
+
+# Check available space on destination
 check_space() {
-    local src_size_kb=0
-    local total_size_kb=0
-    local src
+    local src_size_kb=0 total_size_kb=0 src
     for src in "${SOURCES[@]}"; do
         if [ -d "$src" ] || [ -f "$src" ]; then
             src_size_kb=$(du -sk "$src" 2>/dev/null | cut -f1)
@@ -75,8 +123,7 @@ check_space() {
     fi
 
     # Convert to human-readable for messages
-    local required_hr
-    local free_hr
+    local required_hr free_hr
     if command -v numfmt &>/dev/null; then
         required_hr=$(numfmt --to=iec "$required_bytes")
         free_hr=$(numfmt --to=iec "$free_bytes")
@@ -104,8 +151,10 @@ check_space() {
     return 0
 }
 
+# -------------------------------------------------------------------
 # Parse command-line arguments
-if ! OPTIONS=$(getopt -o '' -l source:,dest:,email:,dry-run,help,version -- "$@"); then
+# -------------------------------------------------------------------
+if ! OPTIONS=$(getopt -o '' -l source:,dest:,email:,dry-run,verbose,help,version -- "$@"); then
     usage
 fi
 eval set -- "$OPTIONS"
@@ -127,6 +176,10 @@ while true; do
             ;;
         --dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
             shift
             ;;
         --help)
@@ -151,18 +204,32 @@ if [ ${#SOURCES[@]} -eq 0 ]; then
     SOURCES=("${DEFAULT_SOURCES[@]}")
 fi
 
-# Check if destination is on a mounted filesystem
-if ! command -v findmnt &>/dev/null; then
-    echo "ERROR: findmnt not available. Please install util-linux." >&2
+# -------------------------------------------------------------------
+# Early checks and setup
+# -------------------------------------------------------------------
+check_dependencies
+
+# Validate sources: keep only those that exist
+VALID_SOURCES=()
+for src in "${SOURCES[@]}"; do
+    if [ -e "$src" ]; then
+        VALID_SOURCES+=("$src")
+    else
+        echo "WARNING: Source '$src' does not exist. Skipping." >&2
+    fi
+done
+if [ ${#VALID_SOURCES[@]} -eq 0 ]; then
+    echo "ERROR: No valid sources to back up." >&2
     exit 1
 fi
+SOURCES=("${VALID_SOURCES[@]}")
 
+# Check if destination is on a mounted filesystem
 MOUNT_POINT=$(findmnt -n -o TARGET --target "$DEST" 2>/dev/null)
 if [ -z "$MOUNT_POINT" ]; then
     echo "ERROR: Destination $DEST is not on a mounted filesystem." >&2
     exit 1
 fi
-
 echo "NAS is mounted at $MOUNT_POINT"
 
 # Perform space check
@@ -170,44 +237,46 @@ if ! check_space; then
     exit 1
 fi
 
-# Create timestamped backup folder
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-BACKUP_PATH="$DEST/$TIMESTAMP"
-mkdir -p "$BACKUP_PATH"
-echo "Backup folder: $BACKUP_PATH"
+# -------------------------------------------------------------------
+# Locking and temporary files
+# -------------------------------------------------------------------
+# Use XDG_RUNTIME_DIR if available, otherwise /tmp with per-user subdir
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    LOCK_BASE="$XDG_RUNTIME_DIR/backup-to-nas"
+else
+    LOCK_BASE="/tmp/backup-to-nas-$UID"
+fi
+mkdir -p "$LOCK_BASE"
+LOCK_FILE="$LOCK_BASE/backup.lock"
+EMAIL_BODY=$(mktemp)
+LOG_FILE="/tmp/backup.log"   # Keep log file for later reference; can be cleaned up optionally
 
-# Lock file to prevent concurrent runs
+# Ensure cleanup of temporary files on exit
+trap 'rm -f "$LOCK_FILE" "$EMAIL_BODY"' EXIT
+
+# Acquire lock
 exec 200>"$LOCK_FILE"
 if ! flock -n 200; then
     echo "Another backup is already running. Exiting." >&2
     exit 1
 fi
 
-# Cleanup lock on exit
-trap 'rm -f "$LOCK_FILE"' EXIT
+# -------------------------------------------------------------------
+# Start backup
+# -------------------------------------------------------------------
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+BACKUP_PATH="$DEST/$TIMESTAMP"
+mkdir -p "$BACKUP_PATH"
+echo "Backup folder: $BACKUP_PATH"
 
-# Start time
 START_TIME=$(date +%s)
 
-# Function to send email
-send_email() {
-    local subject="$1"
-    local body_file="$2"
-    {
-        echo "To: $EMAIL"
-        echo "Subject: $subject"
-        echo "MIME-Version: 1.0"
-        echo "Content-Type: text/html; charset=utf-8"
-        echo ""
-        cat "$body_file"
-    } | msmtp "$EMAIL"
-}
-
-# Prepare email body file (HTML)
-EMAIL_BODY=$(mktemp)
-
-# Redirect all output to log file (and still show on terminal)
-exec > >(tee -a "$LOG_FILE") 2>&1
+# Redirect all output to log file (and optionally to terminal if verbose)
+if [ "$VERBOSE" = true ]; then
+    exec > >(tee -a "$LOG_FILE") 2>&1
+else
+    exec >"$LOG_FILE" 2>&1
+fi
 
 echo "Starting backup at $(date)"
 echo "Destination: $BACKUP_PATH"
@@ -239,38 +308,57 @@ for src in "${SOURCES[@]}"; do
     fi
 done
 
-# Calculate stats
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
-# Count files transferred (using rsync summary lines that contain 'files')
-FILES_COUNT=$(grep -E '^Number of files: ' "$LOG_FILE" | tail -1 | awk '{print $4}')
-if [ -z "$FILES_COUNT" ]; then
+
+# Count files in the new backup (only if not dry-run)
+if [ "$DRY_RUN" = false ]; then
+    FILES_COUNT=$(find "$BACKUP_PATH" -type f | wc -l)
+else
     FILES_COUNT="N/A"
 fi
+
 SIZE=$(du -sh "$BACKUP_PATH" | cut -f1)
 
+# -------------------------------------------------------------------
 # Prune old backups (only if not dry run)
+# -------------------------------------------------------------------
 if [ "$DRY_RUN" = false ]; then
     echo "Pruning backups older than $RETENTION_DAYS days..."
-    find "$DEST" -maxdepth 1 -type d -name "????????-??????" | while read -r old_backup; do
-        # Extract date part (YYYYMMDD) from folder name
-        folder_date=$(basename "$old_backup" | cut -d- -f1)
-        # Convert to seconds since epoch
-        folder_seconds=$(date -d "$folder_date" +%s 2>/dev/null)
-        if [ -n "$folder_seconds" ]; then
-            current_seconds=$(date +%s)
-            age_days=$(( (current_seconds - folder_seconds) / 86400 ))
-            if [ "$age_days" -ge "$RETENTION_DAYS" ]; then
-                echo "Removing old backup: $old_backup"
-                rm -rf "$old_backup"
+    find "$DEST" -maxdepth 1 -type d -name "????????-??????" -print0 | while IFS= read -r -d '' old_backup; do
+        folder_name=$(basename "$old_backup")
+        folder_date="${folder_name%%-*}"
+        # Validate date format (YYYYMMDD)
+        if [[ "$folder_date" =~ ^[0-9]{8}$ ]]; then
+            folder_seconds=$(date -d "$folder_date" +%s 2>/dev/null || echo "")
+            if [ -n "$folder_seconds" ]; then
+                current_seconds=$(date +%s)
+                age_days=$(( (current_seconds - folder_seconds) / 86400 ))
+                if [ "$age_days" -ge "$RETENTION_DAYS" ]; then
+                    echo "Removing old backup: $old_backup"
+                    rm -rf "$old_backup"
+                fi
+            else
+                echo "WARNING: Could not parse date for $old_backup. Skipping." >&2
             fi
+        else
+            echo "WARNING: Unexpected folder name format: $folder_name. Skipping." >&2
         fi
     done
 else
     echo "Dry run – skipping prune."
 fi
 
+# -------------------------------------------------------------------
 # Generate HTML report
+# -------------------------------------------------------------------
+SUBJECT_DATE="${TIMESTAMP%%-*}"  # YYYYMMDD
+if [ "$ERROR_OCCURRED" = true ]; then
+    SUBJECT="⚠ NAS Backup Completed WITH ERRORS - $SUBJECT_DATE"
+else
+    SUBJECT="💾 NAS Backup Complete - $SUBJECT_DATE"
+fi
+
 cat > "$EMAIL_BODY" <<EOF
 <!DOCTYPE html>
 <html><head><style>
@@ -302,26 +390,25 @@ body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
 </div></body></html>
 EOF
 
+# -------------------------------------------------------------------
 # Send email (unless dry run)
+# -------------------------------------------------------------------
 if [ "$DRY_RUN" = false ]; then
-    if [ "$ERROR_OCCURRED" = true ]; then
-        SUBJECT="⚠️ NAS Backup Completed WITH ERRORS - $(date +%Y-%m-%d)"
-    else
-        SUBJECT="💾 NAS Backup Complete - $(date +%Y-%m-%d)"
-    fi
     send_email "$SUBJECT" "$EMAIL_BODY"
 else
     echo "Dry run – no email sent."
 fi
 
-# After sending email, before cleanup
-if [ "$ERROR_OCCURRED" = true ]; then
+# -------------------------------------------------------------------
+# Post-run cleanup
+# -------------------------------------------------------------------
+# If errors occurred, preserve the log for debugging
+if [ "$ERROR_OCCURRED" = true ] && [ "$DRY_RUN" = false ]; then
     cp "$LOG_FILE" "/tmp/backup-error-$(date +%Y%m%d-%H%M%S).log"
     echo "Error log saved to /tmp/backup-error-*.log"
 fi
 
-# Cleanup
-rm -f "$EMAIL_BODY"
-rm -f "$LOG_FILE"
+# Optionally, you may want to keep a limited number of log files.
+# For now, we leave the main log file; it will be overwritten next run.
 
 echo "Backup finished."
