@@ -7,12 +7,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 
-# Check that getopt is available (part of util-linux)
-if ! command -v getopt &>/dev/null; then
-    log_error "getopt not found. Please install util-linux."
-    exit 1
-fi
-
 # -------------------------------------------------------------------
 # Default configuration
 # -------------------------------------------------------------------
@@ -34,7 +28,7 @@ if [ "$CONFIG_LOADED" = true ]; then
     START_PORT="$(get_config ".web.start_port" "$START_PORT")"
     MAX_PORT="$(get_config ".web.max_port" "$MAX_PORT")"
     # Read services list from YAML (if defined)
-    SERVICES_LIST=$(get_config_array ".web.services" | tr '\n' ',' | sed 's/,$//')
+    SERVICES_LIST=$(get_config_array ".web.service_list" | tr '\n' ',' | sed 's/,$//')
     if [ -n "$SERVICES_LIST" ]; then
         export NOBA_WEB_SERVICES="$SERVICES_LIST"
     else
@@ -152,7 +146,7 @@ mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py "$HTML_DIR"/stats.json 2>/dev/null || true
 
 # -------------------------------------------------------------------
-# Generate HTML file (with Network and Services cards)
+# Generate HTML file (with GPU and Docker cards)
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/index.html" <<'EOF'
 <!DOCTYPE html>
@@ -214,6 +208,15 @@ cat > "$HTML_DIR/index.html" <<'EOF'
             <div class="stat-row"><span class="stat-label">Memory</span><span class="stat-value" x-text="memory"></span></div>
             <div class="stat-row"><span class="stat-label">CPU Temp</span>
                 <span class="stat-value" :class="tempClass" x-text="cpuTemp + '°C'"></span>
+            </div>
+        </div>
+
+        <!-- GPU Temperature Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-microchip"></i> GPU Temperature</div>
+            <div class="stat-row">
+                <span class="stat-label">GPU Temp</span>
+                <span class="stat-value" x-text="gpuTemp"></span>
             </div>
         </div>
 
@@ -302,6 +305,20 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                 </div>
             </template>
         </div>
+
+        <!-- Docker Containers Card -->
+        <div class="card">
+            <div class="card-header"><i class="fab fa-docker"></i> Docker Containers</div>
+            <template x-if="dockerContainers.length === 0">
+                <div class="stat-row"><span class="stat-label">No running containers</span></div>
+            </template>
+            <template x-for="container in dockerContainers" :key="container">
+                <div class="stat-row">
+                    <span class="stat-label" x-text="container.split('(')[0]"></span>
+                    <span class="stat-value success" x-text="container.split('(')[1].replace(')','')"></span>
+                </div>
+            </template>
+        </div>
     </div>
 
     <!-- Modal for script output -->
@@ -330,6 +347,7 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                 diskAlerts: '', showModal: false, modalTitle: '', modalOutput: '',
                 runningScript: false,
                 defaultIp: '', interfaces: [], services: [],
+                gpuTemp: '', dockerContainers: [],
 
                 async init() {
                     await this.refreshStats();
@@ -361,6 +379,8 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                         this.defaultIp = data.defaultIp || 'N/A';
                         this.interfaces = data.interfaces || [];
                         this.services = data.services || [];
+                        this.gpuTemp = data.gpuTemp || 'N/A';
+                        this.dockerContainers = data.dockerContainers || [];
                     } catch (e) {
                         console.error('Stats fetch failed', e);
                     }
@@ -425,6 +445,46 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return f"{b:.1f} {unit}"
             b /= 1024.0
         return f"{b:.1f} PiB"
+
+    def get_gpu_temp(self):
+        # Try NVIDIA first
+        try:
+            result = subprocess.run(['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader'],
+                                    capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                temp = result.stdout.strip()
+                if temp:
+                    return temp + "°C"
+        except:
+            pass
+        # Try AMD via sensors (if configured)
+        try:
+            result = subprocess.run(['sensors', '-u'], capture_output=True, text=True, timeout=2)
+            # Look for temp1_input in amdgpu or k10temp
+            import re
+            match = re.search(r'edge:.*?temp1_input: (\d+\.\d+)', result.stdout, re.DOTALL)
+            if match:
+                return f"{float(match.group(1)):.0f}°C"
+            # Fallback to k10temp
+            match = re.search(r'Tdie:.*?temp1_input: (\d+\.\d+)', result.stdout, re.DOTALL)
+            if match:
+                return f"{float(match.group(1)):.0f}°C"
+        except:
+            pass
+        return "N/A"
+
+    def get_docker_containers(self):
+        containers = []
+        try:
+            result = subprocess.run(['docker', 'ps', '--format', '{{.Names}} ({{.Status}})'],
+                                    capture_output=True, text=True, timeout=3)
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if line:
+                        containers.append(line.strip())
+        except:
+            pass
+        return containers
 
     def do_GET(self):
         try:
@@ -671,6 +731,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 status = 'error'
             services_status.append({'name': svc, 'status': status})
         stats['services'] = services_status
+
+        # --- GPU Temperature ---
+        stats['gpuTemp'] = self.get_gpu_temp()
+
+        # --- Docker Containers ---
+        stats['dockerContainers'] = self.get_docker_containers()
 
         return stats
 
