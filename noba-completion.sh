@@ -1,5 +1,6 @@
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 # noba-completion.sh – Bash completion for Nobara automation scripts
 
