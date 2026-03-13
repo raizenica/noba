@@ -10,8 +10,6 @@ source "$SCRIPT_DIR/noba-lib.sh"
 load_config
 if [ "$CONFIG_LOADED" = true ]; then
     # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
     # You can add dashboard‑specific configs here later
     :
 fi
@@ -161,17 +159,19 @@ pending_downloads() {
     fi
 }
 
-# Updates
+# Updates – safely handle dnf's non‑zero exit code
 updates_status() {
     section "Updates"
     dnf_updates=0
     flatpak_updates=0
     if command -v dnf &>/dev/null; then
-        dnf_updates=$(dnf check-update -q 2>/dev/null | wc -l)
+        # dnf check-update may exit with 100 when updates exist, so we ignore exit status
+        dnf_output=$(dnf check-update -q 2>/dev/null || true)
+        dnf_updates=$(echo "$dnf_output" | wc -l)
         echo "  DNF updates : $dnf_updates"
     fi
     if command -v flatpak &>/dev/null; then
-        flatpak_updates=$(flatpak update --appstream 2>/dev/null | grep -c "^ [1-9]")
+        flatpak_updates=$(flatpak update --appstream 2>/dev/null | grep -c "^ [1-9]" || true)
         echo "  Flatpak updates : $flatpak_updates"
     fi
     if [ "$dnf_updates" -eq 0 ] && [ "$flatpak_updates" -eq 0 ]; then
@@ -179,8 +179,10 @@ updates_status() {
     fi
 }
 
-# Main
-clear
+# Main – clear only if stdout is a terminal
+if [ -t 1 ]; then
+    clear 2>/dev/null || true
+fi
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║                 NOBA DASHBOARD – $(date '+%Y-%m-%d %H:%M')              ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
