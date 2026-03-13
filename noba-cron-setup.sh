@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # noba-cron-setup.sh – Interactive setup of cron jobs for automation scripts
 
 set -u

@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # noba-completion.sh – Bash completion for Nobara automation scripts
 
 # shellcheck disable=SC2034  # words, cword, prev are used by completion machinery

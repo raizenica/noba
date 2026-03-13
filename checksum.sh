@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # checksum.sh – Generate or verify checksums with multiple algorithms, recursive manifests, and progress
 
 set -u

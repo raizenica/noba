@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # service-watch.sh – Check and restart failed services
 
 SERVICES=("sshd" "docker" "NetworkManager")

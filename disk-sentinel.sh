@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # Disk Space Sentinel – monitor and clean up disk space with email alerts
 
 set -u

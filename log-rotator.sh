@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # log-rotator.sh – Compress logs older than 30 days
 
 LOG_DIR="$HOME/.local/share"

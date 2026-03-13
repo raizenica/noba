@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # noba-daily-digest.sh – Send daily summary email
 
 EMAIL="${EMAIL:-strikerke@gmail.com}"

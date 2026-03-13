@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # system-report.sh – Generate HTML report of system health
 
 REPORT_FILE="/tmp/system-report-$(date +%Y%m%d).html"

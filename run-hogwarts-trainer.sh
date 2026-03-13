@@ -1,4 +1,6 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 # run-hogwarts-trainer.sh – Launch Hogwarts Legacy trainer with auto-detected Proton path
 
 set -u
