@@ -75,8 +75,8 @@ if [ $# -eq 0 ]; then
     fi
 else
     PARSED_ARGS=$(getopt -o o:s:r:q:m:pv -l output:,paper-size:,orientation:,quality:,metadata:,progress,verbose,help,version -- "$@")
-    if [ $? -ne 0 ]; then
-        show_help
+    if ! some_command; then
+    show_help
     fi
     eval set -- "$PARSED_ARGS"
 

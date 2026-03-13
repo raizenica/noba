@@ -55,7 +55,7 @@ EOF
 # Parse command-line arguments
 # -------------------------------------------------------------------
 PARSED_ARGS=$(getopt -o d:l:n -l days:,log-dir:,dry-run,help,version -- "$@")
-if [ $? -ne 0 ]; then
+if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"

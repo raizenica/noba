@@ -74,7 +74,7 @@ list_cron_jobs() {
 # Parse arguments
 # -------------------------------------------------------------------
 PARSED_ARGS=$(getopt -o '' -l list,remove,help,version -- "$@")
-if [ $? -ne 0 ]; then
+if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"

@@ -126,7 +126,7 @@ run_sudo() {
 # Parse command-line arguments
 # -------------------------------------------------------------------
 PARSED_ARGS=$(getopt -o t:nv -l threshold:,dry-run,verbose,help,version -- "$@")
-if [ $? -ne 0 ]; then
+if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"

@@ -83,7 +83,7 @@ find_free_port() {
 # Parse arguments
 # -------------------------------------------------------------------
 PARSED_ARGS=$(getopt -o p:m:k -l port:,max:,kill,help,version -- "$@")
-if [ $? -ne 0 ]; then
+if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"

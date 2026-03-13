@@ -101,7 +101,7 @@ move_file() {
 # Parse command-line arguments
 # -------------------------------------------------------------------
 PARSED_ARGS=$(getopt -o d:a:nv -l download-dir:,min-age:,dry-run,verbose,help,version -- "$@")
-if [ $? -ne 0 ]; then
+if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"

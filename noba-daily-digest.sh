@@ -52,7 +52,7 @@ EOF
 # Parse arguments
 # -------------------------------------------------------------------
 PARSED_ARGS=$(getopt -o e:n -l email:,dry-run,help,version -- "$@")
-if [ $? -ne 0 ]; then
+if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"

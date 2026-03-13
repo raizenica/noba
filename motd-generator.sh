@@ -190,7 +190,7 @@ print_quote() {
 # Parse command-line arguments
 # -------------------------------------------------------------------
 PARSED_ARGS=$(getopt -o '' -l no-color,no-updates,no-backup,help,version -- "$@")
-if [ $? -ne 0 ]; then
+if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"

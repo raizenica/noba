@@ -60,7 +60,7 @@ EOF
 # Parse command-line arguments
 # -------------------------------------------------------------------
 PARSED_ARGS=$(getopt -o nr:c: -l dry-run,remote:,config:,help,version -- "$@")
-if [ $? -ne 0 ]; then
+if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"
