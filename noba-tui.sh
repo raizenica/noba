@@ -1,27 +1,69 @@
 #!/bin/bash
+# noba-tui.sh – Terminal UI (dialog) for launching Nobara scripts
+
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
-# noba-tui.sh – Terminal UI for all scripts
 
-# Load configuration
+# -------------------------------------------------------------------
+# Default configuration
+# -------------------------------------------------------------------
+DIALOG="${DIALOG:-dialog}"
+
+# -------------------------------------------------------------------
+# Load user configuration (if any) – optional
+# -------------------------------------------------------------------
 load_config
 if [ "$CONFIG_LOADED" = true ]; then
-    true
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+    # Could override DIALOG, etc.
+    :
 fi
 
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    true
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+# -------------------------------------------------------------------
+# Helper functions
+# -------------------------------------------------------------------
+show_version() {
+    echo "noba-tui.sh version 1.0"
+    exit 0
+}
+
+show_help() {
+    cat <<EOF
+Usage: $0 [OPTIONS]
+
+Launch a dialog-based menu to run various Nobara scripts.
+
+Options:
+  --help        Show this help message
+  --version     Show version information
+EOF
+    exit 0
+}
+
+# -------------------------------------------------------------------
+# Parse arguments (though none are expected)
+# -------------------------------------------------------------------
+if [ $# -gt 0 ]; then
+    case "$1" in
+        --help)    show_help ;;
+        --version) show_version ;;
+        *)         log_error "Unknown option: $1"; show_help ;;
+    esac
 fi
 
-DIALOG=${DIALOG=dialog}
+# -------------------------------------------------------------------
+# Ensure dialog is installed
+# -------------------------------------------------------------------
+if ! command -v "$DIALOG" &>/dev/null; then
+    log_error "Dialog ($DIALOG) not found. Please install dialog (e.g., 'sudo dnf install dialog')."
+    exit 1
+fi
+
+# -------------------------------------------------------------------
+# Main menu
+# -------------------------------------------------------------------
 tempfile=$(mktemp)
 
 $DIALOG --clear --title "Nobara Automation" \
@@ -43,16 +85,16 @@ choice=$(<"$tempfile")
 rm -f "$tempfile"
 
 case $choice in
-    Backup)      ~/.local/bin/backup-to-nas.sh ;;
-    Verify)      ~/.local/bin/backup-verifier.sh ;;
-    Checksum)    ~/.local/bin/checksum.sh ;;
-    Disk)        ~/.local/bin/disk-sentinel.sh ;;
-    Images2PDF)  ~/.local/bin/images-to-pdf.sh ;;
-    Organize)    ~/.local/bin/organize-downloads.sh ;;
-    Undo)        ~/.local/bin/undo-organizer.sh ;;
-    MOTD)        ~/.local/bin/motd-generator.sh ;;
-    Dashboard)   ~/.local/bin/noba-dashboard.sh ;;
-    ConfigCheck) ~/.local/bin/config-check.sh ;;
-    CronSetup)   ~/.local/bin/noba-cron-setup.sh ;;
-    *)           exit ;;
+    Backup)      "$SCRIPT_DIR/backup-to-nas.sh" ;;
+    Verify)      "$SCRIPT_DIR/backup-verifier.sh" ;;
+    Checksum)    "$SCRIPT_DIR/checksum.sh" ;;
+    Disk)        "$SCRIPT_DIR/disk-sentinel.sh" ;;
+    Images2PDF)  "$SCRIPT_DIR/images-to-pdf.sh" ;;
+    Organize)    "$SCRIPT_DIR/organize-downloads.sh" ;;
+    Undo)        "$SCRIPT_DIR/undo-organizer.sh" ;;
+    MOTD)        "$SCRIPT_DIR/motd-generator.sh" ;;
+    Dashboard)   "$SCRIPT_DIR/noba-dashboard.sh" ;;
+    ConfigCheck) "$SCRIPT_DIR/config-check.sh" ;;
+    CronSetup)   "$SCRIPT_DIR/noba-cron-setup.sh" ;;
+    *)           exit 0 ;;
 esac
