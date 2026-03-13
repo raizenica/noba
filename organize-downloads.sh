@@ -1,10 +1,10 @@
 #!/bin/bash
 # organize-downloads.sh – Move files from Downloads into categorized folders
+# Improved version with better extension matching and verbose logging
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 
@@ -15,6 +15,7 @@ DOWNLOAD_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/download-organizer.log}"
 MIN_AGE_MINUTES=5
 DRY_RUN=false
+VERBOSE=false
 
 # Category definitions: folder name -> space-separated extensions
 declare -A CATEGORIES=(
@@ -29,10 +30,18 @@ declare -A CATEGORIES=(
     ["Others"]=""   # catch-all for unclassified
 )
 
+# Build reverse mapping extension -> category for O(1) lookup
+declare -A EXT_TO_CAT
+for cat in "${!CATEGORIES[@]}"; do
+    for ext in ${CATEGORIES[$cat]}; do
+        EXT_TO_CAT[$ext]="$cat"
+    done
+done
+
 # -------------------------------------------------------------------
 # Load user configuration (if any)
 # -------------------------------------------------------------------
-load_config
+load_config || true
 if [ "$CONFIG_LOADED" = true ]; then
     DOWNLOAD_DIR="$(get_config ".downloads.dir" "$DOWNLOAD_DIR")"
     MIN_AGE_MINUTES="$(get_config ".downloads.min_age_minutes" "$MIN_AGE_MINUTES")"
@@ -44,7 +53,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "organize-downloads.sh version 1.0"
+    echo "organize-downloads.sh version 2.0"
     exit 0
 }
 
@@ -106,7 +115,6 @@ if ! PARSED_ARGS=$(getopt -o d:a:nv -l download-dir:,min-age:,dry-run,verbose,he
 fi
 eval set -- "$PARSED_ARGS"
 
-# shellcheck disable=SC2034
 while true; do
     case "$1" in
         -d|--download-dir) DOWNLOAD_DIR="$2"; shift 2 ;;
@@ -136,6 +144,12 @@ if ! [[ "$MIN_AGE_MINUTES" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
+# Ensure download directory exists
+if [ ! -d "$DOWNLOAD_DIR" ]; then
+    log_error "Download directory $DOWNLOAD_DIR does not exist."
+    exit 1
+fi
+
 mkdir -p "$(dirname "$LOG_FILE")"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -143,6 +157,7 @@ log_info "========== Download organizer started at $(date) =========="
 log_info "Download dir: $DOWNLOAD_DIR"
 log_info "Min age: $MIN_AGE_MINUTES minutes"
 log_info "Dry run: $DRY_RUN"
+log_info "Verbose: $VERBOSE"
 
 # -------------------------------------------------------------------
 # Main loop
@@ -165,7 +180,7 @@ find "$DOWNLOAD_DIR" -maxdepth 1 -type f -not -path '*/\.*' -print0 | while IFS=
         continue
     fi
 
-    # Get extension (lowercase)
+    # Get filename and extension (lowercase)
     filename=$(basename "$file")
     ext="${filename##*.}"
     if [ "$ext" = "$filename" ]; then
@@ -174,19 +189,16 @@ find "$DOWNLOAD_DIR" -maxdepth 1 -type f -not -path '*/\.*' -print0 | while IFS=
         ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
     fi
 
-    # Find category
-    dest_folder="$DOWNLOAD_DIR/Others"
-    for cat in "${!CATEGORIES[@]}"; do
-              if [[ " ${CATEGORIES[$cat]} " == *" $ext "* ]]; then
-            dest_folder="$DOWNLOAD_DIR/$cat"
-            break
-        fi
-    done
+    # Determine target category
+    category="${EXT_TO_CAT[$ext]:-Others}"
+
+    # Build destination folder
+    dest_folder="$DOWNLOAD_DIR/$category"
 
     # Skip if already in the correct folder
     current_dir=$(dirname "$file")
     if [ "$current_dir" = "$dest_folder" ]; then
-        log_debug "Skipping $file (already in correct folder)"
+        log_debug "Skipping $file (already in $category folder)"
         continue
     fi
 
@@ -194,6 +206,10 @@ find "$DOWNLOAD_DIR" -maxdepth 1 -type f -not -path '*/\.*' -print0 | while IFS=
     dest_path="$dest_folder/$filename"
     if [ -e "$dest_path" ]; then
         base="${filename%.*}"
+        # If base is empty (e.g., .gitignore), use filename
+        if [ -z "$base" ]; then
+            base="$filename"
+        fi
         new_filename="${base}_$(date +%Y%m%d_%H%M%S).$ext"
         dest_path="$dest_folder/$new_filename"
         log_debug "Filename conflict, renaming to $new_filename"
