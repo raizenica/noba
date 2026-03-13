@@ -16,6 +16,7 @@ SOURCES=()
 DEST=""
 EMAIL="${EMAIL:-strikerke@gmail.com}"
 DRY_RUN=false
+VERBOSE=false
 LOCK_FILE="/tmp/backup-to-nas.lock"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/backup-to-nas.log}"
 RETENTION_DAYS=7
@@ -64,6 +65,7 @@ Options:
   --dest PATH        Destination path on NAS (must be a mounted directory)
   --email ADDRESS    Email address for report (default: $EMAIL)
   --dry-run          Perform trial run with no changes
+  --verbose          Enable verbose output
   --help             Show this help message
   --version          Show version information
 EOF
@@ -139,7 +141,7 @@ send_email_report() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-PARSED_ARGS=$(getopt -o '' -l source:,dest:,email:,dry-run,help,version -- "$@")
+PARSED_ARGS=$(getopt -o '' -l source:,dest:,email:,dry-run,verbose,help,version -- "$@")
 if [ $? -ne 0 ]; then
     show_help
 fi
@@ -151,6 +153,7 @@ while true; do
         --dest)     DEST="$2"; shift 2 ;;
         --email)    EMAIL="$2"; shift 2 ;;
         --dry-run)  DRY_RUN=true; shift ;;
+        --verbose)  VERBOSE=true; shift ;;
         --help)     show_help ;;
         --version)  show_version ;;
         --)         shift; break ;;
@@ -211,6 +214,7 @@ log_info "Destination: $DEST"
 log_info "Sources: ${SOURCES[*]}"
 log_info "Retention: $RETENTION_DAYS days"
 log_info "Dry run: $DRY_RUN"
+log_info "Verbose: $VERBOSE"
 
 if [ ! -d "$DEST" ]; then
     log_error "Destination directory $DEST does not exist – is the NAS mounted?"
@@ -300,7 +304,7 @@ else
     SIZE="N/A (dry run)"
 fi
 
-# Generate email report (always, but only send if not dry run)
+# Generate email report
 EMAIL_BODY=$(mktemp)
 if [ "$ERROR_OCCURRED" = true ]; then
     subject_prefix="❌ BACKUP FAILED"
