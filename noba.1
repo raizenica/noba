@@ -1,0 +1,139 @@
+.TH NOBA 1 "March 2026" "Nobara Automation Suite" "User Commands"
+.SH NAME
+noba \- central command for the Nobara Automation Suite
+.SH SYNOPSIS
+.B noba
+\fIcommand\fR [\fIoptions\fR]
+.SH DESCRIPTION
+The Nobara Automation Suite is a collection of Bash scripts to automate common tasks on Fedora/Nobara systems.
+.B noba
+provides a unified command‑line interface to all scripts, configuration, and system checks.
+
+All scripts share a common library
+.B noba-lib.sh
+and a central YAML configuration file at
+.IR ~/.config/noba/config.yaml .
+.SH COMMANDS
+.TP
+.B setup
+Run the interactive setup script (checks dependencies, installs packages, creates config, sets up timers).
+.TP
+.B config
+View or edit the unified configuration.
+If no argument is given, the current config is printed to stdout.
+With
+.BR \-\-edit " or " \-e ,
+it opens the config file in your default editor (as set by
+.BR $EDITOR " or " $VISUAL ).
+.TP
+.B list
+List all available scripts in the installation directory (excluding library and setup scripts).
+.TP
+.B doctor
+Run system diagnostics (invokes
+.BR config-check.sh ).
+.TP
+.BR run " \fIscript\fR [\fIoptions\fR]"
+Directly run a script by its short name or filename.
+Common short names:
+.RS
+.TP
+.B backup
+\fBbackup-to-nas.sh\fR
+.TP
+.B verify
+\fBbackup-verifier.sh\fR
+.TP
+.B checksum
+\fBchecksum.sh\fR
+.TP
+.B disk
+\fBdisk-sentinel.sh\fR
+.TP
+.B images2pdf
+\fBimages-to-pdf.sh\fR
+.TP
+.B organize
+\fBorganize-downloads.sh\fR
+.TP
+.B undo
+\fBundo-organizer.sh\fR
+.TP
+.B motd
+\fBmotd-generator.sh\fR
+.TP
+.B dashboard
+\fBnoba-dashboard.sh\fR
+.TP
+.B web
+\fBnoba-web.sh\fR
+.RE
+Any additional options are passed directly to the script.
+.TP
+.B help
+Show this help message.
+.TP
+.B version
+Show version information.
+.SH OPTIONS
+Options for specific commands are described under each command.
+Global options
+.B \-\-help
+and
+.B \-\-version
+are available for all commands.
+.SH FILES
+.TP
+.I ~/.config/noba/config.yaml
+Central configuration file in YAML format.
+An example can be found at
+.IR /etc/noba/config.yaml.example
+after installation.
+.TP
+.I ~/.local/bin/
+Default installation directory for scripts.
+.TP
+.I ~/.config/systemd/user/
+Location of user‑level systemd unit files (timers and services).
+.SH ENVIRONMENT
+.TP
+.B EDITOR, VISUAL
+Specify the editor used by
+.B noba config \-\-edit.
+If neither is set,
+.B nano
+is used as a fallback.
+.TP
+.B NOBA_CONFIG
+Override the default path to the configuration file.
+.SH EXAMPLES
+.TP
+.B noba setup
+Run the setup script to check dependencies and create a default config.
+.TP
+.B noba config \-\-edit
+Open the configuration file in your editor.
+.TP
+.B noba list
+Show all available scripts.
+.TP
+.B noba doctor
+Run a dependency and configuration health check.
+.TP
+.B noba run backup \-\-dry-run
+Perform a dry‑run of the backup script (simulate without transferring files).
+.TP
+.B noba run organize \-\-help
+Show help for the download organizer script.
+.SH SEE ALSO
+.BR backup-to-nas.sh (1),
+.BR disk-sentinel.sh (1),
+.BR organize-downloads.sh (1),
+.BR noba-web.sh (1),
+and the project
+.B README.md
+for a full list of scripts and configuration details.
+.SH AUTHOR
+Raizen <raizen@example.com>
+and contributors.
+The project is hosted at https://github.com/raizenica/noba
