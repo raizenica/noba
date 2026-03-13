@@ -253,6 +253,7 @@ for section in "backup" "verifier" "checksum" "disk" "images" "organizer" "hogwa
         notify)   cmds=notify_cmds; desc="backup-notify.sh" ;;
     esac
     log_info "  $desc:"
+    # shellcheck disable=SC2086
     check_deps_list $cmds false
 done
 

@@ -100,18 +100,17 @@ move_file() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-PARSED_ARGS=$(getopt -o d:a:nv -l download-dir:,min-age:,dry-run,verbose,help,version -- "$@")
-if ! some_command; then
+if ! PARSED_ARGS=$(getopt -o d:a:nv -l download-dir:,min-age:,dry-run,verbose,help,version -- "$@"); then
     show_help
 fi
 eval set -- "$PARSED_ARGS"
 
+# shellcheck disable=SC2034
 while true; do
     case "$1" in
         -d|--download-dir) DOWNLOAD_DIR="$2"; shift 2 ;;
         -a|--min-age)      MIN_AGE_MINUTES="$2"; shift 2 ;;
         -n|--dry-run)      DRY_RUN=true; shift ;;
-         # shellcheck disable=SC2034
         -v|--verbose)      VERBOSE=true; shift ;;
         --help)            show_help ;;
         --version)         show_version ;;
