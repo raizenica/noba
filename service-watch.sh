@@ -5,7 +5,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
-# shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
@@ -19,7 +18,7 @@ NOTIFY=true
 # -------------------------------------------------------------------
 # Load user configuration (if any)
 # -------------------------------------------------------------------
-load_config
+load_config || true
 if [ "$CONFIG_LOADED" = true ]; then
     # Read services array from config
     services_from_config=$(get_config_array ".services.monitor")
@@ -74,8 +73,7 @@ send_notify() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-PARSED_ARGS=$(getopt -o s:un -l service:,user,dry-run,no-notify,help,version -- "$@")
-if ! some_command; then
+if ! PARSED_ARGS=$(getopt -o s:un -l service:,user,dry-run,no-notify,help,version -- "$@"); then
     show_help
 fi
 eval set -- "$PARSED_ARGS"
