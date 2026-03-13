@@ -769,28 +769,6 @@ cat > "$HTML_DIR/index.html" <<'EOF'
             }
         }
     </script>
-                async runScript(script) {
-                    if (this.runningScript) return;
-                    this.runningScript = true;
-                    this.modalTitle = `Running ${script}...`;
-                    this.modalOutput = 'Starting...';
-                    this.showModal = true;
-
-                    try {
-                        const response = await fetch('/api/run', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ script })
-                        });
-                        const result = await response.json();
-                        this.modalOutput = result.output;
-                        this.modalTitle = result.success ? '✅ Success' : '❌ Failed';
-                    } catch (e) {
-                        this.modalOutput = 'Error: ' + e.message;
-                        this.modalTitle = '❌ Failed';
-                    }
-                    this.runningScript = false;
-                    await this.refreshStats();
                 }
             }
         }
