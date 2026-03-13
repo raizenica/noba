@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly system report
+
+[Service]
+Type=oneshot
+ExecStart=/home/raizen/.local/bin/system-report.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Temperature alert every 5 minutes
+
+[Service]
+Type=oneshot
+ExecStart=/home/raizen/.local/bin/temperature-alert.sh
+
+[Install]
+WantedBy=multi-user.target

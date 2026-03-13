@@ -1,0 +1,9 @@
+[Unit]
+Description=Service watch every 15 minutes
+
+[Service]
+Type=oneshot
+ExecStart=/home/raizen/.local/bin/service-watch.sh
+
+[Install]
+WantedBy=multi-user.target

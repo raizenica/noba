@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily disk sentinel check
+
+[Service]
+Type=oneshot
+ExecStart=/home/raizen/.local/bin/disk-sentinel.sh
+
+[Install]
+WantedBy=multi-user.target

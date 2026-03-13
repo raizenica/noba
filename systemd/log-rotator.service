@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly log rotation
+
+[Service]
+Type=oneshot
+ExecStart=/home/raizen/.local/bin/log-rotator.sh
+
+[Install]
+WantedBy=multi-user.target

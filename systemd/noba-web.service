@@ -1,0 +1,14 @@
+[Unit]
+Description=Nobara Web Dashboard
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/home/raizen/.local/bin/noba-web.sh
+ExecStop=/home/raizen/.local/bin/noba-web.sh --kill
+PIDFile=/tmp/noba-web-server.pid
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

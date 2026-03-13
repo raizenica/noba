@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily cloud backup
+
+[Service]
+Type=oneshot
+ExecStart=/home/raizen/.local/bin/cloud-backup.sh
+
+[Install]
+WantedBy=multi-user.target
