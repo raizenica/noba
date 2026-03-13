@@ -96,11 +96,6 @@ algo_to_ext() {
     esac
 }
 
-# Check required commands (already in noba-lib, but we can add specific ones)
-# We'll reuse check_deps from noba-lib
-
-# Logging (quiet‑aware) – already in noba-lib
-
 # Progress display (simple file counter)
 progress_start() {
     if [ "$PROGRESS" = true ] && [ "$QUIET" = false ] && [ "$TOTAL_FILES" -gt 0 ]; then
@@ -246,7 +241,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         -*)
             echo "Unknown option: $1" >&2
-# shellcheck disable=SC2317
             exit 1
             ;;
         *)
@@ -259,26 +253,21 @@ done
 # -------------------------------------------------------------------
 # Pre-flight checks
 # -------------------------------------------------------------------
-# Use check_deps from noba-lib? We'll just ensure needed commands exist.
-# We'll check for the algorithm command later.
 
 # Validate algorithm and command
 CMD=$(algo_to_cmd "$ALGO")
 if [ "$CMD" = "unsupported" ]; then
     echo "ERROR: Unsupported algorithm '$ALGO'." >&2
-# shellcheck disable=SC2317
     exit 1
 fi
 if ! command -v "$CMD" &>/dev/null; then
     echo "ERROR: Command '$CMD' not available for algorithm '$ALGO'." >&2
-# shellcheck disable=SC2317
     exit 1
 fi
 
 # Validate output format
 if [[ ! "$OUTPUT_FORMAT" =~ ^(plain|csv|json)$ ]]; then
     echo "ERROR: Invalid output format '$OUTPUT_FORMAT'. Use plain, csv, or json." >&2
-# shellcheck disable=SC2317
     exit 1
 fi
 
@@ -286,42 +275,15 @@ fi
 if [ "$GUI" = true ]; then
     if ! command -v kdialog &>/dev/null; then
         echo "ERROR: kdialog not available for GUI mode." >&2
-# shellcheck disable=SC2317
         exit 1
     fi
     # If no files provided, launch file picker
     if [ ${#FILES[@]} -eq 0 ]; then
-        # shellcheck disable=SC2207
         IFS=$'\n' read -d '' -r -a FILES < <(kdialog --getopenfilename --multiple --separate-output "$HOME" "All Files (*)" 2>/dev/null)
         if [ ${#FILES[@]} -eq 0 ]; then
             kdialog --error "No files selected."
-# shellcheck disable=SC2317
             exit 1
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
-# shellcheck disable=SC2317
         fi
-# shellcheck disable=SC2317
     fi
 fi
 
@@ -329,7 +291,6 @@ fi
 if [ ${#FILES[@]} -eq 0 ] && [ -t 0 ]; then
     echo "ERROR: No files specified and no input from stdin." >&2
     usage
-# shellcheck disable=SC2317
     exit 1
 fi
 
@@ -366,7 +327,7 @@ if [ "$MANIFEST" = true ] && [ "$VERIFY" = false ]; then
     fi
     # Clear or create the manifest file
     : > "$MANIFEST_FILE"
-    log "Manifest: $MANIFEST_FILE"
+    log_info "Manifest: $MANIFEST_FILE"
 fi
 
 # Function to write output (to manifest or individual files)
@@ -463,10 +424,10 @@ if [ "$COPY" = true ] && [ "$VERIFY" = false ] && [ ${#FILES[@]} -gt 0 ]; then
         hash=$(head -1 "$hash_file" | cut -d' ' -f1)
         if command -v wl-copy &>/dev/null; then
             echo -n "$hash" | wl-copy
-            log "Hash copied to clipboard (Wayland)."
+            log_info "Hash copied to clipboard (Wayland)."
         elif command -v xclip &>/dev/null; then
             echo -n "$hash" | xclip -selection clipboard
-            log "Hash copied to clipboard (X11)."
+            log_info "Hash copied to clipboard (X11)."
         else
             echo "WARNING: No clipboard tool found (install wl-clipboard or xclip)." >&2
         fi
