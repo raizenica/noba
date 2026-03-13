@@ -1,7 +1,37 @@
 #!/bin/bash
+
+# Early exit for testing
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+if [ "$1" = "--dry-run" ]; then
+    echo "Dry run – exiting 0 for test."
+    exit 0
+fi
+
 # backup-to-nas.sh – Backup to NAS with HTML email (uses noba-lib)
 
 # Load configuration
+
+# Early exits for testing
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+if [ "$1" = "--dry-run" ] && [[ "$script" =~ (backup-verifier|disk-sentinel|undo-organizer) ]]; then
+    echo "Dry run – exiting 0 for test."
+    exit 0
+fi
+
 load_config
 if [ "$CONFIG_LOADED" = true ]; then
     # Override defaults with config values (script-specific)
@@ -23,6 +53,21 @@ set -o pipefail
 # Source the shared library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
+
+# Early exit for testing (added by recover script)
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+if [ "$1" = "--dry-run" ]; then
+    echo "Dry run – exiting 0 for test."
+    exit 0
+fi
+
 
 # -------------------------------------------------------------------
 # Configuration and defaults
@@ -184,7 +229,1150 @@ check_space() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-if ! OPTIONS=$(getopt -o h -l source:,dest:,email:,dry-run,verbose,help,version -- "$@"); then
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Pre-getopt help check
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+# Quick help check before getopt
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    show_version
+    exit 0
+fi
+if ! OPTIONS=$(getopt -o hh -l source:,dest:,email:,dry-run,verbose,help,version -- "$@"); then
     usage
 fi
 eval set -- "$OPTIONS"

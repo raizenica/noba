@@ -1,26 +1,11 @@
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/noba-lib.sh"
 # images-to-pdf.sh – Convert images to PDF (CLI and GUI modes)
-
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
-
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
 
 set -u
 set -o pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
 # Configuration and defaults
@@ -29,6 +14,24 @@ set -o pipefail
 DEFAULT_PAPER_SIZE="A4"
 DEFAULT_ORIENTATION="portrait"
 DEFAULT_QUALITY=92
+
+# Initialize
+OUTPUT_FILE=""
+PAPER_SIZE="$DEFAULT_PAPER_SIZE"
+ORIENTATION="$DEFAULT_ORIENTATION"
+QUALITY="$DEFAULT_QUALITY"
+METADATA=""
+PROGRESS=false
+VERBOSE=false
+USE_GUI=false
+
+# Load config
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    PAPER_SIZE=$(get_config '.images2pdf.default_paper_size' "$PAPER_SIZE")
+    ORIENTATION=$(get_config '.images2pdf.default_orientation' "$ORIENTATION")
+    QUALITY=$(get_config '.images2pdf.default_quality' "$QUALITY")
+fi
 
 # -------------------------------------------------------------------
 # Helper functions
@@ -66,10 +69,9 @@ EOF
     exit 0
 }
 
-# Check required commands
 check_deps() {
     if ! command -v convert &>/dev/null; then
-        echo "ERROR: ImageMagick 'convert' not found. Please install ImageMagick." >&2
+        log_error "ImageMagick 'convert' not found. Please install ImageMagick."
         exit 1
     fi
 }

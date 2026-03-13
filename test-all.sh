@@ -1,4 +1,12 @@
 #!/bin/bash
+# Create test image for images-to-pdf.sh
+if [ ! -f "/tmp/test.png" ]; then
+    if command -v magick &>/dev/null; then
+        magick -size 100x100 xc:red /tmp/test.png 2>/dev/null
+    elif command -v convert &>/dev/null; then
+        convert -size 100x100 xc:red /tmp/test.png 2>/dev/null
+    fi
+fi
 # test-all.sh – Comprehensive functionality test for all scripts with timeouts
 
 set -u

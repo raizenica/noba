@@ -1,104 +1,16 @@
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
 #!/bin/bash
 # backup-verifier.sh – Verify backup integrity (uses noba-lib)
 
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
 
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+# Help handling
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
 fi
 
 set -u
@@ -229,12 +141,10 @@ random_indices() {
     if command -v shuf &>/dev/null; then
         shuf -i 0-$((total-1)) -n "$count"
     else
-        # Fallback: use bash's RANDOM
         local -a indices=()
         local i
         while [ ${#indices[@]} -lt "$count" ]; do
             i=$((RANDOM % total))
-            # Check for duplicates
             if [[ ! " ${indices[*]} " =~ " $i " ]]; then
                 indices+=("$i")
             fi
@@ -318,11 +228,6 @@ log "Latest backup: $LATEST_BACKUP"
 mapfile -t FILES < <(find "$LATEST_BACKUP" -type f -print0 2>/dev/null | xargs -0 -I {} printf "%s\n" "{}")
 TOTAL_FILES=${#FILES[@]}
 if [ "$TOTAL_FILES" -eq 0 ]; then
-if [ "$DRY_RUN" = true ]; then log "Dry run – no files found, but exiting cleanly."; exit 0; fi
-if [ "$DRY_RUN" = true ]; then log "Dry run – no files found, but exiting cleanly."; exit 0; fi
-if [ "$DRY_RUN" = true ]; then echo "Dry run – no files, exiting cleanly"; exit 0; fi
-if [ "$DRY_RUN" = true ]; then log "Dry run – no files found, but exiting cleanly."; exit 0; fi
-if [ "$DRY_RUN" = true ]; then log "Dry run – no files found, but exiting cleanly."; exit 0; fi
 if [ "$DRY_RUN" = true ]; then log "Dry run – no files found, but exiting cleanly."; exit 0; fi
 if [ "$DRY_RUN" = true ]; then echo "Dry run – no files, exiting cleanly"; exit 0; fi
     echo "ERROR: No files found in backup $LATEST_BACKUP" >&2
