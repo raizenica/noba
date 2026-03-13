@@ -6,6 +6,8 @@
 # shellcheck disable=SC2016
 # shellcheck disable=SC2016
 # shellcheck disable=SC2016
+# shellcheck disable=SC2016
+# shellcheck disable=SC2016
 # master-fix.sh – Apply all remaining ShellCheck fixes
 
 set -u

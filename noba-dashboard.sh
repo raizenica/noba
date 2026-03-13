@@ -90,14 +90,23 @@ backup_status() {
         status="${GREEN}✓ OK${NC}"
         echo "  Status      : $status"
     else
-        # No completed backup; show last log line (stripped)
-        last_line=$(strip_ansi "$(tail -1 "$BACKUP_LOG")")
-        if echo "$last_line" | grep -qi "error"; then
-            status="${RED}✗ ERROR${NC}"
-        elif echo "$last_line" | grep -qi "dry run"; then
-            status="${YELLOW}ℹ DRY RUN${NC}"
+        # No completed backup; show last log line (stripped) if log exists and is non-empty
+        if [ -s "$BACKUP_LOG" ]; then
+            last_line=$(strip_ansi "$(tail -1 "$BACKUP_LOG" 2>/dev/null || true)")
+        else
+            last_line=""
+        fi
+        if [ -n "$last_line" ]; then
+            if echo "$last_line" | grep -qi "error"; then
+                status="${RED}✗ ERROR${NC}"
+            elif echo "$last_line" | grep -qi "dry run"; then
+                status="${YELLOW}ℹ DRY RUN${NC}"
+            else
+                status="${YELLOW}? UNKNOWN${NC}"
+            fi
         else
             status="${YELLOW}? UNKNOWN${NC}"
+            last_line="(empty log)"
         fi
         echo "  Last run    : $status"
         echo "  Last log line: $last_line"

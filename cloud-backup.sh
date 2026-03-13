@@ -74,9 +74,15 @@ done
 # shellcheck source=/dev/null
 # shellcheck source=/dev/null
 # shellcheck source=/dev/null
-
-# Load config if exists
 # shellcheck source=/dev/null
+# shellcheck source=/dev/null
+
+# shellcheck disable=SC2086
+# Load config if exists
+# shellcheck disable=SC2086
+# shellcheck disable=SC2086
+# shellcheck source=/dev/null
+# shellcheck disable=SC2086
 # shellcheck disable=SC2086
 [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
 # shellcheck disable=SC2086

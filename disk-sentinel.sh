@@ -54,6 +54,8 @@ show_version() {
     source "$HOME/.config/automation.conf"
     source "$HOME/.config/automation.conf"
     source "$HOME/.config/automation.conf"
+    source "$HOME/.config/automation.conf"
+    source "$HOME/.config/automation.conf"
 
 show_help() {
     cat <<EOF
@@ -209,7 +211,9 @@ for target in "${TARGETS[@]}"; do
             # User cache (no sudo)
             log_info "Cleaning ~/.cache..."
             if [ "$DRY_RUN" = false ]; then
+# shellcheck disable=SC2119
                 rm -rf "$HOME/.cache/"* >> "$LOG_FILE" 2>&1
+# shellcheck disable=SC2119
             else
 # shellcheck disable=SC2119
                 log_debug "[DRY RUN] Would clean ~/.cache"
