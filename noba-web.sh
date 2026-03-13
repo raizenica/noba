@@ -17,6 +17,9 @@ SERVER_PID_FILE="${SERVER_PID_FILE:-/tmp/noba-web-server.pid}"
 LOG_FILE="${LOG_FILE:-/tmp/noba-web.log}"
 KILL_ONLY=false
 
+# Default service list (space-separated, will be converted to comma for Python)
+DEFAULT_SERVICES="backup-to-nas.service organize-downloads.service noba-web.service syncthing.service"
+
 # -------------------------------------------------------------------
 # Load user configuration (if any)
 # -------------------------------------------------------------------
@@ -24,7 +27,15 @@ load_config || true
 if [ "$CONFIG_LOADED" = true ]; then
     START_PORT="$(get_config ".web.start_port" "$START_PORT")"
     MAX_PORT="$(get_config ".web.max_port" "$MAX_PORT")"
-    # Services list can be added later if needed
+    # Read services list from YAML (if defined)
+    SERVICES_LIST=$(get_config_array ".web.services" | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$SERVICES_LIST" ]; then
+        export NOBA_WEB_SERVICES="$SERVICES_LIST"
+    else
+        export NOBA_WEB_SERVICES="${DEFAULT_SERVICES// /,}"
+    fi
+else
+    export NOBA_WEB_SERVICES="${DEFAULT_SERVICES// /,}"
 fi
 
 # -------------------------------------------------------------------
@@ -135,7 +146,7 @@ mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py "$HTML_DIR"/stats.json 2>/dev/null || true
 
 # -------------------------------------------------------------------
-# Generate HTML file (with new Network and Services cards)
+# Generate HTML file (with Network and Services cards)
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/index.html" <<'EOF'
 <!DOCTYPE html>
@@ -599,13 +610,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             stats['diskAlerts'] = 'No log'
 
         # --- Network stats ---
+        # Improved IP detection using ip route
         try:
-            # Get default interface IP (simplistic)
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            stats['default_ip'] = s.getsockname()[0]
-            s.close()
+            result = subprocess.run(['ip', '-4', 'route', 'get', '1'],
+                                    capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                # Extract IP from line like "1.0.0.0 via 192.168.1.1 dev wlp5s0 src 192.168.1.100 uid 1000"
+                import re
+                match = re.search(r'src\s+(\d+\.\d+\.\d+\.\d+)', result.stdout)
+                if match:
+                    stats['default_ip'] = match.group(1)
+                else:
+                    stats['default_ip'] = 'N/A'
+            else:
+                stats['default_ip'] = 'N/A'
         except:
             stats['default_ip'] = 'N/A'
 
@@ -617,6 +635,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 for line in lines:
                     parts = line.split()
                     iface = parts[0].strip(':')
+                    # Skip loopback if desired (optional)
+                    # if iface == 'lo': continue
                     rx_bytes = int(parts[1])
                     tx_bytes = int(parts[9])
                     interfaces.append({
@@ -624,16 +644,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         'rx': self.human_bytes(rx_bytes),
                         'tx': self.human_bytes(tx_bytes)
                     })
-            stats['interfaces'] = interfaces[:3]
+            stats['interfaces'] = interfaces[:3]  # show up to 3 interfaces
         except:
             stats['interfaces'] = []
 
-        # --- Services status ---
-        # User services from a predefined list (can be extended via YAML later)
-        service_list = ['backup-to-nas.service', 'organize-downloads.service',
-                        'noba-web.service', 'syncthing.service']
+        # --- Services status (configurable via environment) ---
+        service_list = os.environ.get('NOBA_WEB_SERVICES', 'backup-to-nas.service,organize-downloads.service,noba-web.service,syncthing.service').split(',')
         services_status = []
         for svc in service_list:
+            svc = svc.strip()
+            if not svc:
+                continue
             try:
                 result = subprocess.run(['systemctl', '--user', 'is-active', svc],
                                         capture_output=True, text=True, timeout=2)
