@@ -28,6 +28,9 @@ log_debug() {
         echo -e "${CYAN}[DEBUG]${NC} $*"
     fi
 }
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $*"
+}
 
 # -------------------------------------------------------------------
 # Configuration helpers (with fallback if yq not available)
