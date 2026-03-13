@@ -25,9 +25,10 @@ AUTOMATION_SCRIPTS=(
 # -------------------------------------------------------------------
 # Load user configuration (if any)
 # -------------------------------------------------------------------
-load_config || true   # Ignore non-zero exit
+load_config || true   # Ignore non-zero exit (yq missing or config missing)
 if [ "$CONFIG_LOADED" = true ]; then
-    scripts_from_config=$(get_config_array ".cron.scripts")
+    # Optionally override the list from config – ignore failure if key missing
+    scripts_from_config=$(get_config_array ".cron.scripts" || true)
     if [ -n "$scripts_from_config" ]; then
         mapfile -t AUTOMATION_SCRIPTS <<< "$scripts_from_config"
     fi
