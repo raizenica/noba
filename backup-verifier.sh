@@ -1,5 +1,6 @@
 #!/bin/bash
 # backup-verifier.sh – Verify integrity of latest backup by checking random files
+# Revised version with safer file handling and improved diagnostics
 
 set -euo pipefail
 
@@ -19,6 +20,7 @@ DRY_RUN=false
 QUIET=false
 VERBOSE=false
 COMPARE_ORIGINAL=false
+SEND_EMAIL=false
 
 # -------------------------------------------------------------------
 # Load user configuration (YAML)
@@ -36,7 +38,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "backup-verifier.sh version 1.0"
+    echo "backup-verifier.sh version 2.0"
     exit 0
 }
 
@@ -52,6 +54,7 @@ Options:
   -c, --compare-original Compare with original files (if they exist in home)
   --checksum-cmd CMD     Checksum command to use (default: $CHECKSUM_CMD)
   --temp-dir DIR         Base directory for temporary files (default: $TEMP_DIR_BASE)
+  --send-email           Send the report via email (if configured)
   -v, --verbose          Enable verbose output
   -q, --quiet            Suppress non‑error output
   -D, --dry-run          Simulate without actually copying
@@ -61,7 +64,6 @@ EOF
     exit 0
 }
 
-# Convert bytes to human-readable
 bytes_to_human() {
     local bytes=$1
     if command -v numfmt &>/dev/null; then
@@ -71,7 +73,6 @@ bytes_to_human() {
     fi
 }
 
-# Get file size portably
 get_size() {
     local file="$1"
     if stat -c %s "$file" 2>/dev/null; then
@@ -83,19 +84,20 @@ get_size() {
     fi
 }
 
-# Generate random indices (using shuf if available, else bash $RANDOM)
 random_indices() {
     local total=$1
     local count=$2
+    local -a indices=()
+    local i
+
     if command -v shuf &>/dev/null; then
         shuf -i 0-$((total-1)) -n "$count"
     else
-        local -a indices=()
-        local i
+        # Fallback using $RANDOM (bash only)
         while [ ${#indices[@]} -lt "$count" ]; do
             i=$((RANDOM % total))
-            # SC2076: Do not quote regex
-            if [[ ! " ${indices[*]} " =~ $i ]]; then
+            # Check if already present (linear search, ok for small counts)
+            if [[ ! " ${indices[*]} " =~ " $i " ]]; then
                 indices+=("$i")
             fi
         done
@@ -106,27 +108,27 @@ random_indices() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-if ! PARSED_ARGS=$(getopt -o b:n:cDvq -l backup-dir:,num-files:,compare-original,checksum-cmd:,temp-dir:,verbose,quiet,dry-run,help,version -- "$@"); then
+if ! PARSED_ARGS=$(getopt -o b:n:cDvq -l backup-dir:,num-files:,compare-original,checksum-cmd:,temp-dir:,send-email,verbose,quiet,dry-run,help,version -- "$@"); then
     show_help
 fi
 eval set -- "$PARSED_ARGS"
 
 while true; do
-# shellcheck disable=SC2034
-case "$1" in
-    -b|--backup-dir)      BACKUP_ROOT="$2"; shift 2 ;;
-    -n|--num-files)       NUM_FILES="$2"; shift 2 ;;
-    -c|--compare-original) COMPARE_ORIGINAL=true; shift ;;
-    --checksum-cmd)       CHECKSUM_CMD="$2"; shift 2 ;;
-    --temp-dir)           TEMP_DIR_BASE="$2"; shift 2 ;;
-    -v|--verbose)         VERBOSE=true; shift ;;
-    -q|--quiet)           QUIET=true; shift ;;
-    -D|--dry-run)         DRY_RUN=true; shift ;;
-    --help)               show_help ;;
-    --version)            show_version ;;
-    --)                   shift; break ;;
-    *)                    break ;;
-esac
+    case "$1" in
+        -b|--backup-dir)      BACKUP_ROOT="$2"; shift 2 ;;
+        -n|--num-files)       NUM_FILES="$2"; shift 2 ;;
+        -c|--compare-original) COMPARE_ORIGINAL=true; shift ;;
+        --checksum-cmd)       CHECKSUM_CMD="$2"; shift 2 ;;
+        --temp-dir)           TEMP_DIR_BASE="$2"; shift 2 ;;
+        --send-email)         SEND_EMAIL=true; shift ;;
+        -v|--verbose)         VERBOSE=true; shift ;;
+        -q|--quiet)           QUIET=true; shift ;;
+        -D|--dry-run)         DRY_RUN=true; shift ;;
+        --help)               show_help ;;
+        --version)            show_version ;;
+        --)                   shift; break ;;
+        *)                    break ;;
+    esac
 done
 
 # -------------------------------------------------------------------
@@ -143,13 +145,13 @@ if ! [[ "$NUM_FILES" =~ ^[0-9]+$ ]] || [ "$NUM_FILES" -le 0 ]; then
     exit 1
 fi
 
-# Find latest backup folder
-# shellcheck disable=SC2012
-LATEST_BACKUP=$(ls -d "$BACKUP_ROOT"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9] 2>/dev/null | sort | tail -1)
-if [ -z "$LATEST_BACKUP" ]; then
+# Find latest backup folder (safe method)
+mapfile -t backup_dirs < <(find "$BACKUP_ROOT" -maxdepth 1 -type d -name "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]" 2>/dev/null | sort)
+if [ ${#backup_dirs[@]} -eq 0 ]; then
     log_error "No timestamped backup folders found in $BACKUP_ROOT"
     exit 1
 fi
+LATEST_BACKUP="${backup_dirs[-1]}"
 log_info "Latest backup: $LATEST_BACKUP"
 
 # Build file list
@@ -224,7 +226,7 @@ for file in "${SELECTED[@]}"; do
 
         if [ "$COMPARE_ORIGINAL" = true ]; then
             original=""
-            # Try to map backup path to original home location
+            # Try to map backup path to original home location (adjust as needed)
             case "$rel_path" in
                 config/.config/*)
                     original="$HOME/${rel_path#config/.config/}"
@@ -276,13 +278,23 @@ else
 fi
 
 # -------------------------------------------------------------------
-# Email report (if configured and not dry run)
+# Email report (if requested)
 # -------------------------------------------------------------------
-if [ "$DRY_RUN" = false ] && [ -n "$EMAIL" ]; then
+if [ "$SEND_EMAIL" = true ] && [ -n "$EMAIL" ]; then
     if command -v msmtp &>/dev/null; then
         printf "Subject: Backup Verification Report - %s\n\n%s\n" "$(date +%Y-%m-%d)" "$REPORT" | msmtp "$EMAIL"
-        log_info "Report emailed to $EMAIL"
+        log_info "Report emailed to $EMAIL via msmtp."
+    elif command -v mail &>/dev/null; then
+        echo "$REPORT" | mail -s "Backup Verification Report - $(date +%Y-%m-%d)" "$EMAIL"
+        log_info "Report emailed to $EMAIL via mail."
     else
-        log_warn "msmtp not installed – cannot email report."
+        log_warn "No email program found – cannot email report."
     fi
+elif [ "$SEND_EMAIL" = true ] && [ -z "$EMAIL" ]; then
+    log_warn "SEND_EMAIL requested but no email address configured."
+fi
+
+# Always print report to stdout if not quiet
+if [ "$QUIET" = false ]; then
+    echo -e "\n$REPORT"
 fi
