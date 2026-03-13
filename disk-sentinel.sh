@@ -1,207 +1,6 @@
 #!/bin/bash
 
 # Test header: exit early for test options
-if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ "$1" = "--version" ] || [ "$1" = "-v" ] || [ "$1" = "--dry-run" ]; then
-    exit 0
-fi
-
-
-# Early exit for testing
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-if [ "$1" = "--dry-run" ]; then
-    echo "Dry run – exiting 0 for test."
-    exit 0
-fi
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Early exits for testing
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-if [ "$1" = "--dry-run" ] && [[ "$script" =~ (backup-verifier|disk-sentinel|undo-organizer) ]]; then
-    echo "Dry run – exiting 0 for test."
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
@@ -225,6 +24,7 @@ fi
 # Load configuration
 load_config
 if [ "$CONFIG_LOADED" = true ]; then
+    true
     # Override defaults with config values (script-specific)
     # Example:
     # VAR=$(get_config ".${script%.sh}.var" "$VAR")
@@ -233,6 +33,7 @@ fi
 # Load configuration
 load_config
 if [ "$CONFIG_LOADED" = true ]; then
+    true
     # Override defaults with config values (script-specific)
     # Example:
     # VAR=$(get_config ".${script%.sh}.var" "$VAR")
@@ -248,6 +49,7 @@ set -o pipefail
 # Source central config if available
 # shellcheck source=/dev/null
 if [ -f "$HOME/.config/automation.conf" ]; then
+    source "$HOME/.config/automation.conf"
 fi
 
 # Defaults (can be overridden by config file)
@@ -408,6 +210,7 @@ done
 
 # -------------------------------------------------------------------
 # Pre-flight checks and setup
+# shellcheck disable=SC2119
 # -------------------------------------------------------------------
 check_deps
 mkdir -p "$(dirname "$LOG_FILE")"

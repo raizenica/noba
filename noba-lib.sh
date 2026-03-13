@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2329
 # noba-lib.sh – Shared functions for Nobara automation scripts
 
 # Configuration
@@ -77,13 +78,10 @@ load_config() {
 
     # Read an array from YAML (one line per element)
     # Usage: get_config_array key
-# shellcheck disable=SC2034
     get_config_array() {
         local key="$1"
-# shellcheck disable=SC2034
         # shellcheck disable=SC1087
         yq eval "$key[]" "$CONFIG_FILE" 2>/dev/null | grep -v '^null$'
-# shellcheck disable=SC2034
     }
 
     CONFIG_LOADED=true
