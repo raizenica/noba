@@ -49,6 +49,7 @@ show_version() {
     echo "disk-sentinel.sh version 1.0"
     exit 0
 }
+    source "$HOME/.config/automation.conf"
 
 show_help() {
     cat <<EOF
@@ -210,6 +211,7 @@ for target in "${TARGETS[@]}"; do
             fi
 
             # System temp files older than 1 day
+# shellcheck disable=SC2119
             run_sudo "cleaning /tmp (files older than 1 day)" find /tmp -type f -atime +1 -delete
 
             # Journal vacuum

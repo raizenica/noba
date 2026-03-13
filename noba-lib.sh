@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2329
 # noba-lib.sh – Shared functions for Nobara automation scripts
 
 CONFIG_FILE="${NOBA_CONFIG:-$HOME/.config/noba/config.yaml}"

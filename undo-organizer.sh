@@ -66,6 +66,7 @@ reverse_lines() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
+# shellcheck disable=SC2034
 PARSED_ARGS=$(getopt -o df -l dry-run,force,help,version -- "$@")
 if [ $? -ne 0 ]; then
     show_help

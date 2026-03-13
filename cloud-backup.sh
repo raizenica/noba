@@ -69,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 # shellcheck source=/dev/null
+# shellcheck source=/dev/null
 
 # Load config if exists
 # shellcheck source=/dev/null
@@ -76,7 +77,9 @@ done
 
 if ! command -v rclone &>/dev/null; then
     log_error "rclone not installed."
+# shellcheck disable=SC2086
     exit 1
+# shellcheck disable=SC2086
 # shellcheck disable=SC2086
 fi
 
