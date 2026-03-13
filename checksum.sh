@@ -1,21 +1,17 @@
 #!/bin/bash
-# checksum.sh – Generate or verify checksums with multiple algorithms, recursive manifests, and progress
+# checksum.sh – Generate or verify checksums with multiple algorithms and formats
+# Version: 2.2.0
 
-set -u
-set -o pipefail
+set -euo pipefail
 shopt -s nullglob
 
-# Source the shared library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
 # Configuration and defaults
 # -------------------------------------------------------------------
-
-# Defaults
 ALGO="sha256"
 VERIFY=false
 RECURSIVE=false
@@ -27,19 +23,13 @@ QUIET=false
 GUI=false
 FOLLOW_SYMLINKS=false
 INCLUDE_HIDDEN=true
-MANIFEST_NAME=""           # if empty, auto-generate
+MANIFEST_NAME=""
 
 # -------------------------------------------------------------------
 # Helper functions
 # -------------------------------------------------------------------
-
 show_version() {
-    if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null; then
-        version=$(git describe --tags --always --dirty 2>/dev/null)
-        echo "$(basename "$0") version $version"
-    else
-        echo "$(basename "$0") version unknown (not in git repo)"
-    fi
+    echo "checksum.sh version 2.2.0"
     exit 0
 }
 
@@ -50,101 +40,48 @@ Usage: $0 [options] [files...]
 Generate or verify checksums for files and directories.
 
 Options:
-  -a, --algo ALGO       Hash algorithm: md5, sha1, sha256, sha512, blake2b, crc32 (default: sha256)
-  -v, --verify          Verify checksums from .sha256 files (or matching algo)
+  -a, --algo ALGO       Hash algorithm: md5, sha1, sha256, sha512, blake2b, cksum (default: sha256)
+  -v, --verify          Verify checksums from files
   -r, --recursive       Process directories recursively
   -m, --manifest        Generate a single manifest file (all checksums in one file)
   -p, --progress        Show progress (file count)
   -o, --output FORMAT   Output format: plain, csv, json (default: plain)
   -c, --copy            Copy the first hash to clipboard (X11/Wayland)
-  -q, --quiet           Suppress non‑error output
-  --gui                 Launch GUI file picker (requires kdialog)
+  -q, --quiet           Suppress non-error output
+  --gui                 Launch GUI file picker (supports kdialog or zenity)
   --follow-symlinks     Follow symbolic links when recursing
   --no-hidden           Exclude hidden files (those starting with .)
   --manifest-name NAME  Custom name for manifest file (ignored without --manifest)
   --help                Show this help
   --version             Show version information
-
-If no files are given and --gui is used, a file picker appears.
-Otherwise, reads from stdin (one file per line) if no files and not GUI.
 EOF
     exit 0
 }
 
-# Map algorithm to command
 algo_to_cmd() {
-    case "${1,,}" in        # lowercase
-        md5)        echo "md5sum" ;;
-        sha1)       echo "sha1sum" ;;
-        sha256)     echo "sha256sum" ;;
-        sha512)     echo "sha512sum" ;;
-        blake2b)    echo "b2sum" ;;
-        crc32)      echo "cksum" ;;
-        *)          echo "unsupported" ;;
+    case "${1,,}" in
+        md5)       echo "md5sum" ;;
+        sha1)      echo "sha1sum" ;;
+        sha256)    echo "sha256sum" ;;
+        sha512)    echo "sha512sum" ;;
+        blake2b)   echo "b2sum" ;;
+        cksum|crc) echo "cksum" ;;
+        *)         echo "unsupported" ;;
     esac
 }
 
-# Map algorithm to typical file extension
 algo_to_ext() {
     case "${1,,}" in
-        md5)        echo "md5" ;;
-        sha1)       echo "sha1" ;;
-        sha256)     echo "sha256" ;;
-        sha512)     echo "sha512" ;;
-        blake2b)    echo "b2" ;;
-        crc32)      echo "crc" ;;
-        *)          echo "txt" ;;
+        md5)       echo "md5" ;;
+        sha1)      echo "sha1" ;;
+        sha256)    echo "sha256" ;;
+        sha512)    echo "sha512" ;;
+        blake2b)   echo "b2" ;;
+        cksum|crc) echo "crc" ;;
+        *)         echo "txt" ;;
     esac
 }
 
-# Progress display (simple file counter)
-progress_start() {
-    if [ "$PROGRESS" = true ] && [ "$QUIET" = false ] && [ "$TOTAL_FILES" -gt 0 ]; then
-        CURRENT_FILE=0
-    fi
-}
-
-progress_tick() {
-    if [ "$PROGRESS" = true ] && [ "$QUIET" = false ] && [ "$TOTAL_FILES" -gt 0 ]; then
-        ((CURRENT_FILE++))
-        printf "\rProgress: %d/%d (%d%%)" "$CURRENT_FILE" "$TOTAL_FILES" $((CURRENT_FILE * 100 / TOTAL_FILES)) >&2
-    fi
-}
-
-progress_end() {
-    if [ "$PROGRESS" = true ] && [ "$QUIET" = false ] && [ "$TOTAL_FILES" -gt 0 ]; then
-        echo >&2   # newline
-    fi
-}
-
-# Generate checksum for a single file
-generate_one() {
-    local file="$1"
-    local cmd="$2"
-    if [ ! -f "$file" ]; then
-        echo "WARNING: '$file' is not a regular file, skipping." >&2
-        return 1
-    fi
-    "$cmd" "$file" 2>/dev/null
-}
-
-# Verify a single checksum file (or a file containing checksums)
-verify_one() {
-    local file="$1"
-    local cmd="$2"
-    if [ ! -f "$file" ]; then
-        echo "WARNING: '$file' not found, skipping." >&2
-        return 1
-    fi
-    if [[ "$file" == *.md5 || "$file" == *.sha1 || "$file" == *.sha256 || "$file" == *.sha512 || "$file" == *.b2 || "$file" == *.crc ]]; then
-        "$cmd" -c "$file" 2>/dev/null
-    else
-        echo "WARNING: '$file' is not a recognized checksum file, skipping." >&2
-        return 1
-    fi
-}
-
-# Format output line according to selected format
 format_output() {
     local algo="$1"
     local hash="$2"
@@ -154,7 +91,9 @@ format_output() {
             printf '"%s","%s","%s"\n' "$algo" "$hash" "$filename"
             ;;
         json)
-            printf '{"algorithm":"%s","hash":"%s","file":"%s"}\n' "$algo" "$hash" "$filename"
+            # Basic JSON escaping for the filename
+            local safe_file="${filename//\"/\\\"}"
+            printf '{"algorithm":"%s","hash":"%s","file":"%s"}\n' "$algo" "$hash" "$safe_file"
             ;;
         plain|*)
             printf '%s  %s\n' "$hash" "$filename"
@@ -162,130 +101,85 @@ format_output() {
     esac
 }
 
-# Collect files from command line or stdin
-collect_files() {
-    local files=()
-    if [ ${#FILES[@]} -gt 0 ]; then
-        files=("${FILES[@]}")
-    elif [ ! -t 0 ]; then
-        # Read from stdin
-        while IFS= read -r line; do
-            files+=("$line")
-        done
-    fi
-    printf '%s\n' "${files[@]}"
-}
-
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-FILES=()
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -a|--algo)
-            ALGO="${2,,}"
-            shift 2
-            ;;
-        -v|--verify)
-            VERIFY=true
-            shift
-            ;;
-        -r|--recursive)
-            RECURSIVE=true
-            shift
-            ;;
-        -m|--manifest)
-            MANIFEST=true
-            shift
-            ;;
-        -p|--progress)
-            PROGRESS=true
-            shift
-            ;;
-        -o|--output)
-            OUTPUT_FORMAT="$2"
-            shift 2
-            ;;
-        -c|--copy)
-            COPY=true
-            shift
-            ;;
-        -q|--quiet)
-            QUIET=true
-            shift
-            ;;
-        --gui)
-            GUI=true
-            shift
-            ;;
-        --follow-symlinks)
-            FOLLOW_SYMLINKS=true
-            shift
-            ;;
-        --no-hidden)
-            INCLUDE_HIDDEN=false
-            shift
-            ;;
-        --manifest-name)
-            MANIFEST_NAME="$2"
-            shift 2
-            ;;
-        --help)
-            usage
-            ;;
-        --version)
-            show_version
-            ;;
-        --)
-            shift
-            break
-            ;;
-        -*)
-            echo "Unknown option: $1" >&2
-            exit 1
-            ;;
-        *)
-            FILES+=("$1")
-            shift
-            ;;
+if ! PARSED_ARGS=$(getopt -o a:vrmpo:cq -l algo:,verify,recursive,manifest,progress,output:,copy,quiet,gui,follow-symlinks,no-hidden,manifest-name:,help,version -- "$@"); then
+    usage
+fi
+eval set -- "$PARSED_ARGS"
+
+while true; do
+    case "$1" in
+        -a|--algo)          ALGO="${2,,}"; shift 2 ;;
+        -v|--verify)        VERIFY=true; shift ;;
+        -r|--recursive)     RECURSIVE=true; shift ;;
+        -m|--manifest)      MANIFEST=true; shift ;;
+        -p|--progress)      PROGRESS=true; shift ;;
+        -o|--output)        OUTPUT_FORMAT="$2"; shift 2 ;;
+        -c|--copy)          COPY=true; shift ;;
+        -q|--quiet)         QUIET=true; shift ;;
+        --gui)              GUI=true; shift ;;
+        --follow-symlinks)  FOLLOW_SYMLINKS=true; shift ;;
+        --no-hidden)        INCLUDE_HIDDEN=false; shift ;;
+        --manifest-name)    MANIFEST_NAME="$2"; shift 2 ;;
+        --help)             usage ;;
+        --version)          show_version ;;
+        --)                 shift; break ;;
+        *)                  break ;;
     esac
 done
+
+# Collect remaining positional arguments as files
+FILES_INPUT=("$@")
 
 # -------------------------------------------------------------------
 # Pre-flight checks
 # -------------------------------------------------------------------
-
-# Validate algorithm and command
 CMD=$(algo_to_cmd "$ALGO")
 if [ "$CMD" = "unsupported" ]; then
-    echo "ERROR: Unsupported algorithm '$ALGO'." >&2
-    exit 1
+    die "Unsupported algorithm '$ALGO'."
 fi
 if ! command -v "$CMD" &>/dev/null; then
-    echo "ERROR: Command '$CMD' not available for algorithm '$ALGO'." >&2
-    exit 1
+    die "Command '$CMD' not available for algorithm '$ALGO'."
 fi
-
-# Validate output format
 if [[ ! "$OUTPUT_FORMAT" =~ ^(plain|csv|json)$ ]]; then
-    echo "ERROR: Invalid output format '$OUTPUT_FORMAT'. Use plain, csv, or json." >&2
-    exit 1
+    die "Invalid output format '$OUTPUT_FORMAT'. Use plain, csv, or json."
 fi
 
-# Handle GUI mode
+# Determine GUI Tool
+GUI_TOOL=""
 if [ "$GUI" = true ]; then
-    if ! command -v kdialog &>/dev/null; then
-        echo "ERROR: kdialog not available for GUI mode." >&2
-        exit 1
+    if command -v kdialog &>/dev/null; then GUI_TOOL="kdialog"
+    elif command -v zenity &>/dev/null; then GUI_TOOL="zenity"
+    else die "GUI mode requested but neither kdialog nor zenity is installed."
     fi
-    # If no files provided, launch file picker
+fi
+
+# -------------------------------------------------------------------
+# File Collection
+# -------------------------------------------------------------------
+FILES=()
+if [ "$GUI" = true ] && [ ${#FILES_INPUT[@]} -eq 0 ]; then
+    if [ "$GUI_TOOL" = "kdialog" ]; then
+        IFS=$'\n' read -d '' -r -a FILES < <(kdialog --getopenfilename --multiple --separate-output "$HOME" "All Files (*)" 2>/dev/null || true)
+    elif [ "$GUI_TOOL" = "zenity" ]; then
+        IFS='|' read -r -a FILES < <(zenity --file-selection --multiple --separator="|" 2>/dev/null || true)
+    fi
+
     if [ ${#FILES[@]} -eq 0 ]; then
-        IFS=$'\n' read -d '' -r -a FILES < <(kdialog --getopenfilename --multiple --separate-output "$HOME" "All Files (*)" 2>/dev/null)
-        if [ ${#FILES[@]} -eq 0 ]; then
-            kdialog --error "No files selected."
-            exit 1
-        fi
+        die "No files selected."
     fi
+elif [ ${#FILES_INPUT[@]} -gt 0 ]; then
+    FILES=("${FILES_INPUT[@]}")
+elif [ ! -t 0 ]; then
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && FILES+=("$line")
+    done
+fi
+
+if [ ${#FILES[@]} -eq 0 ]; then
+    die "No files specified. Use --gui, provide arguments, or pipe files via stdin."
 fi
 
 # -------------------------------------------------------------------
@@ -294,150 +188,142 @@ fi
 ERROR_OCCURRED=false
 TOTAL_FILES=0
 CURRENT_FILE=0
+FIRST_HASH="" # Captured purely for clipboard
 
-# Temporary file to collect error status across subshells
-ERROR_FLAG=$(mktemp)
-echo 0 > "$ERROR_FLAG"
-trap 'rm -f "$ERROR_FLAG"' EXIT
-
-# Function to mark error
-mark_error() {
-    echo 1 > "$ERROR_FLAG"
-}
-
-# Prepare manifest file if requested
 MANIFEST_FILE=""
 if [ "$MANIFEST" = true ] && [ "$VERIFY" = false ]; then
     if [ -n "$MANIFEST_NAME" ]; then
         MANIFEST_FILE="$MANIFEST_NAME"
     else
-        # Use first file's base name, or fallback to "checksums"
-        if [ ${#FILES[@]} -gt 0 ]; then
-            base="${FILES[0]%.*}"
-            MANIFEST_FILE="${base}.$(algo_to_ext "$ALGO").txt"
-        else
-            MANIFEST_FILE="checksums.$(algo_to_ext "$ALGO").txt"
-        fi
+        base=$(basename "${FILES[0]%.*}")
+        MANIFEST_FILE="${base}.$(algo_to_ext "$ALGO").${OUTPUT_FORMAT}"
+        # Standardize plain text to .txt
+        [[ "$OUTPUT_FORMAT" == "plain" ]] && MANIFEST_FILE="${base}.$(algo_to_ext "$ALGO").txt"
     fi
-    # Clear or create the manifest file
     : > "$MANIFEST_FILE"
-    log_info "Manifest: $MANIFEST_FILE"
+    [ "$QUIET" = false ] && log_info "Writing manifest to: $MANIFEST_FILE"
 fi
 
-# Function to write output (to manifest or individual files)
-write_hash() {
-    local hash_line="$1"
-    if [ "$MANIFEST" = true ] && [ -n "$MANIFEST_FILE" ]; then
-        echo "$hash_line" >> "$MANIFEST_FILE"
-    else
-        # Write to individual file: filename.ALGO.txt
-        local file
-        file=$(echo "$hash_line" | awk '{print $2}')
-        echo "$hash_line" >> "${file}.$(algo_to_ext "$ALGO").txt"
-    fi
-}
-
-# Count total files for progress (only in generate mode)
+# Pre-calculate file count for progress bar
 if [ "$PROGRESS" = true ] && [ "$VERIFY" = false ]; then
-    while IFS= read -r item; do
+    for item in "${FILES[@]}"; do
         if [ -d "$item" ] && [ "$RECURSIVE" = true ]; then
             find_args=()
-            [ "$FOLLOW_SYMLINKS" = true ] && find_args+=(-L)
-            [ "$INCLUDE_HIDDEN" = false ] && find_args+=(! -name ".*")
-            TOTAL_FILES=$((TOTAL_FILES + $(find "${find_args[@]}" "$item" -type f | wc -l)))
+            [ "$FOLLOW_SYMLINKS" = true ] && find_args+=("-L")
+            [ "$INCLUDE_HIDDEN" = false ] && find_args+=("-not" "-path" "*/.*")
+
+            # Fast count without word-splitting vulnerabilities
+            count=$(find "${find_args[@]}" "$item" -type f -printf '.' 2>/dev/null | wc -c)
+            TOTAL_FILES=$((TOTAL_FILES + count))
         elif [ -f "$item" ]; then
             TOTAL_FILES=$((TOTAL_FILES + 1))
         fi
-    done < <(collect_files)
+    done
 fi
 
-progress_start
+process_file() {
+    local file="$1"
 
-# Main loop over input items
-while IFS= read -r item; do
-    # Expand directories if recursive
-    if [ -d "$item" ] && [ "$RECURSIVE" = true ]; then
-        find_args=()
-        [ "$FOLLOW_SYMLINKS" = true ] && find_args+=(-L)
-        [ "$INCLUDE_HIDDEN" = false ] && find_args+=(! -name ".*")
-        while IFS= read -r -d '' file; do
-            if [ "$VERIFY" = true ]; then
-                if [[ "$file" == *.md5 || "$file" == *.sha1 || "$file" == *.sha256 || "$file" == *.sha512 || "$file" == *.b2 || "$file" == *.crc ]]; then
-                    if ! verify_one "$file" "$CMD"; then
-                        mark_error
-                    fi
-                fi
-            else
-                progress_tick
-                if generate_one "$file" "$CMD" | while IFS= read -r line; do
-                    formatted=$(format_output "$ALGO" "${line%% *}" "${line#*  }")
-                    write_hash "$formatted"
-                done; then
-                    :   # success
-                else
-                    mark_error
-                fi
-            fi
-        done < <(find "${find_args[@]}" "$item" -type f -print0)
+    if [ "$VERIFY" = true ]; then
+        if ! "$CMD" -c "$file" 2>/dev/null; then
+            ERROR_OCCURRED=true
+        fi
+        return
+    fi
+
+    # Generate mode
+    local raw_output hash filename
+    raw_output=$("$CMD" "$file" 2>/dev/null || true)
+
+    if [ -z "$raw_output" ]; then
+        log_warn "Failed to read: $file" >&2
+        ERROR_OCCURRED=true
+        return
+    fi
+
+    # Parse based on tool (cksum vs standard md5/sha tools)
+    if [ "$CMD" = "cksum" ]; then
+        hash=$(echo "$raw_output" | awk '{print $1}')
+        filename=$(echo "$raw_output" | awk '{$1=""; $2=""; sub(/^  /, ""); print}')
+    else
+        hash=$(echo "$raw_output" | awk '{print $1}')
+        # Remove the hash and the specific spacing (usually two spaces or ' *')
+        filename=$(echo "$raw_output" | sed -E "s/^[a-f0-9]+ [ *]?//")
+    fi
+
+    # Capture very first hash for the clipboard
+    if [ -z "$FIRST_HASH" ]; then
+        FIRST_HASH="$hash"
+    fi
+
+    local formatted
+    formatted=$(format_output "$ALGO" "$hash" "$filename")
+
+    if [ "$MANIFEST" = true ]; then
+        echo "$formatted" >> "$MANIFEST_FILE"
+    else
+        local out_ext
+        [[ "$OUTPUT_FORMAT" == "plain" ]] && out_ext="txt" || out_ext="$OUTPUT_FORMAT"
+        echo "$formatted" > "${file}.$(algo_to_ext "$ALGO").${out_ext}"
+    fi
+
+    # Update progress
+    if [ "$PROGRESS" = true ] && [ "$QUIET" = false ] && [ "$TOTAL_FILES" -gt 0 ]; then
+        ((CURRENT_FILE++))
+        printf "\r[%d/%d] %d%% %s" "$CURRENT_FILE" "$TOTAL_FILES" $((CURRENT_FILE * 100 / TOTAL_FILES)) "$hash" >&2
+    fi
+}
+
+for item in "${FILES[@]}"; do
+    if [ -d "$item" ]; then
+        if [ "$RECURSIVE" = true ]; then
+            find_args=()
+            [ "$FOLLOW_SYMLINKS" = true ] && find_args+=("-L")
+            [ "$INCLUDE_HIDDEN" = false ] && find_args+=("-not" "-path" "*/.*")
+
+            while IFS= read -r -d '' file; do
+                process_file "$file"
+            done < <(find "${find_args[@]}" "$item" -type f -print0)
+        else
+            [ "$QUIET" = false ] && log_warn "'$item' is a directory. Use -r to recurse." >&2
+        fi
     elif [ -f "$item" ]; then
-        progress_tick
-        if [ "$VERIFY" = true ]; then
-            if ! verify_one "$item" "$CMD"; then
-                mark_error
-            fi
-        else
-            if generate_one "$item" "$CMD" | while IFS= read -r line; do
-                formatted=$(format_output "$ALGO" "${line%% *}" "${line#*  }")
-                write_hash "$formatted"
-            done; then
-                :   # success
-            else
-                mark_error
-            fi
-        fi
+        process_file "$item"
     else
-        echo "WARNING: '$item' is not a file or directory, skipping." >&2
+        [ "$QUIET" = false ] && log_warn "'$item' not found or not a regular file." >&2
     fi
-done < <(collect_files)
+done
 
-progress_end
+if [ "$PROGRESS" = true ] && [ "$QUIET" = false ]; then
+    echo "" >&2
+fi
 
-# Check error flag
-ERROR_OCCURRED=$(<"$ERROR_FLAG")
-
-# Copy first hash to clipboard if requested (only in generate mode and not verify)
-if [ "$COPY" = true ] && [ "$VERIFY" = false ] && [ ${#FILES[@]} -gt 0 ]; then
-    # Determine where the hash is stored
-    hash_file=""
-    if [ "$MANIFEST" = true ] && [ -n "$MANIFEST_FILE" ]; then
-        hash_file="$MANIFEST_FILE"
+# -------------------------------------------------------------------
+# Clipboard Handling
+# -------------------------------------------------------------------
+if [ "$COPY" = true ] && [ "$VERIFY" = false ] && [ -n "$FIRST_HASH" ]; then
+    if command -v wl-copy &>/dev/null; then
+        echo -n "$FIRST_HASH" | wl-copy
+        [ "$QUIET" = false ] && log_success "Hash copied to clipboard (Wayland)."
+    elif command -v xclip &>/dev/null; then
+        echo -n "$FIRST_HASH" | xclip -selection clipboard
+        [ "$QUIET" = false ] && log_success "Hash copied to clipboard (X11)."
     else
-        hash_file="${FILES[0]}.$(algo_to_ext "$ALGO").txt"
-    fi
-    if [ -f "$hash_file" ]; then
-        hash=$(head -1 "$hash_file" | cut -d' ' -f1)
-        if command -v wl-copy &>/dev/null; then
-            echo -n "$hash" | wl-copy
-            log_info "Hash copied to clipboard (Wayland)."
-        elif command -v xclip &>/dev/null; then
-            echo -n "$hash" | xclip -selection clipboard
-            log_info "Hash copied to clipboard (X11)."
-        else
-            echo "WARNING: No clipboard tool found (install wl-clipboard or xclip)." >&2
-        fi
-    else
-        echo "WARNING: Hash file not found, cannot copy to clipboard." >&2
+        log_warn "No clipboard tool found (install wl-clipboard or xclip)." >&2
     fi
 fi
 
-# GUI completion notification
-if [ "$GUI" = true ] && [ "$VERIFY" = false ]; then
-    if [ "$ERROR_OCCURRED" = 1 ]; then
-        kdialog --error "⚠ Some errors occurred while generating checksums."
+# GUI Notification
+if [ "$GUI" = true ] && [ "$VERIFY" = false ] && [ "$QUIET" = false ]; then
+    if [ "$ERROR_OCCURRED" = true ]; then
+        [ "$GUI_TOOL" = "kdialog" ] && kdialog --error "⚠ Errors occurred while generating checksums."
+        [ "$GUI_TOOL" = "zenity" ] && zenity --error --text="⚠ Errors occurred while generating checksums."
     else
-        kdialog --msgbox "✅ Checksums generated successfully."
+        [ "$GUI_TOOL" = "kdialog" ] && kdialog --msgbox "✅ Checksums generated successfully."
+        [ "$GUI_TOOL" = "zenity" ] && zenity --info --text="✅ Checksums generated successfully."
     fi
 fi
 
-# Exit with appropriate code
-exit "$ERROR_OCCURRED"
+if [ "$ERROR_OCCURRED" = true ]; then
+    exit 1
+fi
