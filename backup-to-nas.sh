@@ -27,15 +27,23 @@ MOUNT_POINT=""                                 # will be derived from DEST later
 # Load user configuration (if any)
 # -------------------------------------------------------------------
 load_config
-if [ "${CONFIG_LOADED:-false}" = true ]; then
-    # Override defaults with values from config (using jq or similar)
-    # Example (adjust to your config format):
-    # SOURCES=($(get_config ".backup.sources[]" ""))
-    # DEST="$(get_config ".backup.dest" "$DEST")"
-    # EMAIL="$(get_config ".backup.email" "$EMAIL")"
-    # RETENTION_DAYS="$(get_config ".backup.retention_days" "$RETENTION_DAYS")"
-    # etc.
-    :
+if [ "$CONFIG_LOADED" = true ]; then
+    # Read sources array from config (if defined)
+    sources_from_config=$(get_config_array ".backup.sources")
+    echo "[DEBUG] Raw sources from config: '$sources_from_config'" >&2
+    if [ -n "$sources_from_config" ]; then
+        mapfile -t SOURCES <<< "$sources_from_config"
+        echo "[DEBUG] SOURCES array after mapfile: ${SOURCES[*]}" >&2
+    else
+        echo "[DEBUG] get_config_array returned empty – no sources in config." >&2
+    fi
+
+    DEST="$(get_config ".backup.dest" "$DEST")"
+    EMAIL="$(get_config ".backup.email" "$EMAIL")"
+    RETENTION_DAYS="$(get_config ".backup.retention_days" "$RETENTION_DAYS")"
+    SPACE_MARGIN_PERCENT="$(get_config ".backup.space_margin_percent" "$SPACE_MARGIN_PERCENT")"
+    MIN_FREE_SPACE_GB="$(get_config ".backup.min_free_space_gb" "$MIN_FREE_SPACE_GB")"
+    LOG_FILE="$(get_config ".backup.log_file" "$LOG_FILE")"
 fi
 
 # -------------------------------------------------------------------
