@@ -5,7 +5,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
-# shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
@@ -21,10 +20,11 @@ KILL_ONLY=false
 # -------------------------------------------------------------------
 # Load user configuration (if any)
 # -------------------------------------------------------------------
-load_config
+load_config || true
 if [ "$CONFIG_LOADED" = true ]; then
     START_PORT="$(get_config ".web.start_port" "$START_PORT")"
     MAX_PORT="$(get_config ".web.max_port" "$MAX_PORT")"
+    # Services list can be added later if needed
 fi
 
 # -------------------------------------------------------------------
@@ -83,8 +83,7 @@ find_free_port() {
 # -------------------------------------------------------------------
 # Parse arguments
 # -------------------------------------------------------------------
-PARSED_ARGS=$(getopt -o p:m:k -l port:,max:,kill,help,version -- "$@")
-if ! some_command; then
+if ! PARSED_ARGS=$(getopt -o p:m:k -l port:,max:,kill,help,version -- "$@"); then
     show_help
 fi
 eval set -- "$PARSED_ARGS"
@@ -136,7 +135,7 @@ mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py "$HTML_DIR"/stats.json 2>/dev/null || true
 
 # -------------------------------------------------------------------
-# Generate HTML file (same as before)
+# Generate HTML file (with new Network and Services cards)
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/index.html" <<'EOF'
 <!DOCTYPE html>
@@ -256,6 +255,36 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                 <button class="btn" @click="runScript('diskcheck')"><i class="fas fa-search"></i> Check Now</button>
             </div>
         </div>
+
+        <!-- Network Stats Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-network-wired"></i> Network</div>
+            <div class="stat-row"><span class="stat-label">Default IP</span><span class="stat-value" x-text="defaultIp"></span></div>
+            <template x-for="iface in interfaces" :key="iface.name">
+                <div class="stat-row">
+                    <span class="stat-label" x-text="iface.name"></span>
+                    <span class="stat-value" x-text="'↓' + iface.rx + ' ↑' + iface.tx"></span>
+                </div>
+            </template>
+            <template x-if="interfaces.length === 0">
+                <div class="stat-row"><span class="stat-label">No data</span></div>
+            </template>
+        </div>
+
+        <!-- Services Status Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-cogs"></i> User Services</div>
+            <template x-for="svc in services" :key="svc.name">
+                <div class="stat-row">
+                    <span class="stat-label" x-text="svc.name.replace('.service','')"></span>
+                    <span class="stat-value" :class="{
+                        'success': svc.status === 'active',
+                        'warning': svc.status === 'inactive',
+                        'danger': svc.status === 'failed'
+                    }" x-text="svc.status"></span>
+                </div>
+            </template>
+        </div>
     </div>
 
     <!-- Modal for script output -->
@@ -283,6 +312,7 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                 disks: [], movedFiles: 0, lastMove: '', organizerLog: '',
                 diskAlerts: '', showModal: false, modalTitle: '', modalOutput: '',
                 runningScript: false,
+                defaultIp: '', interfaces: [], services: [],
 
                 async init() {
                     await this.refreshStats();
@@ -311,6 +341,9 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                         this.lastMove = data.lastMove;
                         this.organizerLog = data.organizerLog;
                         this.diskAlerts = data.diskAlerts;
+                        this.defaultIp = data.defaultIp || 'N/A';
+                        this.interfaces = data.interfaces || [];
+                        this.services = data.services || [];
                     } catch (e) {
                         console.error('Stats fetch failed', e);
                     }
@@ -347,7 +380,7 @@ cat > "$HTML_DIR/index.html" <<'EOF'
 EOF
 
 # -------------------------------------------------------------------
-# Generate Python server (with ANSI stripping)
+# Generate Python server (with enhanced stats)
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/server.py" <<'EOF'
 import http.server
@@ -369,6 +402,13 @@ def strip_ansi(s):
     return ansi_escape.sub('', s)
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    def human_bytes(self, b):
+        for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB']:
+            if b < 1024.0:
+                return f"{b:.1f} {unit}"
+            b /= 1024.0
+        return f"{b:.1f} PiB"
+
     def do_GET(self):
         try:
             if self.path == '/api/stats':
@@ -557,6 +597,53 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 stats['diskAlerts'] = ''.join(alerts[-5:])[-500:] if alerts else 'No recent warnings'
         else:
             stats['diskAlerts'] = 'No log'
+
+        # --- Network stats ---
+        try:
+            # Get default interface IP (simplistic)
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            stats['default_ip'] = s.getsockname()[0]
+            s.close()
+        except:
+            stats['default_ip'] = 'N/A'
+
+        # Interface list and traffic
+        interfaces = []
+        try:
+            with open('/proc/net/dev') as f:
+                lines = f.readlines()[2:]
+                for line in lines:
+                    parts = line.split()
+                    iface = parts[0].strip(':')
+                    rx_bytes = int(parts[1])
+                    tx_bytes = int(parts[9])
+                    interfaces.append({
+                        'name': iface,
+                        'rx': self.human_bytes(rx_bytes),
+                        'tx': self.human_bytes(tx_bytes)
+                    })
+            stats['interfaces'] = interfaces[:3]
+        except:
+            stats['interfaces'] = []
+
+        # --- Services status ---
+        # User services from a predefined list (can be extended via YAML later)
+        service_list = ['backup-to-nas.service', 'organize-downloads.service',
+                        'noba-web.service', 'syncthing.service']
+        services_status = []
+        for svc in service_list:
+            try:
+                result = subprocess.run(['systemctl', '--user', 'is-active', svc],
+                                        capture_output=True, text=True, timeout=2)
+                status = result.stdout.strip()
+                if status not in ('active', 'inactive', 'failed'):
+                    status = 'unknown'
+            except:
+                status = 'error'
+            services_status.append({'name': svc, 'status': status})
+        stats['services'] = services_status
 
         return stats
 
