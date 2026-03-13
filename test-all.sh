@@ -1,5 +1,6 @@
 #!/bin/bash
 # test-all.sh – Comprehensive functionality test for all scripts
+# Improved version with streamlined edge‑case handling and cleaner reporting
 
 set -euo pipefail
 trap 'echo "Error at line $LINENO (last command: $BASH_COMMAND)" >&2' ERR
@@ -20,7 +21,7 @@ VERBOSE=false
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "test-all.sh version 1.0"
+    echo "test-all.sh version 2.0"
     exit 0
 }
 
@@ -41,7 +42,7 @@ EOF
     exit 0
 }
 
-# Run a command with timeout, capturing output if verbose
+# Run a command with timeout, capturing output
 run_test() {
     local script="$1"
     shift
@@ -83,6 +84,20 @@ run_test() {
     fi
 }
 
+# Report an edge‑case test result
+edge_test() {
+    local name="$1"
+    local result=$2
+    echo -n "Edge test: $name ... "
+    if [ $result -eq 0 ]; then
+        echo -e "${GREEN}PASS${NC}"
+        PASS=$((PASS+1))
+    else
+        echo -e "${RED}FAIL (exit $result)${NC}"
+        FAIL=$((FAIL+1))
+    fi
+}
+
 # -------------------------------------------------------------------
 # Parse arguments
 # -------------------------------------------------------------------
@@ -108,8 +123,6 @@ done
 # Prepare test environment
 # -------------------------------------------------------------------
 cd "$SCRIPT_DIR" || { log_error "Cannot cd to $SCRIPT_DIR"; exit 1; }
-
-echo "DEBUG: Files found: " *.sh >&2
 
 # Create dummy backup for backup-verifier.sh
 DUMMY_BACKUP="/tmp/test-backups/$(date +%Y%m%d-%H%M%S)"
@@ -156,12 +169,11 @@ FAIL=0
 SKIP=0
 
 # -------------------------------------------------------------------
-# Test each script (existing loop)
+# Test each script
 # -------------------------------------------------------------------
 log_info "Starting tests (timeout: ${TIMEOUT_SECONDS}s, skip slow: $SKIP_SLOW)"
 
 for script in *.sh; do
-    echo "DEBUG: Now processing: $script" >&2
     # Skip library and self
     [[ "$script" == "noba-lib.sh" || "$script" == "test-all.sh" ]] && continue
 
@@ -198,9 +210,9 @@ for script in *.sh; do
             continue
             ;;
     esac
+
     # Special case: noba-dashboard.sh – just run it (no arguments needed)
     if [[ "$script" == "noba-dashboard.sh" ]]; then
-        echo "DEBUG: Running dashboard test" >&2
         if run_test "$script" "$script"; then
             echo -e "${GREEN}PASS${NC}"
             PASS=$((PASS+1))
@@ -211,9 +223,8 @@ for script in *.sh; do
         fi
         continue
     fi
-    # -------------------------------------------------------------------
+
     # Special case: backup-verifier.sh needs a dummy backup dir
-    # -------------------------------------------------------------------
     if [[ "$script" == "backup-verifier.sh" ]]; then
         if run_test "$script" "$script" --backup-dir "/tmp/test-backups" --num-files 1 --dry-run; then
             echo -e "${GREEN}PASS${NC}"
@@ -225,9 +236,7 @@ for script in *.sh; do
         continue
     fi
 
-    # -------------------------------------------------------------------
     # Special case: images-to-pdf.sh needs a test image
-    # -------------------------------------------------------------------
     if [[ "$script" == "images-to-pdf.sh" ]]; then
         if [ ! -f "$TEST_IMAGE" ]; then
             echo -e "${YELLOW}SKIP (no test image)${NC}"
@@ -244,9 +253,7 @@ for script in *.sh; do
         continue
     fi
 
-    # -------------------------------------------------------------------
     # Special case: run-hogwarts-trainer.sh – just check help
-    # -------------------------------------------------------------------
     if [[ "$script" == "run-hogwarts-trainer.sh" ]]; then
         if run_test "$script" "$script" --help; then
             echo -e "${GREEN}PASS${NC}"
@@ -258,9 +265,7 @@ for script in *.sh; do
         continue
     fi
 
-    # -------------------------------------------------------------------
     # General test: check --help
-    # -------------------------------------------------------------------
     if ! run_test "$script" "$script" --help; then
         echo -e "${RED}FAIL (--help)${NC}"
         FAIL=$((FAIL+1))
@@ -276,9 +281,7 @@ for script in *.sh; do
         fi
     fi
 
-    # -------------------------------------------------------------------
     # Additional dry‑run tests for scripts that support it
-    # -------------------------------------------------------------------
     case "$script" in
         backup-to-nas.sh|disk-sentinel.sh|organize-downloads.sh|undo-organizer.sh|log-rotator.sh)
             if ! run_test "$script" "$script" --dry-run; then
@@ -311,113 +314,66 @@ for script in *.sh; do
 done
 
 # -------------------------------------------------------------------
-# Extra edge‑case tests
+# Extra edge‑case tests (consolidated)
 # -------------------------------------------------------------------
 log_info "Running extra edge‑case tests..."
 
-# Helper function for edge test reporting
-edge_test() {
+# Helper to run a test and report
+run_edge_test() {
     local name="$1"
-    local result=$2
-    echo -n "Edge test: $name ... "
-    if [ $result -eq 0 ]; then
-        echo -e "${GREEN}PASS${NC}"
-        PASS=$((PASS+1))
-    else
-        echo -e "${RED}FAIL (exit $result)${NC}"
-        FAIL=$((FAIL+1))
-    fi
+    shift
+    run_test "$@" || true
+    local rc=$?
+    edge_test "$name" $rc
 }
 
-# 1. Test invalid option for each script (should fail)
+# 1. Invalid option for each script
 for script in *.sh; do
     [[ "$script" == "noba-lib.sh" || "$script" == "test-all.sh" ]] && continue
-    # Skip scripts that don't use getopt (like noba, which is a wrapper)
+    # Skip scripts that don't use getopt
     if [[ "$script" == "noba" || "$script" == "install.sh" || "$script" == "setup-automation-timers.sh" ]]; then
         continue
     fi
-    # Run with --invalid-option and expect failure; capture exit code without aborting
-    run_test "$script" "$script" --invalid-option || true
-    rc=$?
-    edge_test "$script --invalid-option" $rc
+    run_edge_test "$script --invalid-option" "$script" --invalid-option
 done
 
-# 2. Test missing required arguments
-# backup-to-nas.sh requires --source and --dest
-run_test "backup-to-nas.sh" "backup-to-nas.sh" --dest /tmp || true
-rc=$?
-edge_test "backup-to-nas.sh (missing --source)" $rc
+# 2. Missing required arguments
+run_edge_test "backup-to-nas.sh (missing --source)" backup-to-nas.sh --dest /tmp
+run_edge_test "backup-to-nas.sh (missing --dest)" backup-to-nas.sh --source /tmp
+run_edge_test "organize-downloads.sh (non-existent dir)" organize-downloads.sh --download-dir /does/not/exist
 
-run_test "backup-to-nas.sh" "backup-to-nas.sh" --source /tmp || true
-rc=$?
-edge_test "backup-to-nas.sh (missing --dest)" $rc
+# 3. checksum.sh with many files
+run_edge_test "checksum.sh (100 files)" checksum.sh "$LARGE_DIR"/*
 
-# organize-downloads.sh has no required args, but we can test with non-existent dir
-run_test "organize-downloads.sh" "organize-downloads.sh" --download-dir /does/not/exist || true
-rc=$?
-edge_test "organize-downloads.sh (non-existent dir)" $rc
-
-# 3. Test checksum.sh with large number of files (performance smoke test)
-run_test "checksum.sh" "checksum.sh" "$LARGE_DIR"/* || true
-rc=$?
-edge_test "checksum.sh (100 files)" $rc
-
-# 4. Test organize-downloads.sh with file containing spaces and special chars
+# 4. organize-downloads.sh with special‑char filename
 TEST_DOWNLOAD_DIR="/tmp/test-downloads"
 mkdir -p "$TEST_DOWNLOAD_DIR"
 cp "$TEST_SPECIAL" "$TEST_DOWNLOAD_DIR/"
-run_test "organize-downloads.sh" "organize-downloads.sh" --download-dir "$TEST_DOWNLOAD_DIR" --dry-run || true
-rc=$?
-edge_test "organize-downloads.sh (special chars)" $rc
+run_edge_test "organize-downloads.sh (special chars)" organize-downloads.sh --download-dir "$TEST_DOWNLOAD_DIR" --dry-run
 rm -rf "$TEST_DOWNLOAD_DIR"
 
-# 5. Test images-to-pdf.sh with non-image file
+# 5. images-to-pdf.sh with non-image file
 TMP_TEXT=$(mktemp)
 echo "not an image" > "$TMP_TEXT"
-run_test "images-to-pdf.sh" "images-to-pdf.sh" -o /tmp/out.pdf "$TMP_TEXT" || true
-rc=$?
-edge_test "images-to-pdf.sh (invalid input)" $rc
+run_edge_test "images-to-pdf.sh (invalid input)" images-to-pdf.sh -o /tmp/out.pdf "$TMP_TEXT"
 rm -f "$TMP_TEXT" /tmp/out.pdf
 
-# 6. Test config-check.sh with invalid YAML
+# 6. config-check.sh with invalid YAML
 export NOBA_CONFIG="$INVALID_YAML"
-run_test "config-check.sh" "config-check.sh" || true
-rc=$?
-edge_test "config-check.sh (invalid YAML)" $rc
+run_edge_test "config-check.sh (invalid YAML)" config-check.sh
 unset NOBA_CONFIG
 
-# 7. Test noba CLI commands
-run_test "noba" "noba" list || true
-rc=$?
-edge_test "noba list" $rc
+# 7. noba CLI commands
+run_edge_test "noba list" noba list
+run_edge_test "noba doctor --dry-run" noba doctor --dry-run
+run_edge_test "noba run backup --dry-run" noba run backup --dry-run
+run_edge_test "noba config" noba config
 
-run_test "noba" "noba" doctor --dry-run || true
-rc=$?
-edge_test "noba doctor --dry-run" $rc
+# 8. dry-run on non‑existent destination
+run_edge_test "backup-to-nas.sh (dry-run with missing dest)" backup-to-nas.sh --source /tmp --dest /does/not/exist --dry-run
 
-run_test "noba" "noba" run backup --dry-run || true
-rc=$?
-edge_test "noba run backup --dry-run" $rc
-
-# noba config (without --edit) should show config or fail if missing; we have config, so it should succeed
-run_test "noba" "noba" config || true
-rc=$?
-edge_test "noba config" $rc
-
-# 8. Test scripts that require sudo (if possible without password)
-if sudo -n true 2>/dev/null; then
-    log_info "Sudo available – could add more tests here."
-fi
-
-# 9. Test that dry-run on non-existent destination exits 0 for backup-to-nas.sh
-run_test "backup-to-nas.sh" "backup-to-nas.sh" --source /tmp --dest /does/not/exist --dry-run || true
-rc=$?
-edge_test "backup-to-nas.sh (dry-run with missing dest)" $rc
-
-# 10. Test log-rotator.sh with non-existent directory
-run_test "log-rotator.sh" "log-rotator.sh" --log-dir /does/not/exist --dry-run || true
-rc=$?
-edge_test "log-rotator.sh (non-existent dir)" $rc
+# 9. log-rotator.sh with non‑existent directory
+run_edge_test "log-rotator.sh (non-existent dir)" log-rotator.sh --log-dir /does/not/exist --dry-run
 
 # -------------------------------------------------------------------
 # Cleanup
