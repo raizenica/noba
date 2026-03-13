@@ -1,12 +1,11 @@
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/noba-lib.sh"
 # noba-lib.sh – Shared functions for Nobara automation scripts
 
 # Configuration
 CONFIG_FILE="${NOBA_CONFIG:-$HOME/.config/noba/config.yaml}"
 
-# Colors (for output)
+# Colors (for output) – may be unused in this file, but used by sourcing scripts
+# shellcheck disable=SC2034
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -38,6 +37,7 @@ log_debug() {
 # Sets global variables: CONFIG_LOADED=true if successful
 load_config() {
     local prefix="${1:-}"
+    # shellcheck disable=SC2034
     CONFIG_LOADED=false
 
     if ! command -v yq &>/dev/null; then
@@ -73,6 +73,7 @@ load_config() {
     # Usage: get_config_array key
     get_config_array() {
         local key="$1"
+        # shellcheck disable=SC1087
         yq eval "$key[]" "$CONFIG_FILE" 2>/dev/null | grep -v '^null$'
     }
 

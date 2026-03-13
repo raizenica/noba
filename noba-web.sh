@@ -1,34 +1,72 @@
 #!/bin/bash
-# noba-web.sh – Interactive web dashboard (Python required)
+# noba-web.sh – Interactive web dashboard with robust cleanup and port reuse
 
 set -u
 set -o pipefail
 
 PORT="${1:-8080}"
 HTML_DIR="/tmp/noba-web"
-PID_FILE="/tmp/noba-web.pid"
+SERVER_PID_FILE="/tmp/noba-web-server.pid"
+UPDATER_PID_FILE="/tmp/noba-web-updater.pid"
 LOG_FILE="/tmp/noba-web.log"
 
 mkdir -p "$HTML_DIR"
 
-# Check if port is already in use
-if ss -tuln | grep -q ":$PORT "; then
-    echo "Port $PORT is already in use. Attempting to kill the process..."
-    # Find the PID using the port (requires root for some ports, but 8080 is user)
-    pid=$(lsof -ti :$PORT 2>/dev/null)
-    if [ -n "$pid" ]; then
-        kill "$pid" && echo "Killed process $pid"
-        sleep 1
-    else
-        echo "Could not find process. Please free port $PORT manually."
-        exit 1
+# Function to kill a process by PID file
+kill_pid_file() {
+    local pid_file=$1
+    local name=$2
+    if [ -f "$pid_file" ]; then
+        pid=$(cat "$pid_file")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Stopping old $name (PID $pid)..."
+            kill "$pid" 2>/dev/null && sleep 1
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "Force killing $name..."
+                kill -9 "$pid" 2>/dev/null
+            fi
+        fi
+        rm -f "$pid_file"
     fi
-fi
+}
 
-# Stop previous instance
-if [ -f "$PID_FILE" ]; then
-    kill "$(cat "$PID_FILE")" 2>/dev/null && echo "Stopped old server."
-    rm -f "$PID_FILE"
+# Function to find and kill any process using our port
+kill_port_process() {
+    local port=$1
+    local pid=""
+    if command -v lsof &>/dev/null; then
+        pid=$(lsof -ti :"$port" 2>/dev/null | head -1)
+    elif command -v ss &>/dev/null; then
+        pid=$(ss -tulnp | grep ":$port" | grep -oP 'pid=\K\d+' | head -1)
+    fi
+    if [ -n "$pid" ]; then
+        echo "Port $port is in use by PID $pid. Killing..."
+        kill "$pid" 2>/dev/null && sleep 1
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null
+        fi
+    fi
+}
+
+# Kill previous instances
+kill_pid_file "$SERVER_PID_FILE" "server"
+kill_pid_file "$UPDATER_PID_FILE" "updater"
+kill_port_process "$PORT"
+
+# Give OS time to release the port
+sleep 2
+
+# Wait for port to be free
+for i in {1..10}; do
+    if ! ss -tuln | grep -q ":$PORT "; then
+        break
+    fi
+    echo "Waiting for port $PORT to be released... (attempt $i)"
+    sleep 1
+done
+if ss -tuln | grep -q ":$PORT "; then
+    echo "ERROR: Port $PORT still in use. Exiting."
+    exit 1
 fi
 
 # Generate the main HTML page
@@ -370,7 +408,7 @@ function dashboard() {
             this.modalOutput = result.output;
             this.modalTitle = result.success ? '✅ Success' : '❌ Failed';
             this.runningScript = false;
-            await this.refreshStats();  // update stats after script finishes
+            await this.refreshStats();
         }
     }
 }
@@ -384,7 +422,7 @@ cat > "$HTML_DIR/stats.json" <<EOF
 {"timestamp":"$(date)","uptime":"loading...","loadavg":"","memory":"","cpuTemp":"","backupStatus":"","backupTime":"","backupLog":"","dnfUpdates":0,"flatpakUpdates":0,"disks":[],"movedFiles":0,"lastMove":"","organizerLog":"","diskAlerts":""}
 EOF
 
-# Start the Python HTTP server with custom handler
+# Create the Python HTTP server with custom handler and port reuse
 cd "$HTML_DIR" || exit 1
 cat > server.py <<'EOF'
 import http.server
@@ -392,11 +430,14 @@ import socketserver
 import json
 import subprocess
 import os
-from urllib.parse import urlparse
 import time
+import re
 
 PORT = int(os.environ.get('PORT', 8080))
 SCRIPT_DIR = os.path.expanduser("~/.local/bin")
+
+# Allow immediate port reuse (avoids TIME_WAIT issues)
+socketserver.TCPServer.allow_reuse_address = True
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -419,7 +460,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 allowed = ['backup', 'verify', 'organize', 'diskcheck']
                 if script not in allowed:
                     raise ValueError('Invalid script')
-                # Map to actual script names
                 script_map = {
                     'backup': 'backup-to-nas.sh',
                     'verify': 'backup-verifier.sh',
@@ -427,7 +467,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     'diskcheck': 'disk-sentinel.sh'
                 }
                 script_file = os.path.join(SCRIPT_DIR, script_map[script])
-                # Run the script with timeout and capture output
                 proc = subprocess.run(
                     [script_file, '--verbose'],
                     capture_output=True,
@@ -453,11 +492,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
     def get_stats(self):
-        # Collect system stats
         stats = {}
         stats['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
         try:
-            # Uptime
             with open('/proc/uptime') as f:
                 uptime_seconds = float(f.read().split()[0])
                 hours = int(uptime_seconds // 3600)
@@ -466,24 +503,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except:
             stats['uptime'] = 'N/A'
 
-        # Load average
         try:
             with open('/proc/loadavg') as f:
                 stats['loadavg'] = f.read().split()[0]
         except:
             stats['loadavg'] = 'N/A'
 
-        # Memory
         try:
             mem = subprocess.check_output(['free', '-h'], text=True).split('\n')[1].split()
             stats['memory'] = f"{mem[2]}/{mem[1]}"
         except:
             stats['memory'] = 'N/A'
 
-        # CPU temp
         try:
             temp = subprocess.check_output(['sensors'], text=True)
-            import re
             match = re.search(r'Package id 0:\s+\+([0-9.]+)°C', temp)
             if match:
                 stats['cpuTemp'] = float(match.group(1))
@@ -492,7 +525,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except:
             stats['cpuTemp'] = 0
 
-        # Backup status
         backup_log = os.path.expanduser('~/.local/share/backup-to-nas.log')
         try:
             with open(backup_log) as f:
@@ -511,7 +543,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             stats['backupTime'] = ''
             stats['backupLog'] = 'No backup log'
 
-        # Updates
         try:
             dnf = subprocess.run(['dnf', 'check-update', '-q'], capture_output=True, text=True, timeout=10)
             stats['dnfUpdates'] = len(dnf.stdout.strip().split('\n')) if dnf.stdout.strip() else 0
@@ -523,7 +554,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except:
             stats['flatpakUpdates'] = 0
 
-        # Disk usage
         disks = []
         try:
             df = subprocess.check_output(['df', '-h'], text=True).split('\n')
@@ -545,7 +575,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             pass
         stats['disks'] = disks
 
-        # Download organizer
         org_log = os.path.expanduser('~/.local/share/download-organizer.log')
         try:
             with open(org_log) as f:
@@ -560,7 +589,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             stats['lastMove'] = 'Never'
             stats['organizerLog'] = 'No log'
 
-        # Disk alerts
         disk_log = os.path.expanduser('~/.local/share/disk-sentinel.log')
         try:
             with open(disk_log) as f:
@@ -578,10 +606,21 @@ if __name__ == '__main__':
         httpd.serve_forever()
 EOF
 
-# Start the server in background
+# Start the server
 nohup python3 server.py > "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
-echo $SERVER_PID > "$PID_FILE"
+echo $SERVER_PID > "$SERVER_PID_FILE"
 
-echo "✅ Interactive dashboard started on http://localhost:$PORT (PID $SERVER_PID)"
-echo "Use 'kill $SERVER_PID' to stop."
+# Start the updater
+(
+    while true; do
+        sleep 60
+        echo "Page updated at $(date)" >> "$LOG_FILE"
+    done
+) >> "$LOG_FILE" 2>&1 &
+UPDATER_PID=$!
+echo $UPDATER_PID > "$UPDATER_PID_FILE"
+
+echo "✅ Interactive dashboard started on http://localhost:$PORT"
+echo "   Server PID: $SERVER_PID, Updater PID: $UPDATER_PID"
+echo "Use 'kill $SERVER_PID $UPDATER_PID' to stop both processes."

@@ -122,16 +122,19 @@ get_size() {
     fi
 }
 
+# Generate a random selection of indices using either shuf or bash's RANDOM
 random_indices() {
     local total=$1
     local count=$2
     if command -v shuf &>/dev/null; then
         shuf -i 0-$((total-1)) -n "$count"
     else
+        # Fallback: use bash's RANDOM
         local -a indices=()
         local i
         while [ ${#indices[@]} -lt "$count" ]; do
             i=$((RANDOM % total))
+            # Check for duplicates
             if [[ ! " ${indices[*]} " =~ " $i " ]]; then
                 indices+=("$i")
             fi
