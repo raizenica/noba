@@ -769,7 +769,6 @@ cat > "$HTML_DIR/index.html" <<'EOF'
             }
         }
     </script>
-
                 async runScript(script) {
                     if (this.runningScript) return;
                     this.runningScript = true;
