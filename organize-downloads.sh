@@ -1,6 +1,6 @@
 #!/bin/bash
 # organize-downloads.sh – Move files from Downloads into categorized folders
-# Improved version with better extension matching and verbose logging
+# Version: 2.1.0 (compatible with noba-lib.sh 2.1.0)
 
 set -euo pipefail
 
@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
-# Default configuration
+# Default configuration (can be overridden by config file)
 # -------------------------------------------------------------------
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/download-organizer.log}"
@@ -39,21 +39,17 @@ for cat in "${!CATEGORIES[@]}"; do
 done
 
 # -------------------------------------------------------------------
-# Load user configuration (if any)
+# Load configuration using new stateless library
 # -------------------------------------------------------------------
-load_config || true
-if [ "$CONFIG_LOADED" = true ]; then
-    DOWNLOAD_DIR="$(get_config ".downloads.dir" "$DOWNLOAD_DIR")"
-    MIN_AGE_MINUTES="$(get_config ".downloads.min_age_minutes" "$MIN_AGE_MINUTES")"
-    LOG_FILE="$(get_config ".logs.dir" "$(dirname "$LOG_FILE")")/download-organizer.log"
-    # Optionally load categories from config (advanced) – not implemented here
-fi
+DOWNLOAD_DIR="$(get_config ".downloads.dir" "$DOWNLOAD_DIR")"
+MIN_AGE_MINUTES="$(get_config ".downloads.min_age_minutes" "$MIN_AGE_MINUTES")"
+LOG_FILE="$(get_config ".logs.dir" "$(dirname "$LOG_FILE")")/download-organizer.log"
 
 # -------------------------------------------------------------------
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "organize-downloads.sh version 2.0"
+    echo "organize-downloads.sh version 2.1.0 (noba-lib $NOBA_LIB_VERSION)"
     exit 0
 }
 
@@ -79,7 +75,6 @@ is_file_open() {
     if command -v lsof &>/dev/null; then
         lsof "$1" >/dev/null 2>&1
     else
-        # No lsof, assume not open (best effort)
         log_debug "lsof not installed – skipping open file check for $1"
         return 1
     fi
