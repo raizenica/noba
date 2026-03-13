@@ -1,6 +1,6 @@
 #!/bin/bash
 # noba-daily-digest.sh – Send daily summary email
-# Improved version with robust error handling and consistent logging
+# Version: 2.1.0
 
 set -euo pipefail
 
@@ -12,25 +12,29 @@ source "$SCRIPT_DIR/noba-lib.sh"
 # Default configuration
 # -------------------------------------------------------------------
 EMAIL="${EMAIL:-strikerke@gmail.com}"
-LOG_DIR="${LOG_DIR:-$HOME/.local/share/noba}"
+LOG_DIR="${LOG_DIR:-$HOME/.local/share}"
 DRY_RUN=false
+SERVICES_LIST="backup-to-nas organize-downloads noba-web syncthing"
 
 # -------------------------------------------------------------------
-# Load user configuration (if any)
+# Load user configuration
 # -------------------------------------------------------------------
-load_config || true
-if [ "$CONFIG_LOADED" = true ]; then
+if command -v get_config &>/dev/null; then
     EMAIL="$(get_config ".email" "$EMAIL")"
-    logs_dir="$(get_config ".logs.dir" "$HOME/.local/share/noba")"
-    logs_dir="${logs_dir/#\~/$HOME}"
-    LOG_DIR="$logs_dir"
+    LOG_DIR="$(get_config ".logs.dir" "$LOG_DIR")"
+
+    config_services=$(get_config_array ".web.service_list")
+    if [ -n "$config_services" ]; then
+        # Convert array output to space-separated string, stripping .service
+        SERVICES_LIST=$(echo "$config_services" | sed 's/\.service//g' | tr '\n' ' ')
+    fi
 fi
 
 # -------------------------------------------------------------------
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "noba-daily-digest.sh version 2.0 (improved)"
+    echo "noba-daily-digest.sh version 2.1.0"
     exit 0
 }
 
@@ -47,6 +51,10 @@ Options:
   --version           Show version information
 EOF
     exit 0
+}
+
+strip_ansi() {
+    sed 's/\x1b\[[0-9;]*m//g'
 }
 
 # -------------------------------------------------------------------
@@ -71,44 +79,47 @@ done
 # -------------------------------------------------------------------
 # Pre-flight checks
 # -------------------------------------------------------------------
-check_deps tail grep date hostname
-mkdir -p "$LOG_DIR" || {
-    log_error "Failed to create log directory $LOG_DIR"
-    exit 1
-}
+check_deps tail grep date hostname awk wc
+
+temp_dir=$(make_temp_dir_auto)
+digest_file="$temp_dir/digest.txt"
 
 # -------------------------------------------------------------------
 # Generate digest
 # -------------------------------------------------------------------
-digest=$(mktemp) || {
-    log_error "Failed to create temporary file"
-    exit 1
-}
-trap 'rm -f "$digest"' EXIT
-
 {
     echo "Daily Digest for $(hostname -s 2>/dev/null || hostname) – $(date)"
+    echo "==========================================================="
     echo ""
+
     echo "=== Last Backup ==="
     if [ -f "$LOG_DIR/backup-to-nas.log" ]; then
-        tail -5 "$LOG_DIR/backup-to-nas.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo "No backup entries"
+        tail -n 5 "$LOG_DIR/backup-to-nas.log" 2>/dev/null | strip_ansi || echo "No backup entries"
     else
         echo "No backup log found."
     fi
     echo ""
+
     echo "=== Disk Warnings ==="
     if [ -f "$LOG_DIR/disk-sentinel.log" ]; then
-        tail -5 "$LOG_DIR/disk-sentinel.log" 2>/dev/null | grep -E "WARNING|exceeded" || echo "None"
+        warnings=$(tail -n 10 "$LOG_DIR/disk-sentinel.log" 2>/dev/null | strip_ansi | grep -E "WARNING|exceeded" || true)
+        if [ -n "$warnings" ]; then
+            echo "$warnings"
+        else
+            echo "None."
+        fi
     else
         echo "No disk sentinel log."
     fi
     echo ""
+
     echo "=== Downloads Organized Yesterday ==="
     if [ -f "$LOG_DIR/download-organizer.log" ]; then
-        # Compute yesterday's date in a portable way
         yesterday=$(date -d 'yesterday' +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d 2>/dev/null)
         if [ -n "$yesterday" ]; then
-            grep "$yesterday" "$LOG_DIR/download-organizer.log" 2>/dev/null || echo "None"
+            # Summarize rather than dumping the whole log
+            moved_count=$(grep "^\[$yesterday" "$LOG_DIR/download-organizer.log" 2>/dev/null | grep -c "Moved:" || true)
+            echo "$moved_count files were successfully categorized and moved."
         else
             echo "Unable to determine yesterday's date."
         fi
@@ -116,49 +127,59 @@ trap 'rm -f "$digest"' EXIT
         echo "No organizer log."
     fi
     echo ""
+
     echo "=== System Updates ==="
     if command -v dnf &>/dev/null; then
-        dnf_updates=$(dnf check-update -q 2>/dev/null | wc -l)
-        echo "DNF updates: $((dnf_updates > 0 ? dnf_updates : 0))"
+        # Strip metadata lines and blank lines before counting
+        dnf_updates=$(dnf check-update -q 2>/dev/null | grep -v '^Last metadata' | awk 'NF' | wc -l || true)
+        echo "DNF updates pending: $dnf_updates"
     fi
     if command -v flatpak &>/dev/null; then
-        flatpak_updates=$(flatpak remote-ls --updates 2>/dev/null | wc -l)
-        echo "Flatpak updates: $((flatpak_updates > 0 ? flatpak_updates : 0))"
+        flatpak_updates=$(flatpak remote-ls --updates 2>/dev/null | awk 'NF' | wc -l || true)
+        echo "Flatpak updates pending: $flatpak_updates"
     fi
     echo ""
-    echo "=== Recent Service Status ==="
+
+    echo "=== Service Status ==="
     if command -v systemctl &>/dev/null; then
-        # Show status of common user services (adjust as needed)
-        for svc in backup-to-nas organize-downloads noba-web; do
+        for svc in $SERVICES_LIST; do
             if systemctl --user is-active "$svc.service" &>/dev/null; then
-                echo "$svc: active"
+                echo "🟢 $svc: active"
             else
-                echo "$svc: inactive"
+                echo "🔴 $svc: inactive/failed"
             fi
         done
     else
         echo "systemctl not available."
     fi
-} > "$digest"
+} > "$digest_file"
 
 # -------------------------------------------------------------------
 # Output or send
 # -------------------------------------------------------------------
 if [ "$DRY_RUN" = true ]; then
-    cat "$digest"
+    cat "$digest_file"
     log_info "Dry run – digest printed to stdout, not emailed."
 else
-    # Try mail, then mutt
-    if command -v mail &>/dev/null; then
-        mail -s "Daily Digest $(date +%Y-%m-%d)" "$EMAIL" < "$digest"
+    subject="Daily Digest $(date +%Y-%m-%d)"
+
+    if [ -z "$EMAIL" ]; then
+        log_warn "No email configured. Printing to stdout instead."
+        cat "$digest_file"
+        exit 0
+    fi
+
+    if command -v msmtp &>/dev/null; then
+        { echo "Subject: $subject"; echo ""; cat "$digest_file"; } | msmtp "$EMAIL"
+        log_info "Digest sent to $EMAIL via msmtp"
+    elif command -v mail &>/dev/null; then
+        mail -s "$subject" "$EMAIL" < "$digest_file"
         log_info "Digest sent to $EMAIL via mail"
     elif command -v mutt &>/dev/null; then
-        mutt -s "Daily Digest $(date +%Y-%m-%d)" "$EMAIL" < "$digest"
+        mutt -s "$subject" "$EMAIL" < "$digest_file"
         log_info "Digest sent to $EMAIL via mutt"
     else
         log_error "No mail program found – cannot send email."
         exit 1
     fi
 fi
-
-# Temp file automatically removed by trap
