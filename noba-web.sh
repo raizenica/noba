@@ -1,6 +1,6 @@
 #!/bin/bash
 # noba-web.sh – Ultimate dashboard with GPU load, Disk I/O, and service resource usage
-# Modernized HTML + all performance improvements
+# Modernized HTML + all performance improvements + CPU temp fix + disk I/O partitions
 
 set -euo pipefail
 
@@ -41,7 +41,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "noba-web.sh version 2.1 (modern)"
+    echo "noba-web.sh version 2.2 (final fixes)"
     exit 0
 }
 
@@ -134,6 +134,7 @@ rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py "$HTML_DIR"/stats.json 2>/dev/nul
 
 # -------------------------------------------------------------------
 # Modernized HTML file (with glassmorphism, smooth animations)
+# FIX: removed extra °C from CPU temp display
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/index.html" <<'EOF'
 <!DOCTYPE html>
@@ -419,7 +420,8 @@ cat > "$HTML_DIR/index.html" <<'EOF'
             <div class="stat-row"><span class="stat-label">Load Average</span><span class="stat-value" x-text="loadavg"></span></div>
             <div class="stat-row"><span class="stat-label">Memory</span><span class="stat-value" x-text="memory"></span></div>
             <div class="stat-row"><span class="stat-label">CPU Temp</span>
-                <span class="stat-value" :class="tempClass" x-text="cpuTemp + '°C'"></span>
+                <!-- FIX: removed +'°C' because cpuTemp already includes unit -->
+                <span class="stat-value" :class="tempClass" x-text="cpuTemp"></span>
             </div>
         </div>
 
@@ -692,6 +694,7 @@ EOF
 
 # -------------------------------------------------------------------
 # Python server (improved version, listens on all interfaces)
+# FIX: Disk I/O now includes partitions (commented out skip)
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/server.py" <<'EOF'
 #!/usr/bin/env python3
@@ -905,10 +908,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     if len(parts) < 14:
                         continue
                     name = parts[2]
+                    # Skip loop, ram, and CD-ROM devices
                     if name.startswith(('loop', 'ram', 'sr')):
                         continue
-                    if name[-1].isdigit() and not (name.startswith('nvme') and name[-2].isdigit()):
-                        continue  # skip partitions
+                    # FIX: Allow partitions by commenting out the skip
+                    # if name[-1].isdigit() and not (name.startswith('nvme') and name[-2].isdigit()):
+                    #     continue  # skip partitions
                     reads = int(parts[5])   # sectors read
                     writes = int(parts[9])  # sectors written
                     read_bytes = reads * 512
@@ -920,7 +925,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     })
         except Exception as e:
             logging.error(f"Disk I/O error: {e}")
-        return disks[:5]
+        return disks[:10]  # increased limit to show more disks/partitions
 
     # ---------- Systemd service memory/CPU ----------
     def get_service_details(self, service):
