@@ -1,10 +1,10 @@
 #!/bin/bash
 # noba-daily-digest.sh – Send daily summary email
+# Improved version with robust error handling and consistent logging
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 
@@ -18,7 +18,7 @@ DRY_RUN=false
 # -------------------------------------------------------------------
 # Load user configuration (if any)
 # -------------------------------------------------------------------
-load_config
+load_config || true
 if [ "$CONFIG_LOADED" = true ]; then
     EMAIL="$(get_config ".email" "$EMAIL")"
     logs_dir="$(get_config ".logs.dir" "$HOME/.local/share/noba")"
@@ -30,7 +30,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "noba-daily-digest.sh version 1.0"
+    echo "noba-daily-digest.sh version 2.0 (improved)"
     exit 0
 }
 
@@ -52,8 +52,7 @@ EOF
 # -------------------------------------------------------------------
 # Parse arguments
 # -------------------------------------------------------------------
-PARSED_ARGS=$(getopt -o e:n -l email:,dry-run,help,version -- "$@")
-if ! some_command; then
+if ! PARSED_ARGS=$(getopt -o e:n -l email:,dry-run,help,version -- "$@"); then
     show_help
 fi
 eval set -- "$PARSED_ARGS"
@@ -73,17 +72,22 @@ done
 # Pre-flight checks
 # -------------------------------------------------------------------
 check_deps tail grep date hostname
-# Optional: mail command – we'll check at send time
-
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" || {
+    log_error "Failed to create log directory $LOG_DIR"
+    exit 1
+}
 
 # -------------------------------------------------------------------
 # Generate digest
 # -------------------------------------------------------------------
-digest=$(mktemp)
+digest=$(mktemp) || {
+    log_error "Failed to create temporary file"
+    exit 1
+}
+trap 'rm -f "$digest"' EXIT
 
 {
-    echo "Daily Digest for $(hostname) – $(date)"
+    echo "Daily Digest for $(hostname -s 2>/dev/null || hostname) – $(date)"
     echo ""
     echo "=== Last Backup ==="
     if [ -f "$LOG_DIR/backup-to-nas.log" ]; then
@@ -101,8 +105,13 @@ digest=$(mktemp)
     echo ""
     echo "=== Downloads Organized Yesterday ==="
     if [ -f "$LOG_DIR/download-organizer.log" ]; then
+        # Compute yesterday's date in a portable way
         yesterday=$(date -d 'yesterday' +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d 2>/dev/null)
-        grep "$yesterday" "$LOG_DIR/download-organizer.log" 2>/dev/null || echo "None"
+        if [ -n "$yesterday" ]; then
+            grep "$yesterday" "$LOG_DIR/download-organizer.log" 2>/dev/null || echo "None"
+        else
+            echo "Unable to determine yesterday's date."
+        fi
     else
         echo "No organizer log."
     fi
@@ -110,11 +119,25 @@ digest=$(mktemp)
     echo "=== System Updates ==="
     if command -v dnf &>/dev/null; then
         dnf_updates=$(dnf check-update -q 2>/dev/null | wc -l)
-        echo "DNF updates: $dnf_updates"
+        echo "DNF updates: $((dnf_updates > 0 ? dnf_updates : 0))"
     fi
     if command -v flatpak &>/dev/null; then
         flatpak_updates=$(flatpak remote-ls --updates 2>/dev/null | wc -l)
-        echo "Flatpak updates: $flatpak_updates"
+        echo "Flatpak updates: $((flatpak_updates > 0 ? flatpak_updates : 0))"
+    fi
+    echo ""
+    echo "=== Recent Service Status ==="
+    if command -v systemctl &>/dev/null; then
+        # Show status of common user services (adjust as needed)
+        for svc in backup-to-nas organize-downloads noba-web; do
+            if systemctl --user is-active "$svc.service" &>/dev/null; then
+                echo "$svc: active"
+            else
+                echo "$svc: inactive"
+            fi
+        done
+    else
+        echo "systemctl not available."
     fi
 } > "$digest"
 
@@ -125,17 +148,17 @@ if [ "$DRY_RUN" = true ]; then
     cat "$digest"
     log_info "Dry run – digest printed to stdout, not emailed."
 else
+    # Try mail, then mutt
     if command -v mail &>/dev/null; then
         mail -s "Daily Digest $(date +%Y-%m-%d)" "$EMAIL" < "$digest"
-        log_info "Digest sent to $EMAIL"
+        log_info "Digest sent to $EMAIL via mail"
     elif command -v mutt &>/dev/null; then
         mutt -s "Daily Digest $(date +%Y-%m-%d)" "$EMAIL" < "$digest"
         log_info "Digest sent to $EMAIL via mutt"
     else
         log_error "No mail program found – cannot send email."
-        rm -f "$digest"
         exit 1
     fi
 fi
 
-rm -f "$digest"
+# Temp file automatically removed by trap
