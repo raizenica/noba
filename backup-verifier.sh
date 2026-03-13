@@ -4,7 +4,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
@@ -23,7 +22,7 @@ COMPARE_ORIGINAL=false
 # -------------------------------------------------------------------
 # Load user configuration (YAML)
 # -------------------------------------------------------------------
-load_config
+load_config || true
 if [ "$CONFIG_LOADED" = true ]; then
     BACKUP_ROOT="$(get_config ".backup_verifier.dest" "$BACKUP_ROOT")"
     NUM_FILES="$(get_config ".backup_verifier.num_files" "$NUM_FILES")"
@@ -54,7 +53,7 @@ Options:
   --temp-dir DIR         Base directory for temporary files (default: $TEMP_DIR_BASE)
   -v, --verbose          Enable verbose output
   -q, --quiet            Suppress non‑error output
-  -n, --dry-run          Simulate without actually copying
+  -D, --dry-run          Simulate without actually copying
   --help                 Show this help message
   --version              Show version information
 EOF
@@ -94,7 +93,8 @@ random_indices() {
         local i
         while [ ${#indices[@]} -lt "$count" ]; do
             i=$((RANDOM % total))
-            if [[ ! " ${indices[*]} " =~ " $i " ]]; then
+            # SC2076: Do not quote regex
+            if [[ ! " ${indices[*]} " =~ $i ]]; then
                 indices+=("$i")
             fi
         done
@@ -105,8 +105,8 @@ random_indices() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-PARSED_ARGS=$(getopt -o b:n:cq -l backup-dir:,num-files:,compare-original,checksum-cmd:,temp-dir:,verbose,quiet,dry-run,help,version -- "$@")
-if [ $? -ne 0 ]; then
+PARSED_ARGS=$(getopt -o b:n:cDvq -l backup-dir:,num-files:,compare-original,checksum-cmd:,temp-dir:,verbose,quiet,dry-run,help,version -- "$@")
+if ! PARSED_ARGS=$(getopt -o b:n:cDvq -l backup-dir:,num-files:,compare-original,checksum-cmd:,temp-dir:,verbose,quiet,dry-run,help,version -- "$@"); then
     show_help
 fi
 eval set -- "$PARSED_ARGS"
@@ -120,7 +120,7 @@ while true; do
         --temp-dir)           TEMP_DIR_BASE="$2"; shift 2 ;;
         -v|--verbose)         VERBOSE=true; shift ;;
         -q|--quiet)           QUIET=true; shift ;;
-        -n|--dry-run)         DRY_RUN=true; shift ;;
+        -D|--dry-run)         DRY_RUN=true; shift ;;
         --help)               show_help ;;
         --version)            show_version ;;
         --)                   shift; break ;;

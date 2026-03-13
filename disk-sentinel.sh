@@ -23,21 +23,19 @@ IGNORE_FS="^(proc|sysfs|tmpfs|devpts|securityfs|fusectl|debugfs|pstore|hugetlbfs
 # -------------------------------------------------------------------
 # Load user configuration (if any)
 # -------------------------------------------------------------------
-load_config
+load_config || true
 if [ "$CONFIG_LOADED" = true ]; then
-    # Read targets array from config (if defined)
     targets_from_config=$(get_config_array ".disk.targets")
     if [ -n "$targets_from_config" ]; then
         mapfile -t TARGETS <<< "$targets_from_config"
     fi
     THRESHOLD="$(get_config ".disk.threshold" "$THRESHOLD")"
     CLEANUP="$(get_config ".disk.cleanup_enabled" "$CLEANUP")"
-    EMAIL="$(get_config ".email" "$EMAIL")"  # top-level email fallback
+    EMAIL="$(get_config ".email" "$EMAIL")"
     IGNORE_FS="$(get_config ".disk.ignore_fs" "$IGNORE_FS")"
     LOG_FILE="$(get_config ".logs.dir" "$LOG_FILE")/disk-sentinel.log"
 fi
 
-# If TARGETS still empty, use defaults
 if [ ${#TARGETS[@]} -eq 0 ]; then
     TARGETS=("${DEFAULT_TARGETS[@]}")
 fi
@@ -49,17 +47,6 @@ show_version() {
     echo "disk-sentinel.sh version 1.0"
     exit 0
 }
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
-    source "$HOME/.config/automation.conf"
 
 show_help() {
     cat <<EOF
@@ -102,7 +89,6 @@ run_sudo() {
         return 0
     fi
     log_debug "Running (sudo): $cmd_desc"
-    # Check if sudo is available without password
     if sudo -n true 2>/dev/null; then
         local temp_output
         temp_output=$(mktemp)
@@ -211,27 +197,16 @@ for target in "${TARGETS[@]}"; do
             elif command -v pacman &>/dev/null; then
                 run_sudo "cleaning pacman cache" pacman -Sc --noconfirm
             fi
-# shellcheck disable=SC2119
 
-# shellcheck disable=SC2119
             # User cache (no sudo)
-# shellcheck disable=SC2119
             log_info "Cleaning ~/.cache..."
-# shellcheck disable=SC2119
             if [ "$DRY_RUN" = false ]; then
-# shellcheck disable=SC2119
                 rm -rf "$HOME/.cache/"* >> "$LOG_FILE" 2>&1
-# shellcheck disable=SC2119
             else
-# shellcheck disable=SC2119
                 log_debug "[DRY RUN] Would clean ~/.cache"
-# shellcheck disable=SC2119
             fi
-# shellcheck disable=SC2119
 
-# shellcheck disable=SC2119
             # System temp files older than 1 day
-# shellcheck disable=SC2119
             run_sudo "cleaning /tmp (files older than 1 day)" find /tmp -type f -atime +1 -delete
 
             # Journal vacuum

@@ -1,22 +1,21 @@
 #!/bin/bash
-# shellcheck disable=SC2329
-# shellcheck disable=SC2329
-# shellcheck disable=SC2329
-# shellcheck disable=SC2329
-# shellcheck disable=SC2329
-# shellcheck disable=SC2329
-# shellcheck disable=SC2329
 # noba-lib.sh – Shared functions for Nobara automation scripts
 
 CONFIG_FILE="${NOBA_CONFIG:-$HOME/.config/noba/config.yaml}"
 
 # Colors (may be unused in this file, but used by sourcing scripts)
+# shellcheck disable=SC2034
 RED='\033[0;31m'
+# shellcheck disable=SC2034
 GREEN='\033[0;32m'
+# shellcheck disable=SC2034
 YELLOW='\033[1;33m'
+# shellcheck disable=SC2034
 BLUE='\033[0;34m'
+# shellcheck disable=SC2034
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+# shellcheck disable=SC2034
+NC='\033[0m'
 
 # -------------------------------------------------------------------
 # Logging functions
@@ -83,6 +82,8 @@ load_config() {
 
     get_config_array() {
         local key="$1"
+        # SC1087: This is a yq query, not a shell array expansion
+        # shellcheck disable=SC1087
         yq eval "$key[]" "$CONFIG_FILE" 2>/dev/null | grep -v '^null$'
     }
 
@@ -90,6 +91,8 @@ load_config() {
     log_debug "Loaded configuration from $CONFIG_FILE"
     return 0
 }
+# shellcheck disable=SC2034
+CONFIG_LOADED=${CONFIG_LOADED:-false}
 
 # -------------------------------------------------------------------
 # Utility functions
