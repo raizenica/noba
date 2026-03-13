@@ -22,10 +22,8 @@ KILL_ONLY=false
 # -------------------------------------------------------------------
 load_config
 if [ "$CONFIG_LOADED" = true ]; then
-    # Override from YAML – example keys:
     START_PORT="$(get_config ".web.start_port" "$START_PORT")"
     MAX_PORT="$(get_config ".web.max_port" "$MAX_PORT")"
-    # Could also read HTML_DIR, LOG_FILE from logs.dir, etc.
 fi
 
 # -------------------------------------------------------------------
@@ -66,7 +64,6 @@ kill_server() {
         fi
         rm -f "$SERVER_PID_FILE"
     fi
-    # Also try to kill any process using our target ports (optional, but we avoid because we search for free)
 }
 
 find_free_port() {
@@ -138,7 +135,7 @@ mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py "$HTML_DIR"/stats.json 2>/dev/null || true
 
 # -------------------------------------------------------------------
-# Generate HTML file (same as original, but cleaned up)
+# Generate HTML file (same as before)
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/index.html" <<'EOF'
 <!DOCTYPE html>
@@ -349,7 +346,7 @@ cat > "$HTML_DIR/index.html" <<'EOF'
 EOF
 
 # -------------------------------------------------------------------
-# Generate Python server (simplified)
+# Generate Python server (with ANSI stripping)
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/server.py" <<'EOF'
 import http.server
@@ -360,11 +357,15 @@ import os
 import sys
 import time
 import re
-import shlex
 
 PORT = int(os.environ.get('PORT', 8080))
 SCRIPT_DIR = os.path.expanduser("~/.local/bin")
 LOG_DIR = os.path.expanduser("~/.local/share")
+
+# ANSI escape code stripper
+ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+def strip_ansi(s):
+    return ansi_escape.sub('', s)
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -378,7 +379,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             else:
                 super().do_GET()
         except (BrokenPipeError, ConnectionResetError):
-            # Client closed connection – ignore
             pass
         except Exception as e:
             print(f"GET error: {e}", file=sys.stderr)
@@ -473,11 +473,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             pass
         stats['cpuTemp'] = temp
 
-        # Backup status
+        # Backup status and log (stripped)
         backup_log = os.path.join(LOG_DIR, 'backup-to-nas.log')
         if os.path.exists(backup_log):
             with open(backup_log) as f:
-                lines = f.readlines()
+                lines = [strip_ansi(l) for l in f.readlines()]
                 last_line = lines[-1].strip() if lines else ''
                 if 'ERROR' in last_line:
                     stats['backupStatus'] = 'Failed'
@@ -485,16 +485,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     stats['backupStatus'] = 'OK'
                 else:
                     stats['backupStatus'] = 'Unknown'
-                # Get last 5 lines for log preview
                 stats['backupLog'] = ''.join(lines[-5:])[-500:]
+                stats['backupTime'] = time.ctime(os.path.getmtime(backup_log))
         else:
             stats['backupStatus'] = 'No log'
             stats['backupLog'] = ''
-
-        # Backup time – we could extract from log, but for simplicity, use mtime
-        if os.path.exists(backup_log):
-            stats['backupTime'] = time.ctime(os.path.getmtime(backup_log))
-        else:
             stats['backupTime'] = ''
 
         # Updates
@@ -533,13 +528,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             pass
         stats['disks'] = disks
 
-        # Download organizer stats
+        # Download organizer stats (stripped)
         organizer_log = os.path.join(LOG_DIR, 'download-organizer.log')
         moved = 0
         last_move = ''
         if os.path.exists(organizer_log):
             with open(organizer_log) as f:
-                lines = f.readlines()
+                lines = [strip_ansi(l) for l in f.readlines()]
                 moved = sum(1 for l in lines if 'Moved:' in l)
                 last_line = next((l for l in reversed(lines) if 'Moved:' in l), '')
                 if last_line:
@@ -552,11 +547,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             stats['lastMove'] = ''
             stats['organizerLog'] = ''
 
-        # Disk alerts
+        # Disk alerts (stripped)
         disk_log = os.path.join(LOG_DIR, 'disk-sentinel.log')
         if os.path.exists(disk_log):
             with open(disk_log) as f:
-                lines = f.readlines()
+                lines = [strip_ansi(l) for l in f.readlines()]
                 alerts = [l for l in lines if 'WARNING' in l or 'exceeded' in l]
                 stats['diskAlerts'] = ''.join(alerts[-5:])[-500:] if alerts else 'No recent warnings'
         else:
