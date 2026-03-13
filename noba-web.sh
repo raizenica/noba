@@ -205,128 +205,126 @@ cat > "$HTML_DIR/index.html" <<'EOF'
     <h1><i class="fas fa-chart-line"></i> Nobara Interactive Dashboard</h1>
     <div class="timestamp"><i class="far fa-clock"></i> Last updated: <span x-text="timestamp"></span></div>
 
-    <div class="grid">
-        <template x-for="(card, index) in layout" :key="index">
-            <!-- System Health Card -->
-            <div x-if="card === 'system'" class="card">
-                <div class="card-header"><i class="fas fa-microchip"></i> System Health</div>
-                <div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value" x-text="uptime"></span></div>
-                <div class="stat-row"><span class="stat-label">Load Average</span><span class="stat-value" x-text="loadavg"></span></div>
-                <div class="stat-row"><span class="stat-label">Memory</span><span class="stat-value" x-text="memory"></span></div>
-                <div class="stat-row"><span class="stat-label">CPU Temp</span>
-                    <span class="stat-value" :class="tempClass" x-text="cpuTemp + '°C'"></span>
-                </div>
+     <div class="grid">
+        <!-- System Health Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-microchip"></i> System Health</div>
+            <div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value" x-text="uptime"></span></div>
+            <div class="stat-row"><span class="stat-label">Load Average</span><span class="stat-value" x-text="loadavg"></span></div>
+            <div class="stat-row"><span class="stat-label">Memory</span><span class="stat-value" x-text="memory"></span></div>
+            <div class="stat-row"><span class="stat-label">CPU Temp</span>
+                <span class="stat-value" :class="tempClass" x-text="cpuTemp + '°C'"></span>
             </div>
+        </div>
 
-            <!-- GPU Temperature Card -->
-            <div x-if="card === 'gpu'" class="card">
-                <div class="card-header"><i class="fas fa-microchip"></i> GPU Temperature</div>
+        <!-- GPU Temperature Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-microchip"></i> GPU Temperature</div>
+            <div class="stat-row">
+                <span class="stat-label">GPU Temp</span>
+                <span class="stat-value" x-text="gpuTemp"></span>
+            </div>
+        </div>
+
+        <!-- Backup Status Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-database"></i> Backup</div>
+            <div class="stat-row"><span class="stat-label">Last backup</span>
+                <span class="stat-value" :class="backupClass" x-text="backupStatus"></span>
+            </div>
+            <div class="stat-row"><span class="stat-label">Time</span><span class="stat-value" x-text="backupTime"></span></div>
+            <pre x-text="backupLog"></pre>
+            <div class="button-grid">
+                <button class="btn btn-primary" @click="runScript('backup')"><i class="fas fa-play"></i> Run Backup</button>
+                <button class="btn" @click="runScript('verify')"><i class="fas fa-check"></i> Verify</button>
+            </div>
+        </div>
+
+        <!-- Updates Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-sync-alt"></i> Updates</div>
+            <div class="stat-row"><span class="stat-label">DNF</span><span class="stat-value" x-text="dnfUpdates"></span></div>
+            <div class="stat-row"><span class="stat-label">Flatpak</span><span class="stat-value" x-text="flatpakUpdates"></span></div>
+            <div class="stat-row"><span class="stat-label">Total</span><span class="stat-value" x-text="totalUpdates"></span></div>
+        </div>
+
+        <!-- Disk Usage Card -->
+        <div class="card" style="grid-column: span 2;">
+            <div class="card-header"><i class="fas fa-hdd"></i> Disk Usage</div>
+            <template x-for="disk in disks" :key="disk.mount">
+                <div class="disk-item">
+                    <span style="min-width:80px;" x-text="disk.mount"></span>
+                    <div class="disk-bar">
+                        <div class="disk-bar-fill" :style="'width:'+disk.percent+'%; background: var(--'+disk.barClass+');'"></div>
+                    </div>
+                    <span class="disk-percent" x-text="disk.percent+'%'"></span>
+                </div>
+            </template>
+        </div>
+
+        <!-- Download Organizer Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-download"></i> Download Organizer</div>
+            <div class="stat-row"><span class="stat-label">Files moved</span><span class="stat-value" x-text="movedFiles"></span></div>
+            <div class="stat-row"><span class="stat-label">Last move</span><span class="stat-value" x-text="lastMove"></span></div>
+            <pre x-text="organizerLog"></pre>
+            <div class="button-grid">
+                <button class="btn btn-primary" @click="runScript('organize')"><i class="fas fa-play"></i> Organize Now</button>
+            </div>
+        </div>
+
+        <!-- Disk Sentinel Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-exclamation-triangle"></i> Disk Sentinel</div>
+            <pre x-text="diskAlerts"></pre>
+            <div class="button-grid">
+                <button class="btn" @click="runScript('diskcheck')"><i class="fas fa-search"></i> Check Now</button>
+            </div>
+        </div>
+
+        <!-- Network Stats Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-network-wired"></i> Network</div>
+            <div class="stat-row"><span class="stat-label">Default IP</span><span class="stat-value" x-text="defaultIp"></span></div>
+            <template x-for="iface in interfaces" :key="iface.name">
                 <div class="stat-row">
-                    <span class="stat-label">GPU Temp</span>
-                    <span class="stat-value" x-text="gpuTemp"></span>
+                    <span class="stat-label" x-text="iface.name"></span>
+                    <span class="stat-value" x-text="'↓' + iface.rx + ' ↑' + iface.tx"></span>
                 </div>
-            </div>
+            </template>
+            <template x-if="interfaces.length === 0">
+                <div class="stat-row"><span class="stat-label">No data</span></div>
+            </template>
+        </div>
 
-            <!-- Backup Status Card -->
-            <div x-if="card === 'backup'" class="card">
-                <div class="card-header"><i class="fas fa-database"></i> Backup</div>
-                <div class="stat-row"><span class="stat-label">Last backup</span>
-                    <span class="stat-value" :class="backupClass" x-text="backupStatus"></span>
+        <!-- Services Status Card -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-cogs"></i> User Services</div>
+            <template x-for="svc in services" :key="svc.name">
+                <div class="stat-row">
+                    <span class="stat-label" x-text="svc.name.replace('.service','')"></span>
+                    <span class="stat-value" :class="{
+                        'success': svc.status === 'active',
+                        'warning': svc.status === 'inactive',
+                        'danger': svc.status === 'failed'
+                    }" x-text="svc.status"></span>
                 </div>
-                <div class="stat-row"><span class="stat-label">Time</span><span class="stat-value" x-text="backupTime"></span></div>
-                <pre x-text="backupLog"></pre>
-                <div class="button-grid">
-                    <button class="btn btn-primary" @click="runScript('backup')"><i class="fas fa-play"></i> Run Backup</button>
-                    <button class="btn" @click="runScript('verify')"><i class="fas fa-check"></i> Verify</button>
+            </template>
+        </div>
+
+        <!-- Docker Containers Card -->
+        <div class="card">
+            <div class="card-header"><i class="fab fa-docker"></i> Docker Containers</div>
+            <template x-if="dockerContainers.length === 0">
+                <div class="stat-row"><span class="stat-label">No running containers</span></div>
+            </template>
+            <template x-for="container in dockerContainers" :key="container">
+                <div class="stat-row">
+                    <span class="stat-label" x-text="container.split('(')[0]"></span>
+                    <span class="stat-value success" x-text="container.split('(')[1].replace(')','')"></span>
                 </div>
-            </div>
-
-            <!-- Updates Card -->
-            <div x-if="card === 'updates'" class="card">
-                <div class="card-header"><i class="fas fa-sync-alt"></i> Updates</div>
-                <div class="stat-row"><span class="stat-label">DNF</span><span class="stat-value" x-text="dnfUpdates"></span></div>
-                <div class="stat-row"><span class="stat-label">Flatpak</span><span class="stat-value" x-text="flatpakUpdates"></span></div>
-                <div class="stat-row"><span class="stat-label">Total</span><span class="stat-value" x-text="totalUpdates"></span></div>
-            </div>
-
-            <!-- Disk Usage Card -->
-            <div x-if="card === 'disk'" class="card" style="grid-column: span 2;">
-                <div class="card-header"><i class="fas fa-hdd"></i> Disk Usage</div>
-                <template x-for="disk in disks" :key="disk.mount">
-                    <div class="disk-item">
-                        <span style="min-width:80px;" x-text="disk.mount"></span>
-                        <div class="disk-bar">
-                            <div class="disk-bar-fill" :style="'width:'+disk.percent+'%; background: var(--'+disk.barClass+');'"></div>
-                        </div>
-                        <span class="disk-percent" x-text="disk.percent+'%'"></span>
-                    </div>
-                </template>
-            </div>
-
-            <!-- Download Organizer Card -->
-            <div x-if="card === 'organizer'" class="card">
-                <div class="card-header"><i class="fas fa-download"></i> Download Organizer</div>
-                <div class="stat-row"><span class="stat-label">Files moved</span><span class="stat-value" x-text="movedFiles"></span></div>
-                <div class="stat-row"><span class="stat-label">Last move</span><span class="stat-value" x-text="lastMove"></span></div>
-                <pre x-text="organizerLog"></pre>
-                <div class="button-grid">
-                    <button class="btn btn-primary" @click="runScript('organize')"><i class="fas fa-play"></i> Organize Now</button>
-                </div>
-            </div>
-
-            <!-- Disk Sentinel Card -->
-            <div x-if="card === 'sentinel'" class="card">
-                <div class="card-header"><i class="fas fa-exclamation-triangle"></i> Disk Sentinel</div>
-                <pre x-text="diskAlerts"></pre>
-                <div class="button-grid">
-                    <button class="btn" @click="runScript('diskcheck')"><i class="fas fa-search"></i> Check Now</button>
-                </div>
-            </div>
-
-            <!-- Network Stats Card -->
-            <div x-if="card === 'network'" class="card">
-                <div class="card-header"><i class="fas fa-network-wired"></i> Network</div>
-                <div class="stat-row"><span class="stat-label">Default IP</span><span class="stat-value" x-text="defaultIp"></span></div>
-                <template x-for="iface in interfaces" :key="iface.name">
-                    <div class="stat-row">
-                        <span class="stat-label" x-text="iface.name"></span>
-                        <span class="stat-value" x-text="'↓' + iface.rx + ' ↑' + iface.tx"></span>
-                    </div>
-                </template>
-                <template x-if="interfaces.length === 0">
-                    <div class="stat-row"><span class="stat-label">No data</span></div>
-                </template>
-            </div>
-
-            <!-- Services Status Card -->
-            <div x-if="card === 'services'" class="card">
-                <div class="card-header"><i class="fas fa-cogs"></i> User Services</div>
-                <template x-for="svc in services" :key="svc.name">
-                    <div class="stat-row">
-                        <span class="stat-label" x-text="svc.name.replace('.service','')"></span>
-                        <span class="stat-value" :class="{
-                            'success': svc.status === 'active',
-                            'warning': svc.status === 'inactive',
-                            'danger': svc.status === 'failed'
-                        }" x-text="svc.status"></span>
-                    </div>
-                </template>
-            </div>
-
-            <!-- Docker Containers Card -->
-            <div x-if="card === 'docker'" class="card">
-                <div class="card-header"><i class="fab fa-docker"></i> Docker Containers</div>
-                <template x-if="dockerContainers.length === 0">
-                    <div class="stat-row"><span class="stat-label">No running containers</span></div>
-                </template>
-                <template x-for="container in dockerContainers" :key="container">
-                    <div class="stat-row">
-                        <span class="stat-label" x-text="container.split('(')[0]"></span>
-                        <span class="stat-value success" x-text="container.split('(')[1].replace(')','')"></span>
-                    </div>
-                </template>
-            </div>
-        </template>
+            </template>
+        </div>
     </div>
 
     <!-- Modal for script output -->
