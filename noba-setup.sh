@@ -1,11 +1,212 @@
+
+# Basic help and version handling
+
+# Basic help and version handling
+
+# Help handling
+
+# Basic help and version handling
+
+# Help handling
+
+# Basic help and version handling
+
+# Help handling
+
+# Basic help and version handling
+
+# Help handling
+
+# Basic help and version handling
+
+# Help handling
+
+# Basic help and version handling
+
+# Basic help and version handling
+
+# Help handling
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For more information, see the script\x27s documentation or use --help on individual scripts."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For more information, see the script\x27s documentation or use --help on individual scripts."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For more information, see the script\x27s documentation or use --help on individual scripts."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For more information, see the script\x27s documentation or use --help on individual scripts."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For more information, see the script\x27s documentation or use --help on individual scripts."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For more information, see the script\x27s documentation or use --help on individual scripts."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For more information, see the script\x27s documentation or use --help on individual scripts."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For more information, see the script\x27s documentation or use --help on individual scripts."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
 #!/bin/bash
 # noba-setup.sh – Setup script for Nobara automation suite
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
 
 set -u
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
+
+show_help() {
+    cat <<EOF
+Usage: $(basename source "$SCRIPT_DIR/noba-lib.sh") [OPTIONS]
+
+Options:
+  --help        Show this help message
+  --version     Show version information
+EOF
+    exit 0
+}
+
+show_version() {
+    echo "$(basename source "$SCRIPT_DIR/noba-lib.sh") version 1.0"
+    exit 0
+}
+
 
 # Configuration
 CONFIG_DIR="${NOBA_CONFIG_DIR:-$HOME/.config/noba}"

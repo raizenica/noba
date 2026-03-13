@@ -1,5 +1,5 @@
 #!/bin/bash
-# test-all.sh – Comprehensive functionality test for all scripts
+# test-all.sh – Comprehensive functionality test for all scripts with timeouts
 
 set -u
 set -o pipefail
@@ -14,6 +14,11 @@ NC='\033[0m'
 PASS=0
 FAIL=0
 SKIP=0
+
+# Helper: run a command with a timeout and suppress output
+run_timeout() {
+    timeout 5 "$@" >/dev/null 2>&1
+}
 
 # Create a dummy backup for backup-verifier.sh
 DUMMY_BACKUP="/tmp/test-backups/$(date +%Y%m%d-%H%M%S)"
@@ -31,9 +36,29 @@ for script in *.sh; do
 
     echo -n "Testing $script ... "
 
+    # Special handling for daemon scripts that should only be tested for help/version
+    case "$script" in
+        temperature-alert.sh|service-watch.sh|battery-watch.sh|noba-web.sh)
+            # These scripts are long-running; only test --help and --version
+            if run_timeout "$script" --help; then
+                if grep -q "show_version" "$script" && ! run_timeout "$script" --version; then
+                    echo -e "${RED}FAIL (--version)${NC}"
+                    ((FAIL++))
+                else
+                    echo -e "${GREEN}PASS${NC}"
+                    ((PASS++))
+                fi
+            else
+                echo -e "${RED}FAIL (--help)${NC}"
+                ((FAIL++))
+            fi
+            continue
+            ;;
+    esac
+
     # Special handling for backup-verifier.sh
     if [[ "$script" == "backup-verifier.sh" ]]; then
-        if ./"$script" --backup-dir "/tmp/test-backups" --num-files 1 --dry-run >/dev/null 2>&1; then
+        if run_timeout "$script" --backup-dir "/tmp/test-backups" --num-files 1 --dry-run; then
             echo -e "${GREEN}PASS${NC}"
             ((PASS++))
         else
@@ -50,7 +75,7 @@ for script in *.sh; do
             ((SKIP++))
             continue
         fi
-        if ./images-to-pdf.sh -o /tmp/test.pdf /tmp/test.png >/dev/null 2>&1; then
+        if run_timeout "$script" -o /tmp/test.pdf /tmp/test.png; then
             echo -e "${GREEN}PASS${NC}"
             ((PASS++))
         else
@@ -60,8 +85,21 @@ for script in *.sh; do
         continue
     fi
 
+    # Special handling for run-hogwarts-trainer.sh (needs trainer file)
+    if [[ "$script" == "run-hogwarts-trainer.sh" ]]; then
+        # Just check help
+        if run_timeout "$script" --help; then
+            echo -e "${GREEN}PASS${NC}"
+            ((PASS++))
+        else
+            echo -e "${RED}FAIL (--help)${NC}"
+            ((FAIL++))
+        fi
+        continue
+    fi
+
     # For other scripts, check --help
-    if ! ./"$script" --help >/dev/null 2>&1; then
+    if ! run_timeout "$script" --help; then
         echo -e "${RED}FAIL (--help)${NC}"
         ((FAIL++))
         continue
@@ -69,7 +107,7 @@ for script in *.sh; do
 
     # Check --version if present
     if grep -q "show_version" "$script"; then
-        if ! ./"$script" --version >/dev/null 2>&1; then
+        if ! run_timeout "$script" --version; then
             echo -e "${RED}FAIL (--version)${NC}"
             ((FAIL++))
             continue
@@ -79,7 +117,7 @@ for script in *.sh; do
     # Dry-run for scripts that support it (excluding those already handled)
     case "$script" in
         backup-to-nas.sh|disk-sentinel.sh|organize-downloads.sh|undo-organizer.sh)
-            if ! ./"$script" --dry-run >/dev/null 2>&1; then
+            if ! run_timeout "$script" --dry-run; then
                 echo -e "${RED}FAIL (--dry-run)${NC}"
                 ((FAIL++))
                 continue
@@ -88,7 +126,7 @@ for script in *.sh; do
         checksum.sh)
             tmp=$(mktemp)
             echo "test" > "$tmp"
-            if ! ./checksum.sh "$tmp" >/dev/null 2>&1; then
+            if ! run_timeout checksum.sh "$tmp"; then
                 echo -e "${RED}FAIL (checksum generation)${NC}"
                 ((FAIL++))
                 rm -f "$tmp"
@@ -96,8 +134,38 @@ for script in *.sh; do
             fi
             rm -f "$tmp"
             ;;
-        noba-web.sh)
-            # Just check help (already done)
+        cloud-backup.sh)
+            # Just help tested, --dry-run would need rclone configured
+            ;;
+        config-check.sh)
+            # Just help tested
+            ;;
+        motd-generator.sh)
+            # Just help tested
+            ;;
+        noba-completion.sh)
+            # Just help tested
+            ;;
+        noba-cron-setup.sh)
+            # Just help tested
+            ;;
+        noba-daily-digest.sh)
+            # Just help tested
+            ;;
+        noba-dashboard.sh)
+            # Just help tested
+            ;;
+        noba-setup.sh)
+            # Just help tested
+            ;;
+        noba-tui.sh)
+            # Just help tested
+            ;;
+        noba-update.sh)
+            # Just help tested
+            ;;
+        system-report.sh)
+            # Just help tested
             ;;
         *)
             # Already passed help

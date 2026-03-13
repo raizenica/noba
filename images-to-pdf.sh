@@ -3,6 +3,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
 # images-to-pdf.sh – Convert images to PDF (CLI and GUI modes)
 
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
 set -u
 set -o pipefail
 

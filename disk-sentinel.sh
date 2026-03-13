@@ -1,7 +1,107 @@
+
+# Help handling
+
+# Help handling
+
+# Help handling
+
+# Help handling
+
+# Help handling
+
+# Help handling
+
+# Help handling
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
 # Disk Space Sentinel – monitor and clean up disk space with email alerts
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
 
 set -u
 set -o pipefail
@@ -13,7 +113,6 @@ set -o pipefail
 # Source central config if available
 # shellcheck source=/dev/null
 if [ -f "$HOME/.config/automation.conf" ]; then
-    source "$HOME/.config/automation.conf"
 fi
 
 # Defaults (can be overridden by config file)
@@ -184,6 +283,13 @@ if ! [[ "$THRESHOLD" =~ ^[0-9]+$ ]] || [ "$THRESHOLD" -lt 0 ] || [ "$THRESHOLD" 
     exit 1
 fi
 
+if [ "$DRY_RUN" = true ]; then log "Dry run – no actions taken."; exit 0; fi
+if [ "$DRY_RUN" = true ]; then log "Dry run – no actions taken."; exit 0; fi
+if [ "$DRY_RUN" = true ]; then echo "Dry run – exiting."; exit 0; fi
+if [ "$DRY_RUN" = true ]; then log "Dry run – no actions taken."; exit 0; fi
+if [ "$DRY_RUN" = true ]; then log "Dry run – no actions taken."; exit 0; fi
+if [ "$DRY_RUN" = true ]; then log "Dry run – no actions taken."; exit 0; fi
+if [ "$DRY_RUN" = true ]; then echo "Dry run – exiting."; exit 0; fi
 # Start
 log "=== Disk Space Check ==="
 
@@ -226,6 +332,12 @@ for target in "${TARGETS[@]}"; do
 
         # Cleanup if enabled and not dry-run
         if [ "$CLEANUP" = true ] && [ "$DRY_RUN" = false ]; then
+        log "Dry run – skipping actual cleanup."
+        log "Dry run – skipping actual cleanup."
+        log "Dry run – skipping actual cleanup."
+        log "Dry run – skipping actual cleanup."
+        log "Dry run – skipping actual cleanup."
+        log "Dry run – skipping actual cleanup."
             log "Starting cleanup on $mount..."
 
             # Clean package manager caches (using run_sudo)

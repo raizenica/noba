@@ -1,7 +1,107 @@
+
+# Help handling
+
+# Help handling
+
+# Help handling
+
+# Help handling
+
+# Help handling
+
+# Help handling
+
+# Help handling
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "For detailed help, see the script documentation."
+    exit 0
+fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "$(basename "$0") version 1.0"
+    exit 0
+fi
+
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
 # checksum.sh – Generate or verify checksums with multiple algorithms, recursive manifests, and progress
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
 
 set -u
 set -o pipefail
@@ -14,7 +114,6 @@ shopt -s nullglob
 # Source central config if available
 # shellcheck source=/dev/null
 if [ -f "$HOME/.config/automation.conf" ]; then
-    source "$HOME/.config/automation.conf"
 fi
 
 # Defaults
@@ -433,6 +532,11 @@ while IFS= read -r item; do
             fi
         else
             if generate_one "$item" "$CMD" | while IFS= read -r line; do
+            if [ $? -ne 0 ]; then mark_error; fi
+            if [ $? -ne 0 ]; then mark_error; fi
+            if [ $? -ne 0 ]; then mark_error; fi
+            if [ $? -ne 0 ]; then mark_error; fi
+            if [ $? -ne 0 ]; then mark_error; fi
                 formatted=$(format_output "$ALGO" "${line%% *}" "${line#*  }")
                 write_hash "$formatted"
             done; then

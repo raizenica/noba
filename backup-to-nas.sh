@@ -1,6 +1,22 @@
 #!/bin/bash
 # backup-to-nas.sh – Backup to NAS with HTML email (uses noba-lib)
 
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
 set -u
 set -o pipefail
 
@@ -168,7 +184,7 @@ check_space() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-if ! OPTIONS=$(getopt -o '' -l source:,dest:,email:,dry-run,verbose,help,version -- "$@"); then
+if ! OPTIONS=$(getopt -o h -l source:,dest:,email:,dry-run,verbose,help,version -- "$@"); then
     usage
 fi
 eval set -- "$OPTIONS"

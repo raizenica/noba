@@ -3,6 +3,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
 # organize-downloads.sh – Move files into categorized folders with CLI, config, and dated subfolders
 
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
+# Load configuration
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Override defaults with config values (script-specific)
+    # Example:
+    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+fi
+
 set -u
 set -o pipefail
 
@@ -13,7 +29,6 @@ set -o pipefail
 # Source central config if available
 # shellcheck source=/dev/null
 if [ -f "$HOME/.config/automation.conf" ]; then
-    source "$HOME/.config/automation.conf"
 fi
 
 # Defaults (can be overridden by config file)
@@ -189,7 +204,7 @@ load_config() {
 # -------------------------------------------------------------------
 # Parse command-line arguments
 # -------------------------------------------------------------------
-if ! OPTIONS=$(getopt -o c:dqvh -l config:,dry-run,quiet,verbose,dated,help,version -- "$@"); then
+if ! OPTIONS=$(getopt -o c:dqhhhhhhhhhhhhhvh -l config:,dry-run,quiet,verbose,dated,help,version -- "$@"); then
     usage
 fi
 eval set -- "$OPTIONS"
