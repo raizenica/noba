@@ -770,30 +770,6 @@ cat > "$HTML_DIR/index.html" <<'EOF'
         }
     </script>
 
-                    // Temperature sparkline
-                    if (this.$refs.tempChart && this.tempHistory.length) {
-                        new Chart(this.$refs.tempChart, {
-                            type: 'line',
-                            data: {
-                                labels: this.tempHistory.map((_, i) => i),
-                                datasets: [{
-                                    data: this.tempHistory,
-                                    borderColor: '#f59e0b',
-                                    backgroundColor: 'rgba(245,158,11,0.1)',
-                                    tension: 0.4,
-                                    pointRadius: 0
-                                }]
-                            },
-                            options: {
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                plugins: { legend: { display: false } },
-                                scales: { x: { display: false }, y: { display: false } }
-                            }
-                        });
-                    }
-                },
-
                 async runScript(script) {
                     if (this.runningScript) return;
                     this.runningScript = true;
