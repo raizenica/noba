@@ -371,6 +371,7 @@ send_email_report "$subject_prefix - $(date '+%Y-%m-%d')" "$EMAIL_BODY"
 rm -f "$EMAIL_BODY"
 log_info "========== Backup finished at $(date) =========="
 
-if command -v backup-notify.sh &>/dev/null; then
-    backup-notify.sh
+# Call notification script only if not in dry-run mode, and ignore any failure
+if [ "$DRY_RUN" = false ] && command -v backup-notify.sh &>/dev/null; then
+    backup-notify.sh || true
 fi
