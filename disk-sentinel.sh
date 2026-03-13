@@ -130,12 +130,23 @@ if ! some_command; then
     show_help
 fi
 eval set -- "$PARSED_ARGS"
+# -------------------------------------------------------------------
+# Parse command-line arguments
+# -------------------------------------------------------------------
+if ! PARSED_ARGS=$(getopt -o t:nv -l threshold:,dry-run,verbose,help,version -- "$@"); then
+    show_help
+fi
+eval set -- "$PARSED_ARGS"
 
 while true; do
     case "$1" in
         -t|--threshold) THRESHOLD="$2"; shift 2 ;;
         -n|--dry-run)   DRY_RUN=true; shift ;;
-        -v|--verbose)   VERBOSE=true; shift ;;
+        -v|--verbose)
+            # shellcheck disable=SC2034
+            VERBOSE=true
+            shift
+            ;;
         --help)         show_help ;;
         --version)      show_version ;;
         --)             shift; break ;;
