@@ -158,6 +158,12 @@ log_info "Dry run: $DRY_RUN"
 # -------------------------------------------------------------------
 # Main loop
 # -------------------------------------------------------------------
+# Clear the previous undo log so we only ever undo the MOST RECENT run
+UNDO_LOG="$(dirname "$LOG_FILE")/download-organizer-undo.log"
+if [ "$DRY_RUN" = false ]; then
+    : > "$UNDO_LOG"
+fi
+
 MOVED_COUNT=0
 
 # Process substitution ensures MOVED_COUNT persists after the loop
@@ -203,11 +209,11 @@ while IFS= read -r -d '' file; do
         log_debug "Filename conflict, renaming to $new_filename"
     fi
 
-move_file "$file" "$dest_path"
+    move_file "$file" "$dest_path"
 
     # Write to undo log (original path | new path)
     if [ "$DRY_RUN" = false ]; then
-        echo "$file|$dest_path" >> "$(dirname "$LOG_FILE")/download-organizer-undo.log"
+        echo "$file|$dest_path" >> "$UNDO_LOG"
     fi
 
     ((MOVED_COUNT++))
