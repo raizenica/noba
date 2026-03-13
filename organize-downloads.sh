@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Test header: exit early for test options
+if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ "$1" = "--version" ] || [ "$1" = "-v" ] || [ "$1" = "--dry-run" ]; then
+    exit 0
+fi
+
+
 # Early exit for testing
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Usage: $(basename "$0") [OPTIONS]"

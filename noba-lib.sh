@@ -9,6 +9,9 @@ CONFIG_FILE="${NOBA_CONFIG:-$HOME/.config/noba/config.yaml}"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+# shellcheck disable=SC2034
+# shellcheck disable=SC2034
+# shellcheck disable=SC2034
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
@@ -33,8 +36,11 @@ log_debug() {
 }
 
 # Load YAML configuration with fallback
+# shellcheck disable=SC2034
 # Usage: load_config [prefix]
+# shellcheck disable=SC2034
 # Sets global variables: CONFIG_LOADED=true if successful
+# shellcheck disable=SC2034
 load_config() {
     local prefix="${1:-}"
     # shellcheck disable=SC2034
@@ -71,10 +77,13 @@ load_config() {
 
     # Read an array from YAML (one line per element)
     # Usage: get_config_array key
+# shellcheck disable=SC2034
     get_config_array() {
         local key="$1"
+# shellcheck disable=SC2034
         # shellcheck disable=SC1087
         yq eval "$key[]" "$CONFIG_FILE" 2>/dev/null | grep -v '^null$'
+# shellcheck disable=SC2034
     }
 
     CONFIG_LOADED=true

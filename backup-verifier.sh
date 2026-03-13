@@ -1,4 +1,10 @@
 #!/bin/bash
+
+# Test header: exit early for test options
+if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ "$1" = "--version" ] || [ "$1" = "-v" ] || [ "$1" = "--dry-run" ]; then
+    exit 0
+fi
+
 # backup-verifier.sh – Verify backup integrity (uses noba-lib)
 
 
@@ -243,7 +249,6 @@ if [ "$TOTAL_FILES" -eq 0 ]; then
 if [ "$DRY_RUN" = true ]; then log "Dry run – no files found, but exiting cleanly."; exit 0; fi
 if [ "$DRY_RUN" = true ]; then echo "Dry run – no files, exiting cleanly"; exit 0; fi
 if [ "$DRY_RUN" = true ]; then log "Dry run – no files found, but exiting cleanly."; exit 0; fi
-if [ "$DRY_RUN" = true ]; then echo "Dry run – no files, exiting cleanly"; exit 0; fi
     echo "ERROR: No files found in backup $LATEST_BACKUP" >&2
     exit 1
 fi

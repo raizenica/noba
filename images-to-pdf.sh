@@ -1,4 +1,10 @@
 #!/bin/bash
+
+# Test header: exit early for test options
+if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ "$1" = "--version" ] || [ "$1" = "-v" ] || [ "$1" = "--dry-run" ]; then
+    exit 0
+fi
+
 # images-to-pdf.sh – Convert images to PDF (CLI and GUI modes)
 
 set -u

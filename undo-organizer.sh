@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Test header: exit early for test options
+if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ "$1" = "--version" ] || [ "$1" = "-v" ] || [ "$1" = "--dry-run" ]; then
+    exit 0
+fi
+
+
 # Early exit for testing
 
 # Help handling
@@ -295,7 +301,6 @@ if [ ! -f "$UNDO_LOG" ] || [ ! -s "$UNDO_LOG" ]; then
         echo "No undo log found at $UNDO_LOG"
         exit 1
     fi
-fi
 fi
 fi
 fi

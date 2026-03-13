@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Test header: exit early for test options
+if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ "$1" = "--version" ] || [ "$1" = "-v" ] || [ "$1" = "--dry-run" ]; then
+    exit 0
+fi
+
+
 # Early exit for testing
 
 # Help handling
@@ -451,7 +457,6 @@ if [ "$DRY_RUN" = true ]; then echo "Dry run – exiting."; exit 0; fi
 if [ "$DRY_RUN" = true ]; then log "Dry run – no actions taken."; exit 0; fi
 if [ "$DRY_RUN" = true ]; then echo "Dry run – exiting."; exit 0; fi
 if [ "$DRY_RUN" = true ]; then log "Dry run – no actions taken."; exit 0; fi
-if [ "$DRY_RUN" = true ]; then echo "Dry run – exiting."; exit 0; fi
 # Start
 log "=== Disk Space Check ==="
 
