@@ -1,245 +1,12 @@
 #!/bin/bash
-
-# Test header: exit early for test options
-if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ "$1" = "--version" ] || [ "$1" = "-v" ] || [ "$1" = "--dry-run" ]; then
-    exit 0
-fi
-
-
-# Early exit for testing
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-if [ "$1" = "--dry-run" ]; then
-    echo "Dry run – exiting 0 for test."
-    exit 0
-fi
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Help handling
-
-# Early exits for testing
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-if [ "$1" = "--dry-run" ] && [[ "$script" =~ (backup-verifier|disk-sentinel|undo-organizer) ]]; then
-    echo "Dry run – exiting 0 for test."
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    echo "For detailed help, see the script documentation."
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-
-#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/noba-lib.sh"
-
-# Early exit for testing (added by recover script)
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "Usage: $(basename "$0") [OPTIONS]"
-    exit 0
-fi
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "$(basename "$0") version 1.0"
-    exit 0
-fi
-if [ "$1" = "--dry-run" ]; then
-    echo "Dry run – exiting 0 for test."
-    exit 0
-fi
-
 # undo-organizer.sh – Undo last download organizer run
-
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
-
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
 
 set -u
 set -o pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/noba-lib.sh"
 
 UNDO_LOG="$HOME/.local/share/download-organizer-undo.log"
 DRY_RUN=false
@@ -257,6 +24,13 @@ EOF
     exit 0
 }
 
+# Load configuration (optional, may override defaults)
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # No config variables for this script yet, but placeholder for future
+    true
+fi
+
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -265,6 +39,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -f|--force)
+            # shellcheck disable=SC2034
             FORCE=true
             shift
             ;;
@@ -278,21 +53,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# If dry-run, exit 0 even if no log
-if [ "$DRY_RUN" = true ]; then
-    echo "Dry run – exiting cleanly."
-    exit 0
-fi
-# If dry-run, exit 0 even if no log
-if [ "$DRY_RUN" = true ]; then
-    echo "Dry run – exiting cleanly."
-    exit 0
-fi
-# If dry-run, exit 0 even if no log
-if [ "$DRY_RUN" = true ]; then
-    echo "Dry run – exiting cleanly."
-    exit 0
-fi
+# Check if undo log exists and is non‑empty
 if [ ! -f "$UNDO_LOG" ] || [ ! -s "$UNDO_LOG" ]; then
     if [ "$DRY_RUN" = true ]; then
         echo "[DRY RUN] No undo log found – nothing to do."
@@ -301,45 +62,6 @@ if [ ! -f "$UNDO_LOG" ] || [ ! -s "$UNDO_LOG" ]; then
         echo "No undo log found at $UNDO_LOG"
         exit 1
     fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
-fi
 fi
 
 # Count entries
@@ -354,19 +76,18 @@ if [ "$FORCE" = false ]; then
     fi
 fi
 
-# Function to reverse a file line by line (portable)
+# Portable reverse line function
 reverse_lines() {
     if command -v tac &>/dev/null; then
         tac "$1"
     elif command -v tail -r &>/dev/null; then
         tail -r "$1"
     else
-        # awk fallback
         awk '{a[NR]=$0} END {for (i=NR;i>=1;i--) print a[i]}' "$1"
     fi
 }
 
-# Process undo log in reverse order, handling both old (|) and new (^_) separators
+# Process undo log in reverse order
 reverse_lines "$UNDO_LOG" | while IFS= read -r line; do
     # Remove trailing carriage return if any
     line=${line%$'\r'}
