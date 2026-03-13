@@ -769,10 +769,6 @@ cat > "$HTML_DIR/index.html" <<'EOF'
             }
         }
     </script>
-                }
-            }
-        }
-    </script>
 </body>
 </html>
 EOF
