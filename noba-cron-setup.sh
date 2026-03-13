@@ -1,123 +1,146 @@
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/noba-lib.sh"
 # noba-cron-setup.sh – Interactive setup of cron jobs for automation scripts
 
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    true
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
+set -euo pipefail
 
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    true
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/noba-lib.sh"
 
-set -u
-set -o pipefail
-
-# Configuration
+# -------------------------------------------------------------------
+# Default configuration
+# -------------------------------------------------------------------
 SCRIPTS_DIR="${SCRIPTS_DIR:-$HOME/.local/bin}"
 CRON_LOG_DIR="$HOME/.local/share/cron-logs"
-mkdir -p "$CRON_LOG_DIR"
-
-# Colors for interactive output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-usage() {
-    cat <<EOF
-Usage: $0 [options]
-
-Interactive cron setup for Nobara automation scripts.
-
-Options:
-  --list       List currently installed cron jobs from these scripts
-  --remove     Remove a specific cron job (interactive)
-  --help       Show this help
-EOF
-    exit 0
-}
-
-# Parse options
 LIST_ONLY=false
 REMOVE_MODE=false
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --list)
-            LIST_ONLY=true
-            shift
-            ;;
-        --remove)
-            REMOVE_MODE=true
-            shift
-            ;;
-        --help)
-            usage
-            ;;
-        *)
-            echo "Unknown option: $1" >&2
-            exit 1
-            ;;
-    esac
-done
 
-# List scripts suitable for automation
+# Scripts suitable for automation (can be overridden in config)
 AUTOMATION_SCRIPTS=(
     "backup-to-nas.sh"
     "disk-sentinel.sh"
     "organize-downloads.sh"
 )
 
-# Function to list current cron jobs
-list_cron_jobs() {
-    echo -e "${YELLOW}Current cron jobs for user $USER:${NC}"
-    crontab -l 2>/dev/null | grep -E "($(IFS=\|; echo "${AUTOMATION_SCRIPTS[*]}"))" || echo "  No automation scripts found in crontab."
+# -------------------------------------------------------------------
+# Load user configuration (if any)
+# -------------------------------------------------------------------
+load_config
+if [ "$CONFIG_LOADED" = true ]; then
+    # Optionally override the list from config
+    scripts_from_config=$(get_config_array ".cron.scripts")
+    if [ -n "$scripts_from_config" ]; then
+        mapfile -t AUTOMATION_SCRIPTS <<< "$scripts_from_config"
+    fi
+    CRON_LOG_DIR="$(get_config ".logs.dir" "$CRON_LOG_DIR")/cron"
+fi
+
+# -------------------------------------------------------------------
+# Helper functions
+# -------------------------------------------------------------------
+show_version() {
+    echo "noba-cron-setup.sh version 1.0"
+    exit 0
 }
 
-# If --list, just show and exit
+show_help() {
+    cat <<EOF
+Usage: $0 [OPTIONS]
+
+Interactive cron setup for Nobara automation scripts.
+
+Options:
+  --list       List currently installed cron jobs from these scripts
+  --remove     Remove a specific cron job (interactive)
+  --help       Show this help message
+  --version    Show version information
+EOF
+    exit 0
+}
+
+# List current cron jobs matching our scripts
+list_cron_jobs() {
+    log_info "Current cron jobs for user $USER:"
+    local jobs
+    jobs=$(crontab -l 2>/dev/null | grep -E "($(IFS=\|; echo "${AUTOMATION_SCRIPTS[*]}"))" || true)
+    if [ -n "$jobs" ]; then
+        echo "$jobs"
+    else
+        echo "  No automation scripts found in crontab."
+    fi
+}
+
+# -------------------------------------------------------------------
+# Parse arguments
+# -------------------------------------------------------------------
+PARSED_ARGS=$(getopt -o '' -l list,remove,help,version -- "$@")
+if [ $? -ne 0 ]; then
+    show_help
+fi
+eval set -- "$PARSED_ARGS"
+
+while true; do
+    case "$1" in
+        --list)    LIST_ONLY=true; shift ;;
+        --remove)  REMOVE_MODE=true; shift ;;
+        --help)    show_help ;;
+        --version) show_version ;;
+        --)        shift; break ;;
+        *)         break ;;
+    esac
+done
+
+# -------------------------------------------------------------------
+# Pre-flight
+# -------------------------------------------------------------------
+mkdir -p "$CRON_LOG_DIR"
+
+# -------------------------------------------------------------------
+# List mode
+# -------------------------------------------------------------------
 if [ "$LIST_ONLY" = true ]; then
     list_cron_jobs
     exit 0
 fi
 
-# If --remove, run removal interactively
+# -------------------------------------------------------------------
+# Remove mode
+# -------------------------------------------------------------------
 if [ "$REMOVE_MODE" = true ]; then
-    echo -e "${YELLOW}Select a cron job to remove:${NC}"
-    # Get current automation jobs
-    mapfile -t jobs < <(crontab -l 2>/dev/null | grep -n -E "($(IFS=\|; echo "${AUTOMATION_SCRIPTS[*]}"))")
+    log_info "Select a cron job to remove:"
+    # Get current automation jobs with line numbers
+    local jobs=()
+    while IFS= read -r line; do
+        jobs+=("$line")
+    done < <(crontab -l 2>/dev/null | grep -n -E "($(IFS=\|; echo "${AUTOMATION_SCRIPTS[*]}"))" || true)
+
     if [ ${#jobs[@]} -eq 0 ]; then
-        echo "No automation cron jobs found."
+        log_info "No automation cron jobs found."
         exit 0
     fi
+
     for i in "${!jobs[@]}"; do
         echo "$((i+1)). ${jobs[$i]#*:}"
     done
+
     read -r -p "Enter number to remove (or 0 to cancel): " choice
     if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -gt 0 ] && [ "$choice" -le ${#jobs[@]} ]; then
         line_num=$(echo "${jobs[$((choice-1))]}" | cut -d: -f1)
         crontab -l | sed "${line_num}d" | crontab -
-        echo -e "${GREEN}Removed job.${NC}"
+        log_success "Removed job."
     else
-        echo "Cancelled."
+        log_info "Cancelled."
     fi
     exit 0
 fi
 
+# -------------------------------------------------------------------
 # Interactive setup
+# -------------------------------------------------------------------
 echo -e "${GREEN}=== Nobara Cron Setup ===${NC}"
 echo "This will help you schedule automation scripts."
 echo "Available scripts:"
+
 for i in "${!AUTOMATION_SCRIPTS[@]}"; do
     script="${AUTOMATION_SCRIPTS[$i]}"
     path="$SCRIPTS_DIR/$script"
@@ -130,14 +153,14 @@ done
 
 read -r -p "Enter script number to schedule (or 0 to exit): " choice
 if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -eq 0 ] || [ "$choice" -gt ${#AUTOMATION_SCRIPTS[@]} ]; then
-    echo "Exiting."
+    log_info "Exiting."
     exit 0
 fi
 
 script_name="${AUTOMATION_SCRIPTS[$((choice-1))]}"
 script_path="$SCRIPTS_DIR/$script_name"
 if [ ! -f "$script_path" ]; then
-    echo -e "${RED}Error: $script_name not found in $SCRIPTS_DIR${NC}"
+    log_error "$script_name not found in $SCRIPTS_DIR"
     exit 1
 fi
 
@@ -150,9 +173,9 @@ echo "  Every Monday at 3 AM: 0 3 * * 1"
 read -r -p "Enter cron schedule (default: 0 2 * * *): " schedule
 schedule=${schedule:-"0 2 * * *"}
 
-# Validate basic cron format (simplified)
+# Simple validation
 if ! [[ "$schedule" =~ ^([0-9*/-]+[[:space:]]){4}[0-9*/-]+$ ]]; then
-    echo -e "${RED}Invalid cron format. Using default.${NC}"
+    log_warn "Invalid cron format. Using default."
     schedule="0 2 * * *"
 fi
 
@@ -163,7 +186,7 @@ if [[ ! "$quiet" =~ ^[Nn]$ ]]; then
     quiet_flag="--quiet"
 fi
 
-# Log file for this job
+# Log file
 log_file="$CRON_LOG_DIR/${script_name%.sh}.log"
 
 # Build cron line
@@ -171,19 +194,19 @@ cron_line="$schedule $script_path $quiet_flag >> $log_file 2>&1"
 
 # Check if job already exists
 if crontab -l 2>/dev/null | grep -Fq "$script_path"; then
-    echo -e "${YELLOW}A job for $script_name already exists:${NC}"
+    log_warn "A job for $script_name already exists:"
     crontab -l | grep "$script_path"
     read -r -p "Overwrite? (y/n): " overwrite
     if [[ "$overwrite" =~ ^[Yy]$ ]]; then
         crontab -l | grep -vF "$script_path" | crontab -
         (crontab -l 2>/dev/null; echo "$cron_line") | crontab -
-        echo -e "${GREEN}Job updated.${NC}"
+        log_success "Job updated."
     else
-        echo "No changes."
+        log_info "No changes."
     fi
 else
     (crontab -l 2>/dev/null; echo "$cron_line") | crontab -
-    echo -e "${GREEN}Job added:${NC} $cron_line"
+    log_success "Job added: $cron_line"
 fi
 
-echo "Logs will be written to $log_file"
+log_info "Logs will be written to $log_file"
