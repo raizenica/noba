@@ -1,108 +1,112 @@
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/noba-lib.sh"
-# noba-completion.sh – Bash completion for Nobara automation scripts
+# noba-completion.sh – Fast Bash completion for Nobara automation scripts
+# Version: 2.2.0
 
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    true
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
-
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    true
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
-
-# shellcheck disable=SC2034  # words, cword, prev are used by completion machinery
+# NOTE: Do NOT source external libraries or parse YAML in a completion script.
+# It runs on every <TAB> press and must execute in milliseconds.
 
 _noba_completions() {
-    local cur prev words cword
-    _init_completion || return
+    local cur prev cmd scripts opts
 
-    # Map script name to its options
+    # Safely get current word, previous word, and base command
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    cmd="${COMP_WORDS[0]}"
+
+    # Full list of available scripts
+    scripts="backup-notify.sh backup-to-nas.sh backup-verifier.sh checksum.sh cloud-backup.sh config-check.sh disk-sentinel.sh images-to-pdf.sh log-rotator.sh motd-generator.sh noba-cron-setup.sh noba-daily-digest.sh noba-dashboard.sh noba-tui.sh noba-update.sh noba-web.sh organize-downloads.sh service-watch.sh system-report.sh temperature-alert.sh undo-organizer.sh"
+
+    # 1. Handle the "noba" wrapper CLI
+    if [[ "$cmd" == "noba" ]]; then
+        if [[ ${COMP_CWORD} -eq 1 ]]; then
+            # Complete script names for the first argument
+            # shellcheck disable=SC2207
+            COMPREPLY=($(compgen -W "$scripts" -- "$cur"))
+            return 0
+        else
+            # Shift the command context to the invoked script
+            cmd="${COMP_WORDS[1]}"
+        fi
+    else
+        # Strip path if executed via ./script.sh
+        cmd="$(basename "$cmd")"
+    fi
+
+    # 2. Smart Directory & File Completion
+    # If the previous word expects a path, trigger standard bash path completion
     case "$prev" in
-        backup-to-nas.sh)
+        --source|--dest|-b|--backup-dir|-d|--download-dir|--dir)
+            # Only complete directories
             # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "--source --dest --email --dry-run --verbose --help --version" -- "$cur"))
-            return
+            COMPREPLY=($(compgen -A directory -- "$cur"))
+            return 0
             ;;
-        backup-verifier.sh)
+        -c|--config|-o|--output|--proton-path|--game-dir)
+            # Complete files and directories
             # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "-b --backup-dir -n --num-files -c --compare-original --checksum-cmd --temp-dir -v --verbose -q --quiet --dry-run --help --version" -- "$cur"))
-            return
-            ;;
-        checksum.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "-a --algo -v --verify -r --recursive -m --manifest -p --progress -o --output -c --copy -q --quiet --gui --follow-symlinks --no-hidden --manifest-name --help --version" -- "$cur"))
-            return
-            ;;
-        disk-sentinel.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "-t --threshold -n --dry-run -v --verbose --help --version" -- "$cur"))
-            return
-            ;;
-        images-to-pdf.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "-o --output -s --paper-size -r --orientation -q --quality -m --metadata -p --progress -v --verbose --help --version" -- "$cur"))
-            return
-            ;;
-        organize-downloads.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "-c --config -d --dry-run -v --verbose -q --quiet --dated --help --version" -- "$cur"))
-            return
-            ;;
-        undo-organizer.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "-d --dry-run -f --force --help" -- "$cur"))
-            return
-            ;;
-        run-hogwarts-trainer.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "-g --game-dir -t --trainer -p --proton-path -l --list-proton -q --quiet --help --version" -- "$cur"))
-            return
-            ;;
-        motd-generator.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "--help --version" -- "$cur"))
-            return
-            ;;
-        noba-dashboard.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "--help" -- "$cur"))
-            return
-            ;;
-        backup-notify.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "--help" -- "$cur"))
-            return
-            ;;
-        config-check.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "backup-to-nas.sh backup-verifier.sh checksum.sh disk-sentinel.sh images-to-pdf.sh organize-downloads.sh undo-organizer.sh run-hogwarts-trainer.sh motd-generator.sh noba-dashboard.sh backup-notify.sh config-check.sh noba-cron-setup.sh cloud-backup.sh system-report.sh log-rotator.sh temperature-alert.sh service-watch.sh noba-tui.sh noba-web.sh noba-update.sh noba-daily-digest.sh" -- "$cur"))
-            return
-            ;;
-        noba-cron-setup.sh)
-            # shellcheck disable=SC2207
-            COMPREPLY=($(compgen -W "--help --list --remove" -- "$cur"))
-            return
+            COMPREPLY=($(compgen -A file -- "$cur"))
+            return 0
             ;;
     esac
 
-    # If we're at the first argument, suggest script names
-    if [[ $cword -eq 1 ]]; then
+    # 3. Argument Completion
+    # Only show flag completions if the user has started typing a dash
+    if [[ "$cur" == -* ]]; then
+        opts=""
+        case "$cmd" in
+            backup-to-nas.sh)
+                opts="--source --dest --email --dry-run --verbose --help --version"
+                ;;
+            backup-verifier.sh)
+                opts="-b --backup-dir -n --num-files -c --compare-original --checksum-cmd --send-email -v --verbose -q --quiet -D --dry-run --help --version"
+                ;;
+            cloud-backup.sh)
+                opts="-n --dry-run -r --remote -c --config --status --help --version"
+                ;;
+            disk-sentinel.sh)
+                opts="-t --threshold -n --dry-run -v --verbose --help --version"
+                ;;
+            organize-downloads.sh)
+                opts="-d --download-dir -a --min-age -n --dry-run -v --verbose --help --version"
+                ;;
+            noba-daily-digest.sh)
+                opts="-e --email -n --dry-run --help --version"
+                ;;
+            system-report.sh)
+                opts="-o --output -d --dir -e --email -n --no-email --help --version"
+                ;;
+            checksum.sh)
+                opts="-a --algo -v --verify -r --recursive -m --manifest -p --progress -o --output -c --copy -q --quiet --gui --follow-symlinks --no-hidden --manifest-name --help --version"
+                ;;
+            images-to-pdf.sh)
+                opts="-o --output -s --paper-size -r --orientation -q --quality -m --metadata -p --progress -v --verbose --help --version"
+                ;;
+            undo-organizer.sh)
+                opts="-d --dry-run -f --force --help"
+                ;;
+            noba-cron-setup.sh)
+                opts="--help --list --remove"
+                ;;
+            run-hogwarts-trainer.sh)
+                opts="-g --game-dir -t --trainer -p --proton-path -l --list-proton -q --quiet --help --version"
+                ;;
+            *)
+                # Generic fallback for scripts with minimal flags
+                opts="--help --version"
+                ;;
+        esac
+
         # shellcheck disable=SC2207
-        COMPREPLY=($(compgen -W "backup-to-nas.sh backup-verifier.sh checksum.sh disk-sentinel.sh images-to-pdf.sh organize-downloads.sh undo-organizer.sh run-hogwarts-trainer.sh motd-generator.sh noba-dashboard.sh backup-notify.sh config-check.sh noba-cron-setup.sh" -- "$cur"))
+        COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+        return 0
     fi
 }
 
-# Assign completion to all scripts
-complete -F _noba_completions backup-to-nas.sh backup-verifier.sh checksum.sh disk-sentinel.sh images-to-pdf.sh organize-downloads.sh undo-organizer.sh run-hogwarts-trainer.sh motd-generator.sh noba-dashboard.sh backup-notify.sh config-check.sh noba-cron-setup.sh
+# -------------------------------------------------------------------
+# Register the completion function
+# -------------------------------------------------------------------
+# Register for the master wrapper
+complete -F _noba_completions noba
+
+# Register dynamically for all individual scripts
+complete -F _noba_completions backup-notify.sh backup-to-nas.sh backup-verifier.sh checksum.sh cloud-backup.sh config-check.sh disk-sentinel.sh images-to-pdf.sh log-rotator.sh motd-generator.sh noba-cron-setup.sh noba-daily-digest.sh noba-dashboard.sh noba-tui.sh noba-update.sh noba-web.sh organize-downloads.sh run-hogwarts-trainer.sh service-watch.sh system-report.sh temperature-alert.sh undo-organizer.sh
