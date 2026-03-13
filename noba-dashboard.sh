@@ -1,53 +1,28 @@
 #!/bin/bash
+# noba-dashboard.sh – Detailed terminal dashboard for Nobara automation
+
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
 
-# Load configuration
+# Load configuration (once is enough)
 load_config
 if [ "$CONFIG_LOADED" = true ]; then
-    true
     # Override defaults with config values (script-specific)
     # Example:
     # VAR=$(get_config ".${script%.sh}.var" "$VAR")
+    # You can add dashboard‑specific configs here later
+    :
 fi
 
-show_help() {
-    cat <<EOF
-Usage: $(basename source "$SCRIPT_DIR/noba-lib.sh") [OPTIONS]
-
-Options:
-  --help        Show this help message
-  --version     Show version information
-EOF
-    exit 0
-}
-
-show_version() {
-    echo "$(basename source "$SCRIPT_DIR/noba-lib.sh") version 1.0"
-    exit 0
-}
-
-# noba-dashboard.sh – Detailed terminal dashboard for Nobara automation
-
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    true
-    # Override defaults with config values (script-specific)
-    # Example:
-    # VAR=$(get_config ".${script%.sh}.var" "$VAR")
-fi
-
-set -u
-set -o pipefail
-
-# Colors
+# Colors (already in noba-lib.sh, but redefined here for convenience)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # Configuration
 LOG_DIR="$HOME/.local/share"
@@ -55,6 +30,11 @@ BACKUP_LOG="$LOG_DIR/backup-to-nas.log"
 DISK_LOG="$LOG_DIR/disk-sentinel.log"
 ORGANIZER_LOG="$LOG_DIR/download-organizer.log"
 UNDO_LOG="$LOG_DIR/download-organizer-undo.log"
+
+# Helper to strip ANSI color codes
+strip_ansi() {
+    echo "$1" | sed 's/\x1b\[[0-9;]*m//g'
+}
 
 # Helper to print section headers
 section() {
@@ -74,9 +54,8 @@ system_info() {
 disk_usage() {
     section "Disk Usage"
     df -h | grep -E '^/dev/' | while read -r line; do
-        # Use underscore for fields we don't need
         read -r _ size used _ use_percent mount <<< "$line"
-        # Skip snap mounts (they are squashfs, not /dev/)
+        # Skip snap mounts
         if [[ "$mount" == /var/lib/snapd/snap/* ]]; then
             continue
         fi
@@ -92,22 +71,38 @@ disk_usage() {
     done
 }
 
-# Last backup status
+# Last backup status – clean, with timestamp and stripped ANSI codes
 backup_status() {
     section "Backup"
-    if [ -f "$BACKUP_LOG" ]; then
-        last_run=$(tail -1 "$BACKUP_LOG" 2>/dev/null)
-        if echo "$last_run" | grep -qi "error"; then
+    if [ ! -f "$BACKUP_LOG" ]; then
+        echo "  No backup log found."
+        return
+    fi
+
+    # Find the most recent line indicating a real backup completion
+    last_complete=$(grep -E "Backup finished" "$BACKUP_LOG" | tail -1)
+    if [ -n "$last_complete" ]; then
+        # Extract timestamp (format: "========== Backup finished at YYYY-MM-DD HH:MM:SS ==========")
+        timestamp=$(echo "$last_complete" | sed -n 's/.*at \(.*\) =.*/\1/p')
+        if [ -n "$timestamp" ]; then
+            echo "  Last backup: ${GREEN}${timestamp}${NC}"
+        else
+            echo "  Last backup: ${GREEN}recently${NC} (no timestamp)"
+        fi
+        status="${GREEN}✓ OK${NC}"
+        echo "  Status      : $status"
+    else
+        # No completed backup; show last log line (stripped)
+        last_line=$(strip_ansi "$(tail -1 "$BACKUP_LOG")")
+        if echo "$last_line" | grep -qi "error"; then
             status="${RED}✗ ERROR${NC}"
-        elif echo "$last_run" | grep -qi "complete"; then
-            status="${GREEN}✓ OK${NC}"
+        elif echo "$last_line" | grep -qi "dry run"; then
+            status="${YELLOW}ℹ DRY RUN${NC}"
         else
             status="${YELLOW}? UNKNOWN${NC}"
         fi
-        echo "  Last run : $status"
-        echo "  Log      : $last_run"
-    else
-        echo "  No backup log found."
+        echo "  Last run    : $status"
+        echo "  Last log line: $last_line"
     fi
 }
 
@@ -115,7 +110,6 @@ backup_status() {
 organizer_status() {
     section "Download Organizer"
     if [ -f "$ORGANIZER_LOG" ]; then
-        # Count total moved files from log (grep "Moved:")
         moved=$(grep -c "Moved:" "$ORGANIZER_LOG" 2>/dev/null || echo 0)
         last_move=$(grep "Moved:" "$ORGANIZER_LOG" | tail -1 | sed 's/.*Moved: //')
         echo "  Files moved: $moved"
@@ -135,7 +129,6 @@ organizer_status() {
 disk_alerts() {
     section "Disk Sentinel"
     if [ -f "$DISK_LOG" ]; then
-        # Show recent warnings (last 3)
         warnings=$(grep -E "WARNING|exceeded" "$DISK_LOG" | tail -3)
         if [ -n "$warnings" ]; then
             echo "  Recent alerts:"
@@ -150,12 +143,11 @@ disk_alerts() {
     fi
 }
 
-# Pending downloads (files in ~/Downloads not yet organized)
+# Pending downloads
 pending_downloads() {
     section "Pending Downloads"
     download_dir="${DOWNLOAD_DIR:-$HOME/Downloads}"
     if [ -d "$download_dir" ]; then
-        # Count files directly in Downloads (not in subfolders)
         count=$(find "$download_dir" -maxdepth 1 -type f | wc -l)
         if [ "$count" -gt 0 ]; then
             echo "  $count file(s) waiting in Downloads:"
