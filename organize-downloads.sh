@@ -1,6 +1,6 @@
 #!/bin/bash
 # organize-downloads.sh – Move files from Downloads into categorized folders
-# Version: 2.1.0 (compatible with noba-lib.sh 2.1.0)
+# Version: 2.2.0
 
 set -euo pipefail
 
@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
-# Default configuration (can be overridden by config file)
+# Default configuration
 # -------------------------------------------------------------------
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/download-organizer.log}"
@@ -17,7 +17,7 @@ MIN_AGE_MINUTES=5
 DRY_RUN=false
 VERBOSE=false
 
-# Category definitions: folder name -> space-separated extensions
+# Category definitions
 declare -A CATEGORIES=(
     ["Images"]="jpg jpeg png gif bmp svg webp tiff"
     ["Documents"]="pdf doc docx txt odt rtf md"
@@ -39,17 +39,24 @@ for cat in "${!CATEGORIES[@]}"; do
 done
 
 # -------------------------------------------------------------------
-# Load configuration using new stateless library
+# Load configuration
 # -------------------------------------------------------------------
-DOWNLOAD_DIR="$(get_config ".downloads.dir" "$DOWNLOAD_DIR")"
-MIN_AGE_MINUTES="$(get_config ".downloads.min_age_minutes" "$MIN_AGE_MINUTES")"
-LOG_FILE="$(get_config ".logs.dir" "$(dirname "$LOG_FILE")")/download-organizer.log"
+if command -v get_config &>/dev/null; then
+    DOWNLOAD_DIR="$(get_config ".downloads.dir" "$DOWNLOAD_DIR")"
+    MIN_AGE_MINUTES="$(get_config ".downloads.min_age_minutes" "$MIN_AGE_MINUTES")"
+
+    # Safely derive log file if configured, otherwise use default
+    config_log_dir="$(get_config ".logs.dir" "")"
+    if [ -n "$config_log_dir" ]; then
+        LOG_FILE="$config_log_dir/download-organizer.log"
+    fi
+fi
 
 # -------------------------------------------------------------------
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "organize-downloads.sh version 2.1.0 (noba-lib $NOBA_LIB_VERSION)"
+    echo "organize-downloads.sh version 2.2.0 (noba-lib $NOBA_LIB_VERSION)"
     exit 0
 }
 
@@ -60,36 +67,39 @@ Usage: $0 [OPTIONS]
 Organize files in Downloads folder into categorized subfolders.
 
 Options:
-  -d, --download-dir DIR   Target download directory (default: $DOWNLOAD_DIR)
-  -a, --min-age MINUTES    Skip files modified within last MINUTES (default: $MIN_AGE_MINUTES)
-  -n, --dry-run            Perform trial run with no changes
-  -v, --verbose            Enable verbose output
-  --help                   Show this help message
-  --version                Show version information
+  -d, --download-dir DIR  Target download directory (default: $DOWNLOAD_DIR)
+  -a, --min-age MINUTES   Skip files modified within last MINUTES (default: $MIN_AGE_MINUTES)
+  -n, --dry-run           Perform trial run with no changes
+  -v, --verbose           Enable verbose output
+  --help                  Show this help message
+  --version               Show version information
 EOF
     exit 0
 }
 
-# Check if file is open (using lsof, fallback if not installed)
 is_file_open() {
-    if command -v lsof &>/dev/null; then
-        lsof "$1" >/dev/null 2>&1
+    local file="$1"
+    # fuser is significantly faster than lsof for single file checks
+    if command -v fuser &>/dev/null; then
+        fuser -s "$file"
+        return $?
+    elif command -v lsof &>/dev/null; then
+        lsof "$file" >/dev/null 2>&1
+        return $?
     else
-        log_debug "lsof not installed – skipping open file check for $1"
-        return 1
+        return 1 # Cannot check, assume closed
     fi
 }
 
-# Get file age in seconds
 file_age_seconds() {
     local file="$1"
     local now mod_time
-    now=$(date +%s)
+    # Use bash 5.0 EPOCHSECONDS if available, fallback to date
+    now="${EPOCHSECONDS:-$(date +%s)}"
     mod_time=$(stat -c %Y "$file" 2>/dev/null || echo 0)
     echo $((now - mod_time))
 }
 
-# Move file (or simulate)
 move_file() {
     local src="$1"
     local dest="$2"
@@ -98,7 +108,7 @@ move_file() {
     else
         mkdir -p "$(dirname "$dest")"
         mv "$src" "$dest"
-        log_info "Moved: $src → $dest"
+        log_info "Moved: $(basename "$src") → $(basename "$(dirname "$dest")")/"
     fi
 }
 
@@ -126,25 +136,17 @@ done
 # -------------------------------------------------------------------
 # Pre-flight checks
 # -------------------------------------------------------------------
-check_deps find mkdir dirname basename stat date tr
-if command -v lsof &>/dev/null; then
-    log_debug "lsof available – will check open files."
-else
-    log_warn "lsof not installed – open file checks will be skipped."
-fi
+check_deps find mkdir dirname basename stat date
 
-# Validate min age
 if ! [[ "$MIN_AGE_MINUTES" =~ ^[0-9]+$ ]]; then
-    log_error "MIN_AGE_MINUTES must be a positive integer."
-    exit 1
+    die "MIN_AGE_MINUTES must be a positive integer."
 fi
 
-# Ensure download directory exists
 if [ ! -d "$DOWNLOAD_DIR" ]; then
-    log_error "Download directory $DOWNLOAD_DIR does not exist."
-    exit 1
+    die "Download directory $DOWNLOAD_DIR does not exist."
 fi
 
+# Prepare logging
 mkdir -p "$(dirname "$LOG_FILE")"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -152,16 +154,16 @@ log_info "========== Download organizer started at $(date) =========="
 log_info "Download dir: $DOWNLOAD_DIR"
 log_info "Min age: $MIN_AGE_MINUTES minutes"
 log_info "Dry run: $DRY_RUN"
-log_info "Verbose: $VERBOSE"
 
 # -------------------------------------------------------------------
 # Main loop
 # -------------------------------------------------------------------
-# Use find with null separator to handle spaces and special characters safely
-find "$DOWNLOAD_DIR" -maxdepth 1 -type f -not -path '*/\.*' -print0 | while IFS= read -r -d '' file; do
+MOVED_COUNT=0
+
+# Process substitution ensures MOVED_COUNT persists after the loop
+while IFS= read -r -d '' file; do
     log_debug "Processing: $file"
 
-    # Skip files newer than MIN_AGE_MINUTES
     age_seconds=$(file_age_seconds "$file")
     age_minutes=$((age_seconds / 60))
     if [ "$age_minutes" -lt "$MIN_AGE_MINUTES" ]; then
@@ -169,48 +171,41 @@ find "$DOWNLOAD_DIR" -maxdepth 1 -type f -not -path '*/\.*' -print0 | while IFS=
         continue
     fi
 
-    # Skip open files
     if is_file_open "$file"; then
-        log_debug "Skipping $file (file is open)"
+        log_debug "Skipping $file (file is currently in use)"
         continue
     fi
 
-    # Get filename and extension (lowercase)
     filename=$(basename "$file")
     ext="${filename##*.}"
-    if [ "$ext" = "$filename" ]; then
-        ext=""  # no extension
+    if [[ "$ext" == "$filename" ]]; then
+        ext=""
     else
-        ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+        ext="${ext,,}" # Native Bash 4+ lowercase
     fi
 
-    # Determine target category
     category="${EXT_TO_CAT[$ext]:-Others}"
-
-    # Build destination folder
     dest_folder="$DOWNLOAD_DIR/$category"
 
-    # Skip if already in the correct folder
-    current_dir=$(dirname "$file")
-    if [ "$current_dir" = "$dest_folder" ]; then
-        log_debug "Skipping $file (already in $category folder)"
-        continue
-    fi
-
-    # Handle duplicate filename
+    # Handle duplicate filename with $RANDOM to prevent rapid-execution race conditions
     dest_path="$dest_folder/$filename"
     if [ -e "$dest_path" ]; then
         base="${filename%.*}"
-        # If base is empty (e.g., .gitignore), use filename
-        if [ -z "$base" ]; then
-            base="$filename"
+        [[ -z "$base" ]] && base="$filename" # Handle hidden files like .gitignore
+
+        timestamp=$(date +%Y%m%d_%H%M%S)
+        if [ -z "$ext" ]; then
+            new_filename="${base}_${timestamp}_${RANDOM}"
+        else
+            new_filename="${base}_${timestamp}_${RANDOM}.$ext"
         fi
-        new_filename="${base}_$(date +%Y%m%d_%H%M%S).$ext"
         dest_path="$dest_folder/$new_filename"
         log_debug "Filename conflict, renaming to $new_filename"
     fi
 
     move_file "$file" "$dest_path"
-done
+    ((MOVED_COUNT++))
 
-log_info "========== Organization complete =========="
+done < <(find "$DOWNLOAD_DIR" -maxdepth 1 -type f -not -path '*/\.*' -print0)
+
+log_info "========== Organization complete. Moved $MOVED_COUNT files. =========="
