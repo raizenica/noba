@@ -289,12 +289,13 @@ else
 fi
 
 # Collect statistics
-FILES_COUNT=$(grep -E '^Number of files: ' "$LOG_FILE" | tail -1 | awk '{print $4}')
-if [ -z "$FILES_COUNT" ]; then
+FILES_COUNT=$(grep -E '^Number of files: ' "$LOG_FILE" 2>/dev/null | tail -1 | awk '{print $4}' || echo "N/A")
+if [ -z "$FILES_COUNT" ] || [ "$FILES_COUNT" = "N/A" ]; then
     FILES_COUNT="N/A"
 fi
+
 if [ "$DRY_RUN" = false ] && [ -d "$BACKUP_PATH" ]; then
-    SIZE=$(du -sh "$BACKUP_PATH" | cut -f1)
+    SIZE=$(du -sh "$BACKUP_PATH" 2>/dev/null | cut -f1 || echo "unknown")
 else
     SIZE="N/A (dry run)"
 fi
