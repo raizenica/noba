@@ -39,6 +39,12 @@ if [ "$CONFIG_LOADED" = true ]; then
     [[ "$SHOW_BACKUP" == "false" ]] && SHOW_BACKUP=false
 fi
 
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    echo "Usage: $0"
+    echo "Generates a dynamic Message of the Day (MOTD)."
+    exit 0
+fi
+
 # -------------------------------------------------------------------
 # Helper functions
 # -------------------------------------------------------------------
