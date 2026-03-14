@@ -1,40 +1,40 @@
 #!/bin/bash
 # noba-lib.sh – Shared functions for Nobara automation scripts
-# Version: 2.2.0
+# Version: 2.2.1
 # This file should be sourced by other scripts, not executed directly.
 
 # Prevent multiple inclusions
 if [[ -n "${_NOBA_LIB_LOADED:-}" ]]; then
     return 0
 fi
-readonly _NOBA_LIB_LOADED=1
-readonly NOBA_LIB_VERSION="2.2.0"
+export _NOBA_LIB_LOADED=1
+export NOBA_LIB_VERSION="2.2.1"
 
 # -------------------------------------------------------------------
 # Configuration file location (can be overridden by environment)
 # -------------------------------------------------------------------
 : "${NOBA_CONFIG:=$HOME/.config/noba/config.yaml}"
-readonly CONFIG_FILE="$NOBA_CONFIG"
+export CONFIG_FILE="$NOBA_CONFIG"
 
 # Cache dependency checks on load
 if command -v yq &>/dev/null; then
-    readonly _NOBA_YQ_AVAILABLE=true
+    export _NOBA_YQ_AVAILABLE=true
 else
-    readonly _NOBA_YQ_AVAILABLE=false
+    export _NOBA_YQ_AVAILABLE=false
 fi
 
 # -------------------------------------------------------------------
 # Color support – disable if not a terminal or NO_COLOR is set
 # -------------------------------------------------------------------
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
-    readonly RED='\033[0;31m'
-    readonly GREEN='\033[0;32m'
-    readonly YELLOW='\033[1;33m'
-    readonly BLUE='\033[0;34m'
-    readonly CYAN='\033[0;36m'
-    readonly NC='\033[0m'  # No Color
+    export RED='\033[0;31m'
+    export GREEN='\033[0;32m'
+    export YELLOW='\033[1;33m'
+    export BLUE='\033[0;34m'
+    export CYAN='\033[0;36m'
+    export NC='\033[0m'  # No Color
 else
-    readonly RED='' GREEN='' YELLOW='' BLUE='' CYAN='' NC=''
+    export RED='' GREEN='' YELLOW='' BLUE='' CYAN='' NC=''
 fi
 
 # -------------------------------------------------------------------
@@ -89,7 +89,7 @@ get_config() {
 get_config_array() {
     local key="$1"
     if [[ "$_NOBA_YQ_AVAILABLE" == true && -f "$CONFIG_FILE" && -r "$CONFIG_FILE" ]]; then
-        yq eval "$key[]" "$CONFIG_FILE" 2>/dev/null | grep -v '^null$' || true
+        yq eval "${key}[]" "$CONFIG_FILE" 2>/dev/null | grep -v '^null$' || true
     fi
 }
 
@@ -132,6 +132,8 @@ make_temp_dir_auto() {
     # Extract existing trap, if any, and append our cleanup routine safely
     local existing_trap
     existing_trap=$(trap -p EXIT | sed "s/^trap -- '//;s/' EXIT$//")
+
+    # shellcheck disable=SC2064
     trap "${existing_trap:+$existing_trap; }rm -rf \"$temp_dir\"" EXIT
 
     echo "$temp_dir"
@@ -156,7 +158,7 @@ confirm() {
     local prompt="$1"
     local default="${2:-n}"
 
-    # Non‑interactive guard: check if stdin and stdout are terminals
+    # Non-interactive guard: check if stdin and stdout are terminals
     if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
         [[ "$default" == "y" ]] && return 0 || return 1
     fi
