@@ -1,11 +1,11 @@
 #!/bin/bash
-# noba-web.sh – Ultimate dashboard (full version with all embedded code)
-# Version: 3.2.0
+# noba-web.sh – Ultimate dashboard with modular UI cards
+# Version: 3.3.0
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
+# shellcheck source=./noba-lib.sh
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
@@ -21,14 +21,18 @@ HOST="${HOST:-0.0.0.0}"
 DEFAULT_SERVICES="backup-to-nas.service organize-downloads.service noba-web.service syncthing.service"
 
 # -------------------------------------------------------------------
-# Load user configuration (stateless)
+# Load user configuration
 # -------------------------------------------------------------------
-START_PORT="$(get_config ".web.start_port" "$START_PORT")"
-MAX_PORT="$(get_config ".web.max_port" "$MAX_PORT")"
-HOST="$(get_config ".web.host" "$HOST")"
-SERVICES_LIST=$(get_config_array ".web.service_list" | tr '\n' ',' | sed 's/,$//')
-if [ -n "$SERVICES_LIST" ]; then
-    export NOBA_WEB_SERVICES="$SERVICES_LIST"
+if command -v get_config &>/dev/null; then
+    START_PORT="$(get_config ".web.start_port" "$START_PORT")"
+    MAX_PORT="$(get_config ".web.max_port" "$MAX_PORT")"
+    HOST="$(get_config ".web.host" "$HOST")"
+    SERVICES_LIST=$(get_config_array ".web.service_list" | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$SERVICES_LIST" ]; then
+        export NOBA_WEB_SERVICES="$SERVICES_LIST"
+    else
+        export NOBA_WEB_SERVICES="${DEFAULT_SERVICES// /,}"
+    fi
 else
     export NOBA_WEB_SERVICES="${DEFAULT_SERVICES// /,}"
 fi
@@ -37,7 +41,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "noba-web.sh version 3.2.0"
+    echo "noba-web.sh version 3.3.0"
     exit 0
 }
 
@@ -45,15 +49,15 @@ show_help() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 
-Launch an interactive web dashboard for Nobara automation.
+Launch an interactive web dashboard for the Nobara Automation Suite.
 
 Options:
-  -p, --port PORT   Start searching from PORT (default: $START_PORT)
-  -m, --max PORT    Maximum port to try (default: $MAX_PORT)
-  --host HOST       Bind to specific host/IP (default: $HOST)
-  -k, --kill        Kill any running noba-web server and exit
-  --help            Show this help message
-  --version         Show version information
+  -p, --port PORT  Start searching from PORT (default: $START_PORT)
+  -m, --max PORT   Maximum port to try (default: $MAX_PORT)
+  --host HOST      Bind to specific host/IP (default: $HOST)
+  -k, --kill       Kill any running noba-web server and exit
+  --help           Show this help message
+  --version        Show version information
 EOF
     exit 0
 }
@@ -117,7 +121,7 @@ while true; do
         --help)       show_help ;;
         --version)    show_version ;;
         --)           shift; break ;;
-        *)            break ;;
+        *)            log_error "Internal error parsing arguments."; exit 1 ;;
     esac
 done
 
@@ -129,13 +133,11 @@ fi
 
 check_deps python3
 if ! command -v ss &>/dev/null && ! command -v lsof &>/dev/null; then
-    log_error "Need either 'ss' or 'lsof' to check port availability."
-    exit 1
+    die "Need either 'ss' or 'lsof' to check port availability."
 fi
 
 PORT=$(find_free_port "$START_PORT" "$MAX_PORT") || {
-    log_error "No free port found between $START_PORT and $MAX_PORT."
-    exit 1
+    die "No free port found between $START_PORT and $MAX_PORT."
 }
 log_info "Using port $PORT"
 
@@ -144,7 +146,7 @@ mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py "$HTML_DIR"/stats.json 2>/dev/null || true
 
 # -------------------------------------------------------------------
-# Write index.html
+# Write index.html (Modular UI Edition)
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/index.html" <<'EOF'
 <!DOCTYPE html>
@@ -152,160 +154,216 @@ cat > "$HTML_DIR/index.html" <<'EOF'
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Nobara Interactive Dashboard</title>
+    <title>Nobara Modular Dashboard</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
-            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            --card-bg: rgba(30, 41, 59, 0.7);
-            --card-border: rgba(255, 255, 255, 0.08);
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --card-border: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
             --accent: #3b82f6;
+            --accent-hover: #2563eb;
             --success: #10b981;
+            --success-bg: rgba(16, 185, 129, 0.15);
             --warning: #f59e0b;
+            --warning-bg: rgba(245, 158, 11, 0.15);
             --danger: #ef4444;
-            --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            --card-blur: blur(12px);
+            --danger-bg: rgba(239, 68, 68, 0.15);
         }
         body {
-            background: var(--bg-gradient);
-            color: var(--text-primary);
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            min-height: 100vh;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Inter', system-ui, sans-serif;
             padding: 2rem;
             line-height: 1.5;
-            -webkit-font-smoothing: antialiased;
         }
-        h1 { font-size: 2.5rem; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.75rem; }
-        h1 i { color: var(--accent); font-size: 2rem; }
-        .timestamp { color: var(--text-secondary); margin-bottom: 2.5rem; font-size: 0.95rem; display: flex; align-items: center; gap: 0.5rem; }
 
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-        .card { background: var(--card-bg); backdrop-filter: var(--card-blur); -webkit-backdrop-filter: var(--card-blur); border: 1px solid var(--card-border); border-radius: 1.5rem; padding: 1.5rem; box-shadow: var(--glass-shadow); transition: transform 0.2s ease, box-shadow 0.2s ease; }
-        .card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4); }
-        .card-header { font-size: 1.25rem; font-weight: 600; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.5rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 0.75rem; }
-        .card-header i { color: var(--accent); width: 1.5rem; }
+        /* Header */
+        .header-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+        h1 { font-size: 2rem; font-weight: 700; display: flex; align-items: center; gap: 0.75rem; }
+        h1 i { color: var(--accent); }
+        .status-pill { background: var(--card-border); padding: 0.5rem 1rem; border-radius: 2rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; }
 
-        .stat-row { display: flex; justify-content: space-between; margin: 0.75rem 0; font-size: 0.95rem; }
-        .stat-label { color: var(--text-secondary); }
-        .stat-value { font-weight: 500; }
-        .success { color: var(--success); }
-        .warning { color: var(--warning); }
-        .danger { color: var(--danger); }
+        /* CSS Grid Layout for Modules */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            align-items: start;
+        }
 
-        .disk-item { display: flex; align-items: center; gap: 0.75rem; margin: 0.75rem 0; }
-        .disk-item span:first-child { min-width: 80px; font-size: 0.9rem; color: var(--text-secondary); }
-        .disk-bar { flex: 1; height: 0.5rem; background: rgba(255, 255, 255, 0.1); border-radius: 1rem; overflow: hidden; }
-        .disk-bar-fill { height: 100%; border-radius: 1rem; transition: width 0.3s ease; }
-        .disk-percent { min-width: 3rem; text-align: right; font-weight: 500; }
+        /* Modular Card Styling */
+        .module-card {
+            background: var(--bg-card);
+            border: 1px solid var(--card-border);
+            border-radius: 1rem;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .module-card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); }
 
-        pre { background: rgba(0, 0, 0, 0.3); padding: 0.75rem; border-radius: 0.75rem; font-size: 0.8rem; font-family: 'Fira Code', monospace; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; color: var(--text-secondary); border: 1px solid rgba(255, 255, 255, 0.05); margin: 1rem 0 0.5rem; }
+        .module-header {
+            padding: 1.25rem 1.5rem;
+            background: rgba(0,0,0,0.2);
+            border-bottom: 1px solid var(--card-border);
+            font-weight: 600;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .module-header i { color: var(--accent); }
+        .module-body { padding: 1.5rem; }
 
-        .button-grid { display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
-        .btn { padding: 0.6rem 1.2rem; border: none; border-radius: 2rem; background: rgba(255, 255, 255, 0.1); color: var(--text-primary); font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid rgba(255, 255, 255, 0.05); }
-        .btn:hover { background: rgba(255, 255, 255, 0.2); transform: translateY(-2px); }
-        .btn-primary { background: var(--accent); border-color: rgba(59, 130, 246, 0.5); }
-        .btn-primary:hover { background: #2563eb; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        /* Data Rows & Badges */
+        .data-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px dashed rgba(255,255,255,0.05); }
+        .data-row:last-child { border-bottom: none; }
+        .data-label { color: var(--text-muted); font-size: 0.95rem; }
+        .data-val { font-weight: 500; }
 
-        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-        .modal-content { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 1.5rem; padding: 2rem; width: 90%; max-width: 700px; box-shadow: var(--glass-shadow); }
-        .modal-content pre { max-height: 50vh; overflow-y: auto; }
-        .modal-header { font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; }
+        .badge { padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+        .badge-success { background: var(--success-bg); color: var(--success); }
+        .badge-warning { background: var(--warning-bg); color: var(--warning); }
+        .badge-danger { background: var(--danger-bg); color: var(--danger); }
+        .badge-neutral { background: var(--card-border); color: var(--text-muted); }
 
-        .footer { margin-top: 2rem; text-align: center; color: var(--text-secondary); display: flex; justify-content: center; gap: 1.5rem; align-items: center; font-size: 0.9rem; }
-        canvas.sparkline { width: 100%; height: 40px; max-height: 40px; }
-        .collapsible { cursor: pointer; user-select: none; }
-        .collapsible i { transition: transform 0.2s; }
-        .collapsible.open i { transform: rotate(90deg); }
-        .collapsible-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
-        .collapsible-content.open { max-height: 500px; }
+        /* Progress Bars */
+        .progress-container { margin: 0.75rem 0; }
+        .progress-header { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.3rem; }
+        .progress-track { width: 100%; height: 6px; background: var(--card-border); border-radius: 3px; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
 
-        @media (max-width: 640px) { body { padding: 1rem; } h1 { font-size: 2rem; } }
+        /* Mini-Cards for Services/Docker */
+        .mini-card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+        .mini-card { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); padding: 0.75rem; border-radius: 0.5rem; }
+        .mini-card-title { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        /* Action Buttons */
+        .action-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+        .btn { padding: 0.75rem 1rem; border: none; border-radius: 0.5rem; font-weight: 600; font-size: 0.95rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.5rem; transition: all 0.2s; background: var(--card-border); color: var(--text-main); }
+        .btn:hover:not(:disabled) { background: #475569; }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 50; }
+        .modal-box { background: var(--bg-card); border: 1px solid var(--card-border); border-radius: 1rem; width: 90%; max-width: 800px; padding: 2rem; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+        .modal-box h2 { margin-bottom: 1rem; font-size: 1.5rem; }
+        pre.console-output { background: #000; color: #a3be8c; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; max-height: 50vh; font-family: 'Fira Code', monospace; font-size: 0.85rem; }
+
+        @media (max-width: 768px) { .dashboard-grid { grid-template-columns: 1fr; } .mini-card-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body x-data="dashboard()" x-init="init()">
-    <h1><i class="fas fa-chart-pie"></i> Nobara Dashboard</h1>
-    <div class="timestamp">
-        <i class="fas fa-sync-alt" :class="refreshing ? 'fa-spin' : ''"></i>
-        Last updated: <span x-text="timestamp"></span>
+
+    <div class="header-container">
+        <h1><i class="fas fa-layer-group"></i> Nobara Automation</h1>
+        <div class="status-pill">
+            <i class="fas fa-sync-alt" :class="refreshing ? 'fa-spin' : ''"></i>
+            <span x-text="refreshing ? 'Updating...' : 'Live: ' + timestamp"></span>
+        </div>
     </div>
 
-    <div class="grid">
-        <div class="card">
-            <div class="card-header"><i class="fas fa-microchip"></i> System Health</div>
-            <div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value" x-text="uptime"></span></div>
-            <div class="stat-row"><span class="stat-label">Load Average</span><span class="stat-value" x-text="loadavg"></span></div>
-            <div class="stat-row"><span class="stat-label">Memory</span><span class="stat-value" x-text="memory"></span></div>
-            <div class="stat-row"><span class="stat-label">CPU Temp</span><span class="stat-value" :class="cpuTempClass" x-text="cpuTemp"></span></div>
-        </div>
+    <div class="dashboard-grid">
 
-        <div class="card">
-            <div class="card-header"><i class="fas fa-gamepad"></i> GPU</div>
-            <div class="stat-row"><span class="stat-label">Temperature</span><span class="stat-value" :class="gpuTempClass" x-text="gpuTemp"></span></div>
-            <div class="stat-row"><span class="stat-label">Load</span><span class="stat-value" x-text="gpuLoad"></span></div>
-        </div>
-
-        <div class="card" x-show="zfs.pools && zfs.pools.length > 0">
-            <div class="card-header"><i class="fas fa-layer-group"></i> ZFS Pools</div>
-            <template x-for="pool in zfs.pools" :key="pool.name">
-                <div class="stat-row"><span class="stat-label" x-text="pool.name"></span><span class="stat-value" :class="{'success': pool.health==='ONLINE','warning': pool.health==='DEGRADED','danger': pool.health==='FAULTED'}" x-text="pool.health"></span></div>
-            </template>
-        </div>
-
-        <div class="card" style="grid-column: span 2;">
-            <div class="card-header"><i class="fas fa-hdd"></i> Disk Usage</div>
-            <template x-for="disk in disks" :key="disk.mount">
-                <div class="disk-item">
-                    <span x-text="disk.mount"></span>
-                    <div class="disk-bar"><div class="disk-bar-fill" :style="'width:'+disk.percent+'%; background: var(--'+disk.barClass+');'"></div></div>
-                    <span class="disk-percent" x-text="disk.percent+'%'"></span>
+        <div class="module-card">
+            <div class="module-header"><i class="fas fa-microchip"></i> Core System</div>
+            <div class="module-body">
+                <div class="data-row"><span class="data-label">Uptime</span><span class="data-val" x-text="uptime"></span></div>
+                <div class="data-row"><span class="data-label">Load Average</span><span class="data-val" x-text="loadavg"></span></div>
+                <div class="data-row"><span class="data-label">Memory</span><span class="data-val" x-text="memory"></span></div>
+                <div class="data-row">
+                    <span class="data-label">CPU Temp</span>
+                    <span class="badge" :class="cpuTempClass" x-text="cpuTemp"></span>
                 </div>
-            </template>
+                <div class="data-row" x-show="gpuTemp !== 'N/A'">
+                    <span class="data-label">GPU Temp</span>
+                    <span class="badge" :class="gpuTempClass" x-text="gpuTemp"></span>
+                </div>
+            </div>
         </div>
 
-        <div class="card" style="grid-column: span 2;">
-            <div class="card-header"><i class="fas fa-cogs"></i> Monitored Services</div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
-                <template x-for="svc in services" :key="svc.name">
-                    <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 0.5rem;">
-                        <div class="stat-row" style="margin-top:0"><span class="stat-label" style="font-weight:600; color:var(--text-primary)" x-text="svc.name.replace('.service','')"></span><span class="stat-value" :class="{'success': svc.status==='active','warning': svc.status==='inactive','danger': svc.status==='failed'}" x-text="svc.status"></span></div>
-                        <div class="stat-row" style="font-size:0.85rem; margin-bottom:0" x-show="svc.memory"><span class="stat-label">Mem:</span><span class="stat-value" x-text="svc.memory"></span></div>
-                        <div class="stat-row" style="font-size:0.85rem; margin:0" x-show="svc.cpu"><span class="stat-label">CPU:</span><span class="stat-value" x-text="svc.cpu"></span></div>
+        <div class="module-card">
+            <div class="module-header"><i class="fas fa-hdd"></i> Storage Matrix</div>
+            <div class="module-body">
+                <template x-for="pool in zfs.pools" :key="pool.name">
+                    <div class="data-row">
+                        <span class="data-label" x-text="'ZFS: ' + pool.name"></span>
+                        <span class="badge" :class="{'badge-success': pool.health==='ONLINE','badge-warning': pool.health==='DEGRADED','badge-danger': pool.health==='FAULTED'}" x-text="pool.health"></span>
+                    </div>
+                </template>
+
+                <div style="margin-top: 1rem;"></div>
+
+                <template x-for="disk in disks" :key="disk.mount">
+                    <div class="progress-container">
+                        <div class="progress-header">
+                            <span x-text="disk.mount"></span>
+                            <span x-text="disk.percent+'%'"></span>
+                        </div>
+                        <div class="progress-track">
+                            <div class="progress-fill" :style="`width: ${disk.percent}%; background: var(--${disk.barClass});`"></div>
+                        </div>
                     </div>
                 </template>
             </div>
         </div>
 
-        <div class="card">
-            <div class="card-header"><i class="fas fa-play-circle"></i> Scripts & Actions</div>
-            <div class="button-grid" style="flex-direction: column;">
-                <button class="btn btn-primary" :disabled="runningScript" @click="runScript('backup')"><i class="fas fa-database"></i> Run NAS Backup</button>
-                <button class="btn" :disabled="runningScript" @click="runScript('verify')"><i class="fas fa-check-double"></i> Verify Backups</button>
-                <button class="btn" :disabled="runningScript" @click="runScript('organize')"><i class="fas fa-folder-open"></i> Organize Downloads</button>
-                <button class="btn" :disabled="runningScript" @click="runScript('diskcheck')"><i class="fas fa-stethoscope"></i> Check Disks</button>
+        <div class="module-card" style="grid-column: 1 / -1;">
+            <div class="module-header"><i class="fas fa-cogs"></i> Automation Services</div>
+            <div class="module-body mini-card-grid" style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
+                <template x-for="svc in services" :key="svc.name">
+                    <div class="mini-card">
+                        <div class="mini-card-title" x-text="svc.name.replace('.service','')"></div>
+                        <div class="data-row" style="border:none; padding:0;">
+                            <span class="badge" :class="{'badge-success': svc.status==='active','badge-warning': svc.status==='inactive','badge-danger': svc.status==='failed'}" x-text="svc.status"></span>
+                            <span style="font-size: 0.8rem; color: var(--text-muted);" x-show="svc.memory" x-text="'CPU: ' + (svc.cpu || '0s') + ' | Mem: ' + svc.memory"></span>
+                        </div>
+                    </div>
+                </template>
             </div>
         </div>
 
-        <div class="card">
-            <div class="card-header"><i class="fas fa-network-wired"></i> Quick Info</div>
-            <div class="stat-row"><span class="stat-label">Default IP</span><span class="stat-value" x-text="defaultIp"></span></div>
-            <div class="stat-row"><span class="stat-label">Containers</span><span class="stat-value" x-text="dockerContainers.length + ' Running'"></span></div>
-            <div class="stat-row"><span class="stat-label">Updates</span><span class="stat-value" x-text="(dnfUpdates + flatpakUpdates) + ' Pending'"></span></div>
-            <div class="button-grid" style="margin-top:1rem;"><button class="btn" :disabled="runningScript" @click="runScript('speedtest')"><i class="fas fa-tachometer-alt"></i> Speed Test</button></div>
+        <div class="module-card">
+            <div class="module-header"><i class="fab fa-docker"></i> Docker Containers</div>
+            <div class="module-body">
+                <div class="data-row" style="margin-bottom: 0.5rem;">
+                    <span class="data-label">Total Running</span>
+                    <span class="data-val" x-text="dockerContainers.length"></span>
+                </div>
+                <div style="max-height: 200px; overflow-y: auto; padding-right: 0.5rem;">
+                    <template x-for="container in dockerContainers">
+                        <div style="font-size: 0.85rem; padding: 0.3rem 0; color: var(--text-muted); border-bottom: 1px solid rgba(255,255,255,0.05);" x-text="container"></div>
+                    </template>
+                </div>
+            </div>
         </div>
+
+        <div class="module-card">
+            <div class="module-header"><i class="fas fa-bolt"></i> Quick Actions</div>
+            <div class="module-body action-grid">
+                <button class="btn btn-primary" :disabled="runningScript" @click="runScript('backup')"><i class="fas fa-database"></i> Force NAS Backup</button>
+                <button class="btn" :disabled="runningScript" @click="runScript('verify')"><i class="fas fa-check-double"></i> Verify Backups</button>
+                <button class="btn" :disabled="runningScript" @click="runScript('organize')"><i class="fas fa-folder-open"></i> Organize Downloads</button>
+                <button class="btn" :disabled="runningScript" @click="runScript('diskcheck')"><i class="fas fa-broom"></i> Run Disk Cleanup</button>
+                <button class="btn" :disabled="runningScript" @click="runScript('speedtest')"><i class="fas fa-tachometer-alt"></i> Network Speed Test</button>
+            </div>
+        </div>
+
     </div>
 
-    <div x-show="showModal" class="modal" @click.self="showModal=false" style="display: none;">
-        <div class="modal-content">
-            <div class="modal-header" x-text="modalTitle"></div>
-            <pre x-text="modalOutput"></pre>
-            <div class="button-grid" style="justify-content: flex-end;">
-                <button class="btn" :disabled="runningScript" @click="showModal=false">Close</button>
+    <div x-show="showModal" class="modal-overlay" style="display: none;" @click.self="showModal=false">
+        <div class="modal-box">
+            <h2 x-text="modalTitle"></h2>
+            <pre class="console-output" x-text="modalOutput"></pre>
+            <div style="display: flex; justify-content: flex-end; margin-top: 1.5rem;">
+                <button class="btn" @click="showModal=false" :disabled="runningScript">Close</button>
             </div>
         </div>
     </div>
@@ -313,14 +371,13 @@ cat > "$HTML_DIR/index.html" <<'EOF'
     <script>
         function dashboard() {
             return {
-                timestamp: '', uptime: '', loadavg: '', memory: '', cpuTemp: '', gpuTemp: '', gpuLoad: '',
-                dnfUpdates: 0, flatpakUpdates: 0, defaultIp: '',
+                timestamp: '--:--', uptime: '--', loadavg: '--', memory: '--', cpuTemp: '--', gpuTemp: '--', gpuLoad: '--',
                 disks: [], services: [], dockerContainers: [], zfs: { pools: [] },
 
                 showModal: false, modalTitle: '', modalOutput: '', runningScript: false, refreshing: false,
 
-                get cpuTempClass() { const t = parseInt(this.cpuTemp) || 0; return t > 80 ? 'danger' : t > 60 ? 'warning' : ''; },
-                get gpuTempClass() { const t = parseInt(this.gpuTemp) || 0; return t > 85 ? 'danger' : t > 70 ? 'warning' : ''; },
+                get cpuTempClass() { const t = parseInt(this.cpuTemp) || 0; return t > 80 ? 'badge-danger' : t > 60 ? 'badge-warning' : 'badge-neutral'; },
+                get gpuTempClass() { const t = parseInt(this.gpuTemp) || 0; return t > 85 ? 'badge-danger' : t > 70 ? 'badge-warning' : 'badge-neutral'; },
 
                 async init() {
                     await this.refreshStats();
@@ -345,8 +402,8 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                 async runScript(script) {
                     if (this.runningScript) return;
                     this.runningScript = true;
-                    this.modalTitle = `Running ${script}...`;
-                    this.modalOutput = 'Executing... This might take a moment.';
+                    this.modalTitle = `Executing: ${script}...`;
+                    this.modalOutput = '>> Starting process... Please wait.';
                     this.showModal = true;
 
                     try {
@@ -356,11 +413,11 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                             body: JSON.stringify({ script })
                         });
                         const result = await response.json();
-                        this.modalOutput = result.output;
-                        this.modalTitle = result.success ? '✅ Success' : '❌ Failed';
+                        this.modalOutput = result.output || '>> Process completed with no output.';
+                        this.modalTitle = result.success ? '✅ Process Successful' : '❌ Process Failed';
                     } catch (e) {
-                        this.modalOutput = 'Error: ' + e.message;
-                        this.modalTitle = '❌ Failed';
+                        this.modalOutput = '>> HTTP Error: ' + e.message;
+                        this.modalTitle = '❌ Connection Error';
                     }
                     this.runningScript = false;
                     await this.refreshStats();
@@ -378,8 +435,8 @@ EOF
 cat > "$HTML_DIR/server.py" <<'EOF'
 #!/usr/bin/env python3
 """
-Nobara Dashboard Server - Improved Concurrency & Caching
-Listens on HOST:PORT and serves the dashboard with real-time stats.
+Nobara Dashboard Server
+Serves the modular dashboard and executes local scripts securely.
 """
 
 import http.server
@@ -395,9 +452,10 @@ from datetime import datetime, timedelta
 # -------------------- Configuration --------------------
 PORT = int(os.environ.get('PORT', 8080))
 HOST = os.environ.get('HOST', '0.0.0.0')
-SCRIPT_DIR = os.path.expanduser("~/.local/bin")
+# Passed dynamically from Bash so Python always knows exactly where the scripts live
+SCRIPT_DIR = os.environ.get('NOBA_SCRIPT_DIR', os.path.expanduser("~/.local/bin"))
 LOG_DIR = os.path.expanduser("~/.local/share")
-CACHE_TTL = 30  # seconds
+CACHE_TTL = 30
 PID_FILE = os.environ.get('PID_FILE', '/tmp/noba-web-server.pid')
 
 logging.basicConfig(
@@ -435,7 +493,6 @@ class TTLCache:
 _cache = TTLCache(CACHE_TTL)
 
 def run_cmd(cmd_list, timeout=2, cache_ttl=None):
-    """Executes a subprocess and returns stripped stdout. Allows optional caching."""
     cache_key = " ".join(cmd_list)
     if cache_ttl:
         cached = _cache.get(cache_key)
@@ -463,8 +520,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory='.', **kwargs)
 
     def log_message(self, format, *args):
-        # Silence standard HTTP logs to keep stderr clean
-        pass
+        pass # Silence basic HTTP logs
 
     # ---------- System Stats ----------
     def get_zfs_pools(self):
@@ -476,11 +532,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return pools
 
     def get_gpu_info(self):
-        # NVIDIA Temp
         out = run_cmd(['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader'], timeout=1, cache_ttl=5)
         if out: return f"{out}°C", run_cmd(['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader'], timeout=1, cache_ttl=5)
-
-        # AMD Temp
         out = run_cmd(['rocm-smi', '--showtemp', '--json'], timeout=1, cache_ttl=5)
         if out:
             try:
@@ -493,7 +546,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return "N/A", "N/A"
 
     def get_docker_containers(self):
-        containers = []
         out = run_cmd(['docker', 'ps', '--format', '{{.Names}} ({{.Status}})'], timeout=3, cache_ttl=10)
         return out.splitlines() if out else []
 
@@ -518,7 +570,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(self.get_stats()).encode())
         else:
-            # Only serve basic files from current dir to prevent traversal
             if self.path in ['/', '/index.html']:
                 super().do_GET()
             else:
@@ -555,15 +606,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         output = strip_ansi(proc.stdout + proc.stderr)
                         success = proc.returncode == 0
 
-                result = {'success': success, 'output': output}
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps(result).encode())
+                self.wfile.write(json.dumps({'success': success, 'output': output}).encode())
             except subprocess.TimeoutExpired:
-                self._send_json({'success': False, 'output': 'Script timed out.'})
+                self._send_json({'success': False, 'output': 'Script execution timed out after 120s.'})
             except Exception as e:
-                self._send_json({'success': False, 'output': f"Error: {str(e)}"})
+                self._send_json({'success': False, 'output': f"Server Error: {str(e)}"})
         else:
             self.send_response(404)
             self.end_headers()
@@ -576,7 +626,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     # ---------- Main stats collector ----------
     def get_stats(self):
-        stats = {'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')}
+        stats = {'timestamp': time.strftime('%H:%M:%S')}
 
         try:
             uptime_sec = float(open('/proc/uptime').read().split()[0])
@@ -591,23 +641,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 lines = f.readlines()
             mem_tot = next(int(l.split()[1])//1024 for l in lines if 'MemTotal' in l)
             mem_av = next(int(l.split()[1])//1024 for l in lines if 'MemAvailable' in l)
-            stats['memory'] = f"{mem_av}Mi/{mem_tot}Mi"
+            stats['memory'] = f"{mem_av}MB / {mem_tot}MB"
         except: stats['memory'] = 'N/A'
 
         gpu_temp, gpu_load = self.get_gpu_info()
         stats['gpuTemp'], stats['gpuLoad'], stats['cpuTemp'] = gpu_temp, gpu_load, gpu_temp
-
-        # Updates (Cached)
-        cached_updates = _cache.get('updates')
-        if cached_updates:
-            stats['dnfUpdates'], stats['flatpakUpdates'] = cached_updates
-        else:
-            dnf_out = run_cmd(['dnf', 'check-update', '-q'], timeout=10)
-            flat_out = run_cmd(['flatpak', 'remote-ls', '--updates'], timeout=10)
-            dnf_c = len([l for l in dnf_out.splitlines() if l and not l.startswith('Last metadata')])
-            flat_c = len([l for l in flat_out.splitlines() if l])
-            _cache.set('updates', (dnf_c, flat_c))
-            stats['dnfUpdates'], stats['flatpakUpdates'] = dnf_c, flat_c
 
         # Disk usage
         disks = []
@@ -618,14 +656,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 mount = parts[5] if len(parts) > 5 else ''
                 if mount.startswith(('/var/lib/snapd', '/boot')): continue
                 pct = parts[4].replace('%', '')
-                bar_class = 'danger' if int(pct) >= 90 else 'warning' if int(pct) >= 75 else 'success'
+                bar_class = 'danger' if int(pct) >= 90 else 'warning' if int(pct) >= 75 else 'accent'
                 disks.append({'mount': mount, 'percent': pct, 'barClass': bar_class})
         stats['disks'] = disks
-
-        # Default IP
-        ip_out = run_cmd(['ip', '-4', 'route', 'get', '1'], timeout=1, cache_ttl=30)
-        match = re.search(r'src\s+(\d+\.\d+\.\d+\.\d+)', ip_out)
-        stats['defaultIp'] = match.group(1) if match else 'N/A'
 
         # Services
         service_list = os.environ.get('NOBA_WEB_SERVICES', '').split(',')
@@ -668,8 +701,10 @@ kill_server
 export PORT
 export HOST
 export PID_FILE="$SERVER_PID_FILE"
-cd "$HTML_DIR"
+# Crucial: Export the bash script directory so the python server knows where to find the other scripts
+export NOBA_SCRIPT_DIR="$SCRIPT_DIR"
 
+cd "$HTML_DIR"
 : > "$LOG_FILE"
 
 nohup python3 server.py >> "$LOG_FILE" 2>&1 &
