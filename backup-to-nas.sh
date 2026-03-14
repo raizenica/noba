@@ -1,6 +1,6 @@
 #!/bin/bash
 # backup-to-nas.sh – Backup important directories to NAS with retention, space check, and email report
-# Version: 2.2.1
+# Version: 2.2.2
 
 set -euo pipefail
 
@@ -18,8 +18,7 @@ SOURCES=()
 DEST=""
 EMAIL="${EMAIL:-strikerke@gmail.com}"
 DRY_RUN=false
-# shellcheck disable=SC2034
-VERBOSE=false
+export VERBOSE=false
 LOCK_FILE="/tmp/backup-to-nas.lock"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/backup-to-nas.log}"
 RETENTION_DAYS=7
@@ -48,7 +47,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "backup-to-nas.sh version 2.2.1"
+    echo "backup-to-nas.sh version 2.2.2"
     exit 0
 }
 
@@ -155,7 +154,7 @@ while true; do
         -d|--dest)    DEST="$2"; shift 2 ;;
         -e|--email)   EMAIL="$2"; shift 2 ;;
         -n|--dry-run) DRY_RUN=true; shift ;;
-        -v|--verbose) VERBOSE=true; shift ;;
+        -v|--verbose) export VERBOSE=true; shift ;;
         -h|--help)    show_help ;;
         --version)    show_version ;;
         --)           shift; break ;;
@@ -166,7 +165,6 @@ done
 # -------------------------------------------------------------------
 # Validations & Setup
 # -------------------------------------------------------------------
-# Fix for the test harness blindly testing `--dry-run` with no variables
 if [ ${#SOURCES[@]} -eq 0 ]; then
     if [ "$DRY_RUN" = true ]; then exit 0; else die "At least one --source must be specified."; fi
 fi
@@ -224,7 +222,7 @@ fi
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP_PATH="$DEST/$TIMESTAMP"
 
-# Find latest backup for hardlinking (Time Machine style)
+# Find latest backup for hardlinking
 LATEST_BACKUP=$(find "$DEST" -maxdepth 1 -type d -name "????????-??????" | sort | tail -n 1 || true)
 if [ -n "$LATEST_BACKUP" ]; then
     log_info "Found previous backup: $(basename "$LATEST_BACKUP"). Using for incremental hardlinks."
@@ -273,7 +271,7 @@ for src in "${SOURCES[@]}"; do
 
     log_info "Backing up $src to $dest_path"
 
-    # Ensure source has trailing slash so contents sync properly into the named dest_path
+    # Ensure source has trailing slash
     src_slashed="${src%/}/"
 
     if ! rsync "${RSYNC_OPTS[@]}" "${extra_opts[@]}" "$src_slashed" "$dest_path"; then
@@ -317,7 +315,8 @@ else
     SIZE="N/A (dry run)"
 fi
 
-EMAIL_BODY=$(make_temp_dir_auto "backup-to-nas")/email_report.txt
+EMAIL_BODY_DIR=$(make_temp_dir_auto "backup-to-nas-report")
+EMAIL_BODY="$EMAIL_BODY_DIR/email_report.txt"
 
 if [ "$ERROR_OCCURRED" = true ]; then
     subject_prefix="❌ BACKUP FAILED"
