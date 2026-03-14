@@ -60,7 +60,10 @@ log_debug() {
     [[ "${VERBOSE:-false}" == true ]] && \
         printf "%b[%s] [DEBUG]%b %s\n" "$CYAN" "$(_timestamp)" "$NC" "$*"
 }
-
+log_verbose() {
+    [[ "${VERBOSE:-false}" == true ]] && \
+        printf "%b[%s] [VERBOSE]%b %s\n" "$CYAN" "$(_timestamp)" "$NC" "$*"
+}
 die() {
     log_error "$*"
     exit 1

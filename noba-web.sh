@@ -1,13 +1,14 @@
 #!/bin/bash
-# noba-web.sh – Nobara Command Center v8.1.0
-# Improvements: True background harvester thread, multi-client delta fix,
-# aggressive TTLCaching for Ping/Services/Pihole to prevent CPU spikes.
+# noba-web.sh – Nobara Command Center v8.0.0
+# Improvements: SSE streaming, parallel radar/services, CPU sparklines,
+#   containers module, network I/O, toast notifications, alerts panel,
+#   service-action allowlist, better error handling, full UI redesign.
 
 set -euo pipefail
 
 # ── Test harness compliance ─────────────────────────────────────────────────
 if [[ "${1:-}" == "--help"           ]]; then echo "Usage: noba-web.sh [OPTIONS]"; exit 0; fi
-if [[ "${1:-}" == "--version"        ]]; then echo "noba-web.sh version 8.1.0"; exit 0; fi
+if [[ "${1:-}" == "--version"        ]]; then echo "noba-web.sh version 8.0.0"; exit 0; fi
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +23,7 @@ LOG_FILE="${LOG_FILE:-/tmp/noba-web.log}"
 KILL_ONLY=false
 HOST="${HOST:-0.0.0.0}"
 
-show_version() { echo "noba-web.sh version 8.1.0"; exit 0; }
+show_version() { echo "noba-web.sh version 8.0.0"; exit 0; }
 
 show_help() {
     cat <<EOF
@@ -438,6 +439,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
 <body x-data="dashboard()" x-init="init()" :data-theme="theme">
 <div class="page">
 
+    <!-- ── Header ── -->
     <header class="header">
         <div class="logo">
             <div class="logo-mark"><i class="fas fa-terminal"></i></div>
@@ -463,6 +465,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
         </div>
     </header>
 
+    <!-- ── Alerts ── -->
     <div class="alerts" x-show="alerts && alerts.length > 0">
         <template x-for="a in alerts" :key="a.msg">
             <div class="alert" :class="a.level">
@@ -472,8 +475,10 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
         </template>
     </div>
 
+    <!-- ── Dashboard Grid ── -->
     <div class="grid" id="sortable-grid">
 
+        <!-- Core System -->
         <div class="card" data-id="card-core" x-show="vis.core">
             <div class="card-hdr">
                 <i class="fas fa-microchip card-icon"></i>
@@ -513,6 +518,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Network I/O -->
         <div class="card" data-id="card-netio" x-show="vis.netio">
             <div class="card-hdr">
                 <i class="fas fa-network-wired card-icon"></i>
@@ -535,6 +541,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Hardware -->
         <div class="card" data-id="card-hw" x-show="vis.hw">
             <div class="card-hdr">
                 <i class="fas fa-memory card-icon"></i>
@@ -551,6 +558,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Battery (hidden on desktop) -->
         <div class="card" data-id="card-battery" x-show="vis.battery && battery && !battery.desktop">
             <div class="card-hdr">
                 <i class="fas fa-battery-half card-icon"></i>
@@ -573,6 +581,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Pi-hole -->
         <div class="card" data-id="card-pihole" x-show="vis.pihole">
             <div class="card-hdr">
                 <i class="fas fa-shield-alt card-icon"></i>
@@ -608,6 +617,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Storage -->
         <div class="card" data-id="card-storage" x-show="vis.storage">
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon"></i>
@@ -635,6 +645,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Network Radar -->
         <div class="card" data-id="card-radar" x-show="vis.radar">
             <div class="card-hdr">
                 <i class="fas fa-satellite-dish card-icon"></i>
@@ -653,6 +664,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Resource Hogs -->
         <div class="card" data-id="card-procs" x-show="vis.procs">
             <div class="card-hdr">
                 <i class="fas fa-chart-bar card-icon"></i>
@@ -677,6 +689,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Containers -->
         <div class="card" data-id="card-containers" x-show="vis.containers && containers && containers.length > 0">
             <div class="card-hdr">
                 <i class="fas fa-boxes card-icon"></i>
@@ -698,6 +711,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Services — full width -->
         <div class="card span-full" data-id="card-services" x-show="vis.services">
             <div class="card-hdr">
                 <i class="fas fa-cogs card-icon"></i>
@@ -723,6 +737,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Log Viewer — full width -->
         <div class="card span-full" data-id="card-logs" x-show="vis.logs">
             <div class="card-hdr">
                 <i class="fas fa-scroll card-icon"></i>
@@ -742,6 +757,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Quick Actions -->
         <div class="card" data-id="card-actions" x-show="vis.actions">
             <div class="card-hdr">
                 <i class="fas fa-bolt card-icon"></i>
@@ -757,6 +773,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Homelab Links -->
         <div class="card" data-id="card-bookmarks" x-show="vis.bookmarks">
             <div class="card-hdr">
                 <i class="fas fa-bookmark card-icon"></i>
@@ -775,7 +792,11 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
-    </div></div><div x-show="showModal" class="modal-overlay" style="display:none" @click.self="showModal=false">
+    </div><!-- /.grid -->
+</div><!-- /.page -->
+
+<!-- ── Run Script Modal ── -->
+<div x-show="showModal" class="modal-overlay" style="display:none" @click.self="showModal=false">
     <div class="modal-box">
         <div class="modal-title">
             <i class="fas fa-terminal" style="color:var(--accent)"></i>
@@ -788,6 +809,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
     </div>
 </div>
 
+<!-- ── Settings Modal ── -->
 <div x-show="showSettings" class="modal-overlay" style="display:none" @click.self="showSettings=false">
     <div class="modal-box">
         <div class="modal-title"><i class="fas fa-sliders-h" style="color:var(--accent)"></i> Settings</div>
@@ -850,6 +872,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
     </div>
 </div>
 
+<!-- ── Toasts ── -->
 <div class="toasts">
     <template x-for="t in toasts" :key="t.id">
         <div class="toast" :class="t.type">
@@ -1044,9 +1067,10 @@ HTMLEOF
 # ── Write server.py ─────────────────────────────────────────────────────────
 cat > "$HTML_DIR/server.py" <<'PYEOF'
 #!/usr/bin/env python3
-"""Nobara Command Center – Backend v8.1.0
-New: Background harvester thread preventing SSE multi-client delta bugs.
-     Aggressive caching for expensive ping/systemctl/API calls.
+"""Nobara Command Center – Backend v8.0.0
+New: SSE streaming, parallel pings/service-checks, CPU history,
+     network I/O rates, container detection, better error handling,
+     service-action allowlist.
 """
 import http.server
 import socketserver
@@ -1110,64 +1134,12 @@ class TTLCache:
 
 _cache = TTLCache()
 
-# ── Global streaming state ───────────────────────────────────────────────────
+# ── Global streaming state (lock-protected) ───────────────────────────────────
 _state_lock  = threading.Lock()
-_sys_state   = {
-    'cpu_pct': 0.0,
-    'net_rx': 0.0,
-    'net_tx': 0.0
-}
 _cpu_history = deque(maxlen=20)
-_cpu_prev    = None
-_net_prev    = None
+_cpu_prev    = None          # (total, idle)
+_net_prev    = None          # (rx_bytes, tx_bytes)
 _net_prev_t  = None
-
-# ── Background Harvester (Fixes SSE Delta bugs) ──────────────────────────────
-def background_harvester():
-    global _cpu_prev, _net_prev, _net_prev_t
-    while True:
-        # CPU
-        try:
-            with open('/proc/stat') as f:
-                fields = list(map(int, f.readline().split()[1:]))
-            idle  = fields[3] + fields[4]
-            total = sum(fields)
-            if _cpu_prev:
-                dtotal = total - _cpu_prev[0]
-                didle  = idle  - _cpu_prev[1]
-                pct = round(100.0 * (1.0 - didle / dtotal) if dtotal > 0 else 0.0, 1)
-                with _state_lock:
-                    _sys_state['cpu_pct'] = pct
-                    _cpu_history.append(pct)
-            _cpu_prev = (total, idle)
-        except Exception:
-            pass
-
-        # Net I/O
-        try:
-            with open('/proc/net/dev') as f:
-                lines = f.readlines()
-            rx = tx = 0
-            for line in lines[2:]:
-                parts = line.split()
-                if len(parts) > 9 and not parts[0].startswith('lo'):
-                    rx += int(parts[1])
-                    tx += int(parts[9])
-            now = time.time()
-            if _net_prev:
-                dt = now - _net_prev_t
-                if dt >= 0.05:
-                    with _state_lock:
-                        _sys_state['net_rx'] = max(0.0, (rx - _net_prev[0]) / dt)
-                        _sys_state['net_tx'] = max(0.0, (tx - _net_prev[1]) / dt)
-            _net_prev  = (rx, tx)
-            _net_prev_t = now
-        except Exception:
-            pass
-
-        time.sleep(1)
-
-threading.Thread(target=background_harvester, daemon=True).start()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def run(cmd, timeout=3, cache_key=None, cache_ttl=30, ignore_rc=False):
@@ -1191,25 +1163,68 @@ def human_bps(bps):
         bps /= 1024
     return f'{bps:.1f} TB/s'
 
+# ── Stats collectors ──────────────────────────────────────────────────────────
+def get_cpu_percent():
+    global _cpu_prev
+    with _state_lock:
+        try:
+            with open('/proc/stat') as f:
+                fields = list(map(int, f.readline().split()[1:]))
+            idle  = fields[3] + fields[4]   # idle + iowait
+            total = sum(fields)
+            if _cpu_prev is None:
+                _cpu_prev = (total, idle)
+                return 0.0
+            dtotal = total - _cpu_prev[0]
+            didle  = idle  - _cpu_prev[1]
+            _cpu_prev = (total, idle)
+            pct = round(100.0 * (1.0 - didle / dtotal) if dtotal > 0 else 0.0, 1)
+            _cpu_history.append(pct)
+            return pct
+        except Exception:
+            return 0.0
+
+def get_net_io():
+    global _net_prev, _net_prev_t
+    with _state_lock:
+        try:
+            with open('/proc/net/dev') as f:
+                lines = f.readlines()
+            rx = tx = 0
+            for line in lines[2:]:
+                parts = line.split()
+                if len(parts) > 9 and not parts[0].startswith('lo'):
+                    rx += int(parts[1])
+                    tx += int(parts[9])
+            now = time.time()
+            if _net_prev is None:
+                _net_prev  = (rx, tx)
+                _net_prev_t = now
+                return 0.0, 0.0
+            dt = now - _net_prev_t
+            if dt < 0.05:
+                return 0.0, 0.0
+            rx_bps = max(0.0, (rx - _net_prev[0]) / dt)
+            tx_bps = max(0.0, (tx - _net_prev[1]) / dt)
+            _net_prev  = (rx, tx)
+            _net_prev_t = now
+            return rx_bps, tx_bps
+        except Exception:
+            return 0.0, 0.0
+
 def ping_host(ip):
     ip = ip.strip()
-    ckey = f'ping_{ip}'
-    hit = _cache.get(ckey, 5)
-    if hit is not None: return hit
     try:
         t0 = time.time()
-        r  = subprocess.run(['ping', '-c', '1', '-W', '1', ip], capture_output=True, timeout=2.5)
-        res = (ip, r.returncode == 0, round((time.time() - t0) * 1000))
-        _cache.set(ckey, res)
-        return res
+        r  = subprocess.run(['ping', '-c', '1', '-W', '1', ip],
+                            capture_output=True, timeout=2.5)
+        ms = round((time.time() - t0) * 1000)
+        return ip, r.returncode == 0, ms
     except Exception:
         return ip, False, 0
 
 def get_service_status(svc):
     svc = svc.strip()
-    ckey = f'svc_{svc}'
-    hit = _cache.get(ckey, 5)
-    if hit is not None: return hit
     for scope, is_user in ((['--user'], True), ([], False)):
         cmd = ['systemctl'] + scope + ['show', '-p', 'ActiveState,LoadState', svc]
         out = run(cmd, timeout=2)
@@ -1220,15 +1235,9 @@ def get_service_status(svc):
                 timer_name = svc.replace('.service', '.timer')
                 t = run(['systemctl'] + scope + ['show', '-p', 'ActiveState', timer_name], timeout=1)
                 if 'ActiveState=active' in t:
-                    res = ('timer-active', is_user)
-                    _cache.set(ckey, res)
-                    return res
-            res = (state, is_user)
-            _cache.set(ckey, res)
-            return res
-    res = ('not-found', False)
-    _cache.set(ckey, res)
-    return res
+                    return 'timer-active', is_user
+            return state, is_user
+    return 'not-found', False
 
 def get_battery():
     bats = glob.glob('/sys/class/power_supply/BAT*')
@@ -1260,10 +1269,11 @@ def get_battery():
 def get_containers():
     for runtime in (['podman', 'ps', '-a', '--format', 'json'],
                     ['docker', 'ps', '-a', '--format', '{{json .}}']):
-        out = run(runtime, timeout=4, cache_key=' '.join(runtime), cache_ttl=5)
+        out = run(runtime, timeout=4, cache_key=' '.join(runtime), cache_ttl=10)
         if not out:
             continue
         try:
+            # podman returns a JSON array; docker returns one JSON object per line
             if out.lstrip().startswith('['):
                 items = json.loads(out)
             else:
@@ -1283,16 +1293,13 @@ def get_containers():
     return []
 
 def get_pihole(url, token):
-    if not url: return None
-    ckey = f'pihole_{url}'
-    hit = _cache.get(ckey, 5)
-    if hit is not None: return hit
-
+    if not url:
+        return None
     base = url if url.startswith('http') else 'http://' + url
     base = base.rstrip('/').replace('/admin', '')
 
     def _get(endpoint, extra_headers=None):
-        hdrs = {'User-Agent': 'noba-web/8.1', 'Accept': 'application/json'}
+        hdrs = {'User-Agent': 'noba-web/8.0', 'Accept': 'application/json'}
         if extra_headers:
             hdrs.update(extra_headers)
         req = urllib.request.Request(base + endpoint, headers=hdrs)
@@ -1308,9 +1315,8 @@ def get_pihole(url, token):
         p    = data.get('ads', {}).get('percentage', 0.0)
         s    = data.get('gravity', {}).get('status', 'unknown')
         dom  = data.get('gravity', {}).get('domains_being_blocked', 0)
-        res = {'queries': q, 'blocked': b, 'percent': round(p, 1), 'status': s, 'domains': f'{dom:,}'}
-        _cache.set(ckey, res)
-        return res
+        return {'queries': q, 'blocked': b, 'percent': round(p, 1),
+                'status': s, 'domains': f'{dom:,}'}
     except Exception:
         pass
 
@@ -1318,15 +1324,13 @@ def get_pihole(url, token):
     try:
         ep  = f'/admin/api.php?summaryRaw' + (f'&auth={token}' if token else '')
         data = _get(ep)
-        res = {
+        return {
             'queries': data.get('dns_queries_today', 0),
             'blocked': data.get('ads_blocked_today', 0),
             'percent': round(data.get('ads_percentage_today', 0), 1),
             'status':  data.get('status', 'enabled'),
             'domains': f"{data.get('domains_being_blocked', 0):,}"
         }
-        _cache.set(ckey, res)
-        return res
     except Exception:
         return None
 
@@ -1334,6 +1338,7 @@ def get_pihole(url, token):
 def collect_stats(qs):
     stats = {'timestamp': datetime.now().strftime('%H:%M:%S')}
 
+    # ── Quick reads ──
     try:
         with open('/etc/os-release') as f:
             for line in f:
@@ -1365,17 +1370,24 @@ def collect_stats(qs):
         stats.setdefault('loadavg', '--')
         stats.setdefault('memPercent', 0)
 
-    with _state_lock:
-        stats['cpuPercent'] = _sys_state['cpu_pct']
-        stats['cpuHistory'] = list(_cpu_history)
-        stats['netRx'] = human_bps(_sys_state['net_rx'])
-        stats['netTx'] = human_bps(_sys_state['net_tx'])
+    # CPU
+    cpu_pct = get_cpu_percent()
+    stats['cpuPercent'] = cpu_pct
+    stats['cpuHistory'] = list(_cpu_history)
 
+    # Network I/O
+    rx_bps, tx_bps = get_net_io()
+    stats['netRx'] = human_bps(rx_bps)
+    stats['netTx'] = human_bps(tx_bps)
+
+    # CPU temp
     sensors = run(['sensors'], timeout=2, cache_key='sensors', cache_ttl=5)
     m = re.search(r'(?:Tctl|Package id \d+|Core 0|temp1).*?\+?(\d+\.?\d*)[°℃]', sensors)
     stats['cpuTemp'] = f'{int(float(m.group(1)))}°C' if m else 'N/A'
 
-    gpu_t = run(['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader'], timeout=2, cache_key='nvidia-temp', cache_ttl=5)
+    # GPU temp
+    gpu_t = run(['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader'],
+                timeout=2, cache_key='nvidia-temp', cache_ttl=5)
     if not gpu_t:
         raw = run(['bash', '-c', "cat /sys/class/drm/card*/device/hwmon/hwmon*/temp1_input 2>/dev/null | head -1"], timeout=1)
         gpu_t = f'{int(raw)//1000}°C' if raw else 'N/A'
@@ -1385,10 +1397,13 @@ def collect_stats(qs):
 
     stats['battery'] = get_battery()
 
-    stats['hwCpu'] = run(['bash', '-c', "lscpu | grep 'Model name' | head -1 | cut -d: -f2 | xargs"], cache_key='lscpu', cache_ttl=3600)
-    raw_gpu = run(['bash', '-c', "lspci | grep -i 'vga\\|3d' | cut -d: -f3"], cache_key='lspci', cache_ttl=3600)
+    stats['hwCpu'] = run(['bash', '-c', "lscpu | grep 'Model name' | head -1 | cut -d: -f2 | xargs"],
+                         cache_key='lscpu', cache_ttl=3600)
+    raw_gpu = run(['bash', '-c', "lspci | grep -i 'vga\\|3d' | cut -d: -f3"],
+                  cache_key='lspci', cache_ttl=3600)
     stats['hwGpu'] = raw_gpu.replace('\n', '<br>') if raw_gpu else 'Unknown GPU'
 
+    # Disks
     disks = []
     for line in run(['df', '-BM'], cache_key='df', cache_ttl=10).splitlines()[1:]:
         parts = line.split()
@@ -1401,12 +1416,15 @@ def collect_stats(qs):
                 size = parts[1].replace('M', ' MiB')
                 used = parts[2].replace('M', ' MiB')
                 bc   = 'danger' if pct >= 90 else 'warning' if pct >= 75 else 'success'
-                disks.append({'mount': mount, 'percent': pct, 'barClass': bc, 'size': size, 'used': used})
+                disks.append({'mount': mount, 'percent': pct, 'barClass': bc,
+                              'size': size, 'used': used})
             except (ValueError, IndexError):
                 pass
     stats['disks'] = disks
 
-    zfs_out = run(['zpool', 'list', '-H', '-o', 'name,health'], timeout=3, cache_key='zpool', cache_ttl=15)
+    # ZFS
+    zfs_out = run(['zpool', 'list', '-H', '-o', 'name,health'], timeout=3,
+                  cache_key='zpool', cache_ttl=15)
     pools = []
     for line in zfs_out.splitlines():
         if '\t' in line:
@@ -1414,8 +1432,9 @@ def collect_stats(qs):
             pools.append({'name': n.strip(), 'health': h.strip()})
     stats['zfs'] = {'pools': pools}
 
-    cpu_ps = run(['ps', 'ax', '--format', 'comm,%cpu', '--sort', '-%cpu'], timeout=2, cache_key='ps_cpu', cache_ttl=2)
-    mem_ps = run(['ps', 'ax', '--format', 'comm,%mem', '--sort', '-%mem'], timeout=2, cache_key='ps_mem', cache_ttl=2)
+    # Top processes
+    cpu_ps = run(['ps', 'ax', '--format', 'comm,%cpu', '--sort', '-%cpu'], timeout=2)
+    mem_ps = run(['ps', 'ax', '--format', 'comm,%mem', '--sort', '-%mem'], timeout=2)
     def parse_ps(out):
         result = []
         for line in out.splitlines()[1:6]:
@@ -1426,6 +1445,7 @@ def collect_stats(qs):
     stats['topCpu'] = parse_ps(cpu_ps)
     stats['topMem'] = parse_ps(mem_ps)
 
+    # ── Parallel: services + radar + pihole + containers ──
     svc_list  = [s.strip() for s in qs.get('services', [''])[0].split(',') if s.strip()]
     ip_list   = [ip.strip() for ip in qs.get('radar',   [''])[0].split(',') if ip.strip()]
     ph_url    = qs.get('pihole',    [''])[0]
@@ -1433,7 +1453,7 @@ def collect_stats(qs):
 
     with ThreadPoolExecutor(max_workers=max(4, len(svc_list) + len(ip_list) + 3)) as ex:
         svc_futs  = {ex.submit(get_service_status, s): s for s in svc_list}
-        ping_futs = {ex.submit(ping_host, ip):        ip for ip in ip_list}
+        ping_futs = {ex.submit(ping_host, ip):       ip for ip in ip_list}
         ph_fut    = ex.submit(get_pihole, ph_url, ph_tok) if ph_url else None
         ct_fut    = ex.submit(get_containers)
 
@@ -1465,6 +1485,7 @@ def collect_stats(qs):
         except Exception:
             stats['containers'] = []
 
+    # ── Alerts ──
     alerts = []
     cpu = stats.get('cpuPercent', 0)
     if   cpu > 90: alerts.append({'level': 'danger',  'msg': f'CPU critical: {cpu}%'})
@@ -1495,7 +1516,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory='.', **kwargs)
 
     def log_message(self, fmt, *args):
-        pass
+        pass  # silence access log
 
     def _json(self, data, status=200):
         body = json.dumps(data).encode()
@@ -1518,6 +1539,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._json({'error': str(e)}, 500)
 
         elif path == '/api/stream':
+            # Server-Sent Events – push stats every 5 s
             self.send_response(200)
             self.send_header('Content-Type',  'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
@@ -1529,9 +1551,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     msg  = f'data: {json.dumps(data)}\n\n'.encode()
                     self.wfile.write(msg)
                     self.wfile.flush()
-                    time.sleep(2)
+                    time.sleep(5)
             except (BrokenPipeError, ConnectionResetError, OSError):
-                pass
+                pass  # client disconnected
             except Exception as e:
                 logging.warning(f'SSE stream error: {e}')
 
