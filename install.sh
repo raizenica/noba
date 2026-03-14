@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
         --skip-deps)    SKIP_DEPS=true; shift ;;
         -n|--dry-run)   DRY_RUN=true; shift ;;
         --help)         show_help ;;
-        *)              echo "Unknown option: $1" >&2; exit 1 ;;
+        *) log_error "Invalid argument: $1"; exit 1 ;;
     esac
 done
 
