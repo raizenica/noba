@@ -1,4 +1,4 @@
-name: Test
+name: CI Tests
 
 on:
   push:
@@ -11,9 +11,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install bats
-        run: sudo apt-get update && sudo apt-get install -y bats
+
+      - name: Install System Dependencies & BATS
+        run: |
+          sudo apt-get update
+          # Install bats and required script packages so check_deps passes
+          sudo apt-get install -y bats dialog rsync jq lsof lm-sensors
+          # Install the official Go version of yq (apt often has the wrong Python version)
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod a+x /usr/local/bin/yq
+
       - name: Make scripts executable
-        run: chmod +x *.sh tests/*.bats
-      - name: Run tests
+        run: |
+          chmod +x *.sh
+          # Use || true so it doesn't fail if the tests dir is temporarily empty
+          chmod +x tests/*.bats 2>/dev/null || true
+
+      - name: Run BATS test suite
         run: bats tests/
+
+      - name: Run Edge-Case Test Harness
+        # This runs the test-all.sh we fixed earlier to ensure no regressions!
+        run: ./test-all.sh

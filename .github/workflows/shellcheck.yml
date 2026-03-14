@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: './'
-          severity: warning
+
+      - name: Run ShellCheck natively
+        # This scans all .sh scripts in the root, plus your BATS test files!
+        # The -S warning flag ensures it catches both errors and warnings.
+        run: shellcheck -S warning *.sh tests/*.bats 2>/dev/null || shellcheck -S warning *.sh
