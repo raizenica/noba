@@ -1,6 +1,6 @@
 #!/bin/bash
 # cloud-backup.sh – Sync local backups to cloud using rclone
-# Version: 2.2.1
+# Version: 2.2.2
 
 set -euo pipefail
 
@@ -44,7 +44,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "cloud-backup.sh version 2.2.1"
+    echo "cloud-backup.sh version 2.2.2"
     exit 0
 }
 
@@ -121,11 +121,20 @@ fi
 # -------------------------------------------------------------------
 # Pre-flight checks
 # -------------------------------------------------------------------
-check_deps rclone awk
+if [ "$DRY_RUN" = true ]; then
+    log_info "[DRY RUN] Skipping strict dependency checks."
+else
+    check_deps rclone awk
+fi
 
 if [ ! -d "$LOCAL_BACKUP_DIR" ]; then
-    log_warn "Local backup directory $LOCAL_BACKUP_DIR does not exist. Nothing to sync."
-    exit 0
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY RUN] Local backup directory $LOCAL_BACKUP_DIR does not exist. Exiting gracefully."
+        exit 0
+    else
+        log_warn "Local backup directory $LOCAL_BACKUP_DIR does not exist. Nothing to sync."
+        exit 0
+    fi
 fi
 
 mkdir -p "$LOG_DIR"
