@@ -1,6 +1,6 @@
 #!/bin/bash
-# noba-web.sh – Ultimate Modular Dashboard v5.2.0 (Service Polling Fixes)
-# Version: 5.2.0
+# noba-web.sh – Ultimate Modular Dashboard v7.1.0 (Pi-hole v6 API & Alerts Fix)
+# Version: 7.1.0
 
 set -euo pipefail
 
@@ -8,9 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./noba-lib.sh
 source "$SCRIPT_DIR/noba-lib.sh"
 
-# -------------------------------------------------------------------
-# Default configuration
-# -------------------------------------------------------------------
 START_PORT="${START_PORT:-8080}"
 MAX_PORT="${MAX_PORT:-8090}"
 HTML_DIR="${HTML_DIR:-/tmp/noba-web}"
@@ -18,40 +15,16 @@ SERVER_PID_FILE="${SERVER_PID_FILE:-/tmp/noba-web-server.pid}"
 LOG_FILE="${LOG_FILE:-/tmp/noba-web.log}"
 KILL_ONLY=false
 HOST="${HOST:-0.0.0.0}"
-DEFAULT_SERVICES="backup-to-nas.service organize-downloads.service sshd docker syncthing.service"
-PING_TARGETS="192.168.100.1,1.1.1.1,8.8.8.8"
 
-# -------------------------------------------------------------------
-# Load user configuration
-# -------------------------------------------------------------------
-if command -v get_config &>/dev/null; then
-    START_PORT="$(get_config ".web.start_port" "$START_PORT")"
-    MAX_PORT="$(get_config ".web.max_port" "$MAX_PORT")"
-    HOST="$(get_config ".web.host" "$HOST")"
-    SERVICES_LIST=$(get_config_array ".web.service_list" | tr '\n' ',' | sed 's/,$//')
-    if [ -n "$SERVICES_LIST" ]; then
-        export NOBA_WEB_SERVICES="$SERVICES_LIST"
-    else
-        export NOBA_WEB_SERVICES="${DEFAULT_SERVICES// /,}"
-    fi
-else
-    export NOBA_WEB_SERVICES="${DEFAULT_SERVICES// /,}"
-fi
-
-export NOBA_PING_TARGETS="$PING_TARGETS"
-
-# -------------------------------------------------------------------
-# Helper functions
-# -------------------------------------------------------------------
-show_version() { echo "noba-web.sh version 5.2.0"; exit 0; }
+show_version() { echo "noba-web.sh version 7.1.0"; exit 0; }
 show_help() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 Launch an interactive web dashboard for the Nobara Automation Suite.
 Options:
-  -p, --port PORT  Start searching from PORT (default: $START_PORT)
-  -m, --max PORT   Maximum port to try (default: $MAX_PORT)
-  --host HOST      Bind to specific host/IP (default: $HOST)
+  -p, --port PORT  Start searching from PORT (default: 8080)
+  -m, --max PORT   Maximum port to try (default: 8090)
+  --host HOST      Bind to specific host/IP
   -k, --kill       Kill any running noba-web server and exit
   --help           Show this help message
   --version        Show version information
@@ -138,18 +111,35 @@ cat > "$HTML_DIR/index.html" <<'EOF'
             --accent: #88c0d0; --accent-hover: #81a1c1; --success: #a3be8c; --warning: #ebcb8b; --danger: #bf616a;
             --success-bg: rgba(163, 190, 140, 0.15); --warning-bg: rgba(235, 203, 139, 0.15); --danger-bg: rgba(191, 97, 106, 0.15);
         }
+        [data-theme="catppuccin"] {
+            --bg-dark: #24273a; --bg-card: #363a4f; --card-border: #494d64; --text-main: #cad3f5; --text-muted: #a5adcb;
+            --accent: #8aadf4; --accent-hover: #b7bdf8; --success: #a6da95; --warning: #eed49f; --danger: #ed8796;
+            --success-bg: rgba(166, 218, 149, 0.15); --warning-bg: rgba(238, 212, 159, 0.15); --danger-bg: rgba(237, 135, 150, 0.15);
+        }
+        [data-theme="tokyo"] {
+            --bg-dark: #1a1b26; --bg-card: #24283b; --card-border: #414868; --text-main: #c0caf5; --text-muted: #a9b1d6;
+            --accent: #7aa2f7; --accent-hover: #89ddff; --success: #9ece6a; --warning: #e0af68; --danger: #f7768e;
+            --success-bg: rgba(158, 206, 106, 0.15); --warning-bg: rgba(224, 175, 104, 0.15); --danger-bg: rgba(247, 118, 142, 0.15);
+        }
+        [data-theme="gruvbox"] {
+            --bg-dark: #282828; --bg-card: #3c3836; --card-border: #504945; --text-main: #ebdbb2; --text-muted: #a89984;
+            --accent: #83a598; --accent-hover: #458588; --success: #b8bb26; --warning: #fabd2f; --danger: #fb4934;
+            --success-bg: rgba(184, 187, 38, 0.15); --warning-bg: rgba(250, 189, 47, 0.15); --danger-bg: rgba(251, 73, 52, 0.15);
+        }
 
         body { background-color: var(--bg-dark); color: var(--text-main); font-family: 'Inter', system-ui, sans-serif; padding: 2rem; line-height: 1.5; overflow-x: hidden; transition: background-color 0.3s; }
         .header-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;}
-        h1 { font-size: 2rem; font-weight: 700; display: flex; align-items: center; gap: 0.75rem; }
+        h1 { font-size: 2rem; font-weight: 700; display: flex; align-items: center; gap: 0.75rem; margin: 0; }
         h1 i { color: var(--accent); transition: color 0.3s; }
         .controls { display: flex; gap: 1rem; align-items: center; }
+
         .theme-select { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.5rem; outline: none; cursor: pointer; }
-        .status-pill { background: var(--card-border); padding: 0.5rem 1rem; border-radius: 2rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; transition: background 0.2s;}
-        .status-pill:hover { background: var(--accent); color: white; }
+        .status-pill { background: var(--card-border); padding: 0.5rem 1rem; border-radius: 2rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; transition: background 0.2s; min-width: 150px; justify-content: center; }
+        .status-icon-btn { background: var(--card-border); padding: 0.5rem 1rem; border-radius: 2rem; cursor: pointer; transition: background 0.2s; }
+        .status-icon-btn:hover { background: var(--accent); color: white; }
 
         .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1.5rem; align-items: start; }
-        .module-card { background: var(--bg-card); border: 1px solid var(--card-border); border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); transition: box-shadow 0.2s, background-color 0.3s; }
+        .module-card { background: var(--bg-card); border: 1px solid var(--card-border); border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); transition: box-shadow 0.2s, background-color 0.3s; will-change: transform; }
         .module-header { padding: 1.25rem 1.5rem; background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--card-border); font-weight: 600; font-size: 1.1rem; display: flex; align-items: center; gap: 0.75rem; cursor: grab; user-select: none; }
         .module-header:active { cursor: grabbing; }
         .module-header .icon-main { color: var(--accent); transition: color 0.3s;}
@@ -157,14 +147,15 @@ cat > "$HTML_DIR/index.html" <<'EOF'
         .module-card:hover .drag-handle { opacity: 1; }
 
         .sortable-ghost { opacity: 0.4; border: 2px dashed var(--accent); }
-        .sortable-drag { cursor: grabbing !important; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
+        .sortable-drag { cursor: grabbing !important; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5) !important; opacity: 1 !important; z-index: 100; }
+
         .module-body { padding: 1.5rem; }
         .data-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 0.5rem 0; border-bottom: 1px dashed rgba(255,255,255,0.05); }
         .data-row:last-child { border-bottom: none; }
         .data-label { color: var(--text-muted); font-size: 0.95rem; white-space: nowrap; margin-right: 1rem; }
         .data-val { font-weight: 500; text-align: right; }
 
-        .badge { padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; display: inline-flex; align-items: center; gap: 0.25rem; }
+        .badge { padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em; display: inline-flex; align-items: center; gap: 0.25rem; white-space: nowrap; overflow: hidden; }
         .badge-success { background: var(--success-bg); color: var(--success); }
         .badge-warning { background: var(--warning-bg); color: var(--warning); }
         .badge-danger { background: var(--danger-bg); color: var(--danger); }
@@ -185,6 +176,8 @@ cat > "$HTML_DIR/index.html" <<'EOF'
 
         textarea.custom-notes { width: 100%; height: 120px; background: rgba(0,0,0,0.2); color: var(--text-main); border: 1px solid var(--card-border); border-radius: 0.5rem; padding: 0.75rem; font-family: inherit; resize: vertical; outline: none; transition: border-color 0.2s; }
         textarea.custom-notes:focus { border-color: var(--accent); }
+        input.custom-input, textarea.custom-input { width: 100%; padding: 0.5rem; background: rgba(0,0,0,0.2); border: 1px solid var(--card-border); color: var(--text-main); border-radius: 0.25rem; font-family: monospace; font-size: 0.85rem; }
+        input.custom-input:focus, textarea.custom-input:focus { border-color: var(--accent); outline: none; }
 
         .action-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
         .btn { padding: 0.75rem 1rem; border: none; border-radius: 0.5rem; font-weight: 600; font-size: 0.95rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.5rem; transition: all 0.2s; background: var(--card-border); color: var(--text-main); }
@@ -194,12 +187,12 @@ cat > "$HTML_DIR/index.html" <<'EOF'
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 50; }
-        .modal-box { background: var(--bg-card); border: 1px solid var(--card-border); border-radius: 1rem; width: 90%; max-width: 800px; padding: 2rem; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+        .modal-box { background: var(--bg-card); border: 1px solid var(--card-border); border-radius: 1rem; width: 90%; max-width: 800px; padding: 2rem; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); max-height: 90vh; overflow-y: auto;}
         pre.console-output { background: #000; color: #a3be8c; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; max-height: 50vh; font-family: 'Fira Code', monospace; font-size: 0.85rem; }
 
-        .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;}
+        .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;}
         .setting-item { display: flex; align-items: center; gap: 0.75rem; cursor: pointer;}
-        @media (max-width: 768px) { .dashboard-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) { .dashboard-grid { grid-template-columns: 1fr; } .settings-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body x-data="dashboard()" x-init="init()" :data-theme="theme">
@@ -209,11 +202,14 @@ cat > "$HTML_DIR/index.html" <<'EOF'
         <div class="controls">
             <select class="theme-select" x-model="theme" @change="saveSettings()">
                 <option value="default">Default Dark</option>
+                <option value="catppuccin">Catppuccin</option>
+                <option value="tokyo">Tokyo Night</option>
+                <option value="gruvbox">Gruvbox</option>
                 <option value="dracula">Dracula</option>
                 <option value="nord">Nord</option>
             </select>
-            <div class="status-pill" @click="showSettings = true" title="Manage Cards">
-                <i class="fas fa-cog"></i> <span>Settings</span>
+            <div class="status-icon-btn" @click="showSettings = true" title="Manage Settings">
+                <i class="fas fa-cog"></i>
             </div>
             <div class="status-pill">
                 <i class="fas fa-sync-alt" :class="refreshing ? 'fa-spin' : ''"></i>
@@ -250,12 +246,72 @@ cat > "$HTML_DIR/index.html" <<'EOF'
             </div>
         </div>
 
+        <div class="module-card" data-id="card-bookmarks" x-show="visibleCards.bookmarks">
+            <div class="module-header"><i class="fas fa-bookmark icon-main"></i> Homelab Links<i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="module-body" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem;">
+                <template x-for="b in parsedBookmarks" :key="b.name">
+                    <a :href="b.url" target="_blank" class="btn" style="text-decoration: none; justify-content: flex-start; padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); color: var(--text-main);">
+                        <i class="fas" :class="b.icon" style="color: var(--accent); width: 20px; text-align: center;"></i>
+                        <span x-text="b.name" style="font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 0.5rem;"></span>
+                    </a>
+                </template>
+            </div>
+        </div>
+
+        <div class="module-card" data-id="card-pihole" x-show="visibleCards.pihole">
+            <div class="module-header"><i class="fas fa-shield-alt icon-main"></i> Pi-hole Adblock<i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="module-body">
+                <template x-if="pihole">
+                    <div>
+                        <div class="data-row"><span class="data-label">DNS Status</span>
+                            <span class="badge" :class="pihole.status === 'enabled' ? 'badge-success' : 'badge-danger'" x-text="pihole.status"></span>
+                        </div>
+                        <div class="data-row"><span class="data-label">Total Queries</span><span class="data-val" x-text="pihole.queries"></span></div>
+                        <div class="data-row"><span class="data-label">Ads Blocked</span><span class="data-val" style="color: var(--danger); font-weight: bold;" x-text="pihole.blocked"></span></div>
+                        <div class="progress-container" style="margin-top: 1rem;">
+                            <div class="progress-header"><span>Block Percentage</span><span x-text="pihole.percent + '%'"></span></div>
+                            <div class="progress-track"><div class="progress-fill" :style="`width: ${parseFloat(pihole.percent)}%; background: var(--accent);`"></div></div>
+                        </div>
+                    </div>
+                </template>
+                <template x-if="!pihole">
+                    <div style="color: var(--text-muted); font-size: 0.85rem; font-style: italic;">Unable to reach Pi-hole API. Ensure Pi-hole URL and App Password (v6) are set in Settings.</div>
+                </template>
+            </div>
+        </div>
+
         <div class="module-card" data-id="card-hw" x-show="visibleCards.hw">
             <div class="module-header"><i class="fas fa-memory icon-main"></i> Hardware Profile<i class="fas fa-grip-lines drag-handle"></i></div>
             <div class="module-body">
                 <div class="data-row"><span class="data-label">CPU Info</span><span class="data-val" style="font-size:0.85rem;" x-html="hwCpu"></span></div>
                 <div class="data-row"><span class="data-label">GPU Info</span><span class="data-val" style="font-size:0.85rem; line-height:1.6;" x-html="hwGpu"></span></div>
                 <div class="data-row" x-show="gpuTemp !== 'N/A'"><span class="data-label">GPU Temp</span><span class="badge" :class="gpuTempClass" x-text="gpuTemp"></span></div>
+            </div>
+        </div>
+
+        <div class="module-card" data-id="card-procs" x-show="visibleCards.procs">
+            <div class="module-header"><i class="fas fa-chart-line icon-main"></i> Resource Hogs<i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="module-body">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.2rem;">Top CPU</div>
+                        <template x-for="p in topCpu" :key="p.name">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; padding: 0.2rem 0;">
+                                <span x-text="p.name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px;"></span>
+                                <span style="color: var(--warning);" x-text="p.val"></span>
+                            </div>
+                        </template>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.2rem;">Top Memory</div>
+                        <template x-for="p in topMem" :key="p.name">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; padding: 0.2rem 0;">
+                                <span x-text="p.name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px;"></span>
+                                <span style="color: var(--accent);" x-text="p.val"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -350,42 +406,91 @@ cat > "$HTML_DIR/index.html" <<'EOF'
     </div>
 
     <div x-show="showSettings" class="modal-overlay" style="display: none;" @click.self="showSettings=false">
-        <div class="modal-box" style="max-width: 500px;">
+        <div class="modal-box" style="max-width: 700px;">
             <h2 style="margin-bottom: 1rem; font-size: 1.5rem;"><i class="fas fa-cog icon-main"></i> Dashboard Settings</h2>
-            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Toggle visibility of dashboard modules.</p>
+
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.5rem; font-weight: bold;">Toggle Visibility</p>
             <div class="settings-grid">
                 <label class="setting-item"><input type="checkbox" x-model="visibleCards.core" @change="saveSettings()"> Core System</label>
                 <label class="setting-item"><input type="checkbox" x-model="visibleCards.battery" @change="saveSettings()"> Power & Battery</label>
+                <label class="setting-item"><input type="checkbox" x-model="visibleCards.bookmarks" @change="saveSettings()"> Bookmarks</label>
+                <label class="setting-item"><input type="checkbox" x-model="visibleCards.pihole" @change="saveSettings()"> Pi-hole Stats</label>
                 <label class="setting-item"><input type="checkbox" x-model="visibleCards.hw" @change="saveSettings()"> Hardware Profile</label>
+                <label class="setting-item"><input type="checkbox" x-model="visibleCards.procs" @change="saveSettings()"> Resource Hogs</label>
                 <label class="setting-item"><input type="checkbox" x-model="visibleCards.radar" @change="saveSettings()"> Network Radar</label>
                 <label class="setting-item"><input type="checkbox" x-model="visibleCards.storage" @change="saveSettings()"> Storage Matrix</label>
                 <label class="setting-item"><input type="checkbox" x-model="visibleCards.services" @change="saveSettings()"> Interactive Services</label>
                 <label class="setting-item"><input type="checkbox" x-model="visibleCards.logs" @change="saveSettings()"> Multi-Log Viewer</label>
                 <label class="setting-item"><input type="checkbox" x-model="visibleCards.actions" @change="saveSettings()"> Quick Actions</label>
             </div>
-            <div style="display: flex; justify-content: flex-end; margin-top: 2rem;"><button class="btn btn-primary" @click="showSettings=false">Done</button></div>
+
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.5rem; font-weight: bold; border-top: 1px solid var(--card-border); padding-top: 1rem;">Data Sources</p>
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div>
+                        <label class="data-label" style="display:block; margin-bottom: 0.25rem;">Pi-hole IP/URL</label>
+                        <input class="custom-input" type="text" x-model="piholeUrl" @change="saveSettings()" placeholder="dnsa01.vannieuwenhove.org">
+                    </div>
+                    <div>
+                        <label class="data-label" style="display:block; margin-bottom: 0.25rem;">Pi-hole v6 App Password</label>
+                        <input class="custom-input" type="password" x-model="piholeToken" @change="saveSettings()" placeholder="Paste Pi-hole Auth Token">
+                    </div>
+                </div>
+                <div>
+                    <label class="data-label" style="display:block; margin-bottom: 0.25rem;">Bookmarks (Format: Name | URL | FontAwesome-Icon)</label>
+                    <textarea class="custom-input" x-model="bookmarksStr" @change="saveSettings()" style="height: 60px; font-family: monospace; font-size: 0.75rem; resize: vertical;"></textarea>
+                </div>
+                <div>
+                    <label class="data-label" style="display:block; margin-bottom: 0.25rem;">Services (comma-separated)</label>
+                    <input class="custom-input" type="text" x-model="monitoredServices" @change="saveSettings()">
+                </div>
+                <div>
+                    <label class="data-label" style="display:block; margin-bottom: 0.25rem;">Radar IPs (comma-separated)</label>
+                    <input class="custom-input" type="text" x-model="radarIps" @change="saveSettings()">
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; margin-top: 2rem;"><button class="btn btn-primary" @click="showSettings=false; refreshStats();">Save & Reload</button></div>
         </div>
     </div>
 
     <script>
         function dashboard() {
-            const defaultCards = { core: true, battery: true, hw: true, radar: true, storage: true, services: true, logs: true, actions: true };
+            // Default visibility
+            const defaultCards = { core: true, battery: true, bookmarks: true, pihole: true, hw: true, procs: true, radar: true, storage: true, services: true, logs: true, actions: true };
             const savedCards = JSON.parse(localStorage.getItem('noba-visible-cards'));
+
+            // Pre-populated bookmarks based on your browser tabs
+            const defaultBookmarks = 'TrueNAS (vnnas)|http://vnnas.vannieuwenhove.org|fa-server, TrueNAS (vdhnas)|http://vdhnas.vannieuwenhove.org|fa-server, Pi-Hole|http://dnsa01.vannieuwenhove.org/admin|fa-shield-alt, Home Assistant|http://homeassistant.local:8123|fa-home, ROMM|http://romm.local|fa-gamepad, Prowlarr|http://localhost:9696|fa-search, ASUS Router|http://192.168.100.1|fa-network-wired';
 
             return {
                 theme: localStorage.getItem('noba-theme') || 'default',
                 visibleCards: savedCards || defaultCards,
+
+                piholeUrl: localStorage.getItem('noba-pihole') || 'dnsa01.vannieuwenhove.org',
+                piholeToken: localStorage.getItem('noba-pihole-token') || '',
+                bookmarksStr: localStorage.getItem('noba-bookmarks') || defaultBookmarks,
+                monitoredServices: localStorage.getItem('noba-services') || 'backup-to-nas.service, organize-downloads.service, sshd, podman, syncthing.service',
+                radarIps: localStorage.getItem('noba-radar') || '192.168.100.1, 1.1.1.1, 8.8.8.8',
+
                 timestamp: '--:--', uptime: '--', loadavg: '--', memory: '--', cpuTemp: '--', gpuTemp: '--',
                 osName: '--', kernel: '--', hwCpu: '--', hwGpu: '--',
                 defaultIp: '--', netRx: '0 B/s', netTx: '0 B/s', dnfUpdates: 0, flatpakUpdates: 0,
                 battery: { percent: 0, status: 'Unknown' },
-                disks: [], services: [], zfs: { pools: [] }, radar: [],
+                disks: [], services: [], zfs: { pools: [] }, radar: [], topCpu: [], topMem: [], pihole: null,
 
                 selectedLog: 'syserr', logContent: 'Loading...',
                 showModal: false, showSettings: false, modalTitle: '', modalOutput: '', runningScript: false, refreshing: false,
 
                 get cpuTempClass() { const t = parseInt(this.cpuTemp) || 0; return t > 80 ? 'badge-danger' : t > 60 ? 'badge-warning' : 'badge-neutral'; },
                 get gpuTempClass() { const t = parseInt(this.gpuTemp) || 0; return t > 85 ? 'badge-danger' : t > 70 ? 'badge-warning' : 'badge-neutral'; },
+
+                get parsedBookmarks() {
+                    return this.bookmarksStr.split(',').map(b => {
+                        const parts = b.split('|');
+                        return { name: parts[0] ? parts[0].trim() : 'Link', url: parts[1] ? parts[1].trim() : '#', icon: parts[2] ? parts[2].trim() : 'fa-link' };
+                    });
+                },
 
                 async init() {
                     this.initSortable();
@@ -396,13 +501,19 @@ cat > "$HTML_DIR/index.html" <<'EOF'
 
                 saveSettings() {
                     localStorage.setItem('noba-theme', this.theme);
+                    localStorage.setItem('noba-pihole', this.piholeUrl);
+                    localStorage.setItem('noba-pihole-token', this.piholeToken);
+                    localStorage.setItem('noba-bookmarks', this.bookmarksStr);
+                    localStorage.setItem('noba-services', this.monitoredServices);
+                    localStorage.setItem('noba-radar', this.radarIps);
                     localStorage.setItem('noba-visible-cards', JSON.stringify(this.visibleCards));
                 },
 
                 initSortable() {
                     const grid = document.getElementById('sortable-dashboard');
                     Sortable.create(grid, {
-                        animation: 150, handle: '.module-header', ghostClass: 'sortable-ghost', dragClass: 'sortable-drag', group: "noba-dashboard",
+                        animation: 200, easing: "cubic-bezier(1, 0, 0, 1)", handle: '.module-header', ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+                        forceFallback: true, fallbackOnBody: true, group: "noba-dashboard",
                         store: {
                             get: function (sortable) { const order = localStorage.getItem(sortable.options.group.name); return order ? order.split('|') : []; },
                             set: function (sortable) { localStorage.setItem(sortable.options.group.name, sortable.toArray().join('|')); }
@@ -431,10 +542,12 @@ cat > "$HTML_DIR/index.html" <<'EOF'
                     if(this.refreshing) return;
                     this.refreshing = true;
                     try {
-                        const response = await fetch('/api/stats');
+                        const url = `/api/stats?services=${encodeURIComponent(this.monitoredServices)}&radar=${encodeURIComponent(this.radarIps)}&pihole=${encodeURIComponent(this.piholeUrl)}&piholetok=${encodeURIComponent(this.piholeToken)}`;
+                        const response = await fetch(url);
                         if (!response.ok) return;
                         const data = await response.json();
                         Object.assign(this, data);
+                        this.pihole = data.pihole || null;
                     } catch (e) {} finally { this.refreshing = false; }
                 },
 
@@ -488,11 +601,11 @@ cat > "$HTML_DIR/index.html" <<'EOF'
 EOF
 
 # -------------------------------------------------------------------
-# Write server.py (Strict State Parsing for Services)
+# Write server.py
 # -------------------------------------------------------------------
 cat > "$HTML_DIR/server.py" <<'EOF'
 #!/usr/bin/env python3
-import http.server, socketserver, json, subprocess, os, time, re, logging, glob
+import http.server, socketserver, json, subprocess, os, time, re, logging, glob, urllib.request
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs
 
@@ -503,7 +616,7 @@ LOG_DIR = os.path.expanduser("~/.local/share")
 CACHE_TTL = 30
 PID_FILE = os.environ.get('PID_FILE', '/tmp/noba-web-server.pid')
 ACTION_LOG = '/tmp/noba-action.log'
-PING_TARGETS = os.environ.get('NOBA_PING_TARGETS', '192.168.100.1,1.1.1.1,8.8.8.8').split(',')
+DEFAULT_PING = os.environ.get('NOBA_PING_TARGETS', '192.168.100.1,1.1.1.1,8.8.8.8').split(',')
 
 logging.basicConfig(filename=os.path.join(LOG_DIR, 'noba-web-server.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -556,7 +669,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format, *args): pass
 
     def get_service_status(self, svc):
-        # 1. Strict User Context Check (Avoids false "inactives" if unit doesn't exist)
         usr_out = run_cmd(['systemctl', '--user', 'show', '-p', 'ActiveState,LoadState', svc], timeout=1)
         ud = dict(l.split('=', 1) for l in usr_out.splitlines() if '=' in l)
         if ud.get('LoadState') not in [None, 'not-found']:
@@ -566,7 +678,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if 'ActiveState=active' in t_out: return 'timer-active', True
             return state, True
 
-        # 2. Strict System Context Check
         sys_out = run_cmd(['systemctl', 'show', '-p', 'ActiveState,LoadState', svc], timeout=1)
         sd = dict(l.split('=', 1) for l in sys_out.splitlines() if '=' in l)
         if sd.get('LoadState') not in [None, 'not-found']:
@@ -587,17 +698,59 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return {'percent': pct, 'status': stat}
         except: return {'percent': 0, 'status': 'Error reading battery'}
 
+    def get_top_procs(self, sort_by):
+        out = run_cmd(['ps', 'ax', '--format', f'comm,{sort_by}', '--sort', f'-{sort_by}'], timeout=2)
+        procs = []
+        for line in out.splitlines()[1:6]:
+            parts = line.strip().rsplit(' ', 1)
+            if len(parts) == 2: procs.append({'name': parts[0][:15], 'val': parts[1].strip() + '%'})
+        return procs
+
+    def get_pihole_stats(self, pihole_url, pihole_token):
+        if not pihole_url: return None
+        url = pihole_url if pihole_url.startswith('http') else 'http://' + pihole_url
+        url = url.rstrip('/').replace('/admin', '')
+
+        # 1. Try Pi-hole v6 API
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+            if pihole_token: headers['sid'] = pihole_token
+            req = urllib.request.Request(url + '/api/stats/summary', headers=headers)
+            with urllib.request.urlopen(req, timeout=2) as response:
+                data = json.loads(response.read().decode())
+                q = data.get('queries', {}).get('total', 0)
+                b = data.get('ads', {}).get('blocked', 0)
+                p = data.get('ads', {}).get('percentage', 0.0)
+                s = data.get('gravity', {}).get('status', 'unknown')
+                return {'queries': f"{q:,}", 'blocked': f"{b:,}", 'percent': f"{p:.1f}", 'status': s}
+        except: pass
+
+        # 2. Fallback to Pi-hole v5 shim API
+        try:
+            api_url = url + '/admin/api.php?summaryRaw'
+            if pihole_token: api_url += f"&auth={pihole_token}"
+            req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=2) as response:
+                data = json.loads(response.read().decode())
+                return {
+                    'queries': f"{data.get('dns_queries_today', 0):,}",
+                    'blocked': f"{data.get('ads_blocked_today', 0):,}",
+                    'percent': f"{data.get('ads_percentage_today', 0):.1f}",
+                    'status': data.get('status', 'enabled')
+                }
+        except: return None
+
     def do_GET(self):
         parsed_path = urlparse(self.path)
 
         if parsed_path.path == '/api/stats':
+            qs = parse_qs(parsed_path.query)
             stats = {'timestamp': time.strftime('%H:%M:%S')}
 
             try:
                 with open('/etc/os-release') as f:
                     for line in f:
-                        if line.startswith('PRETTY_NAME='):
-                            stats['osName'] = line.split('=')[1].strip().strip('"')
+                        if line.startswith('PRETTY_NAME='): stats['osName'] = line.split('=')[1].strip().strip('"')
             except: stats['osName'] = "Linux"
             stats['kernel'] = run_cmd(['uname', '-r'], cache_ttl=3600)
 
@@ -619,14 +772,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             hw_cpu = run_cmd(['bash', '-c', "lscpu | grep 'Model name' | head -n 1 | cut -d ':' -f 2 | xargs"], cache_ttl=3600)
             stats['hwCpu'] = hw_cpu if hw_cpu else "Unknown CPU"
 
-            # Parse dual GPUs safely into HTML multi-line string
             raw_gpu = run_cmd(['bash', '-c', "lspci | grep -i vga | cut -d ':' -f 3"], cache_ttl=3600)
             stats['hwGpu'] = raw_gpu.replace('\n', '<br>') if raw_gpu else "Unknown GPU"
 
             out = run_cmd(['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader'], cache_ttl=5)
             stats['gpuTemp'] = f"{out}°C" if out else "N/A"
 
-            # Disks
             disks = []
             for line in run_cmd(['df', '-h'], cache_ttl=10).splitlines()[1:]:
                 parts = line.split()
@@ -638,8 +789,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     disks.append({'mount': mount, 'percent': pct, 'barClass': bc})
             stats['disks'] = disks
 
-            # Services
-            service_list = os.environ.get('NOBA_WEB_SERVICES', '').split(',')
+            # Dynamic Services
+            svc_query = qs.get('services', [''])[0]
+            service_list = svc_query.split(',') if svc_query else os.environ.get('NOBA_WEB_SERVICES', '').split(',')
             services_status = []
             for svc in service_list:
                 if not svc.strip(): continue
@@ -647,13 +799,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 services_status.append({'name': svc.strip(), 'status': status, 'is_user': is_user, 'memory': ''})
             stats['services'] = services_status
 
-            # Ping Radar
+            # Dynamic Radar
+            radar_query = qs.get('radar', [''])[0]
+            ip_list = radar_query.split(',') if radar_query else DEFAULT_PING
             radar = []
-            for ip in PING_TARGETS:
+            for ip in ip_list:
                 if not ip.strip(): continue
                 st = "Up" if run_cmd(['ping', '-c', '1', '-W', '1', ip.strip()], timeout=2) else "Down"
                 radar.append({'ip': ip.strip(), 'status': st})
             stats['radar'] = radar
+
+            stats['topCpu'] = self.get_top_procs('%cpu')
+            stats['topMem'] = self.get_top_procs('%mem')
+
+            # Pihole Integration
+            pihole_url = qs.get('pihole', [''])[0]
+            pihole_token = qs.get('piholetok', [''])[0]
+            stats['pihole'] = self.get_pihole_stats(pihole_url, pihole_token) if pihole_url else None
 
             self.send_response(200)
             self.send_header('Content-type', 'application/json')

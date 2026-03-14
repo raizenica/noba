@@ -1,107 +1,41 @@
 #!/bin/bash
-# temperature-alert.sh – Alert if CPU temp exceeds threshold
+# temperature-alert.sh - Monitors CPU/GPU temp and triggers KDE notifications
+# Version: 2.2.2
 
-set -euo pipefail
+# Thresholds (in Celsius)
+WARN_TEMP=85
+CRIT_TEMP=95
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/noba-lib.sh"
+# 1. Safely get CPU Temp (Fixed greedy regex grabbing the 100C threshold)
+CPU_TEMP=$(sensors 2>/dev/null | awk '/(Tctl|Package id 0|Core 0|temp1)/ {print $0; exit}' | grep -oE '\+[0-9.]+' | head -n 1 | tr -d '+' | cut -d. -f1)
 
-# Defaults
-THRESHOLD=85
-CHECK_INTERVAL=60
-ONE_SHOT=false
-
-# Load configuration
-load_config
-if [ "$CONFIG_LOADED" = true ]; then
-    THRESHOLD="$(get_config ".disk.threshold" "$THRESHOLD")"
-    # Optionally read interval from config if you define it
+if [ -z "$CPU_TEMP" ]; then
+    # Fallback to sysfs if sensors fails
+    if [ -f /sys/class/thermal/thermal_zone0/temp ]; then
+        CPU_TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+        CPU_TEMP=$((CPU_TEMP / 1000))
+    fi
 fi
 
-show_version() {
-    echo "temperature-alert.sh version 1.0"
-    exit 0
-}
+# 2. Safely get GPU Temp
+GPU_TEMP=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null || echo "")
 
-show_help() {
-    cat <<EOF
-Usage: $0 [OPTIONS]
+check_and_notify() {
+    local device="$1"
+    local temp="$2"
 
-Monitor CPU temperature and send notifications when it exceeds a threshold.
+    if [ -z "$temp" ]; then return 0; fi
 
-Options:
-  --threshold TEMP   Set alert threshold in °C (default: $THRESHOLD)
-  --interval SECS    Check every SECS seconds (default: $CHECK_INTERVAL)
-  --one-shot         Check once and exit (useful for cron)
-  --help             Show this help message
-  --version          Show version information
-EOF
-    exit 0
-}
-
-# Parse arguments
-PARSED_ARGS=$(getopt -o '' -l threshold:,interval:,one-shot,help,version -- "$@")
-if ! some_command; then
-    show_help
-fi
-eval set -- "$PARSED_ARGS"
-
-while true; do
-    case "$1" in
-        --threshold) THRESHOLD="$2"; shift 2 ;;
-        --interval)  CHECK_INTERVAL="$2"; shift 2 ;;
-        --one-shot)  ONE_SHOT=true; shift ;;
-        --help)      show_help ;;
-        --version)   show_version ;;
-        --)          shift; break ;;
-        *)           break ;;
-    esac
-done
-
-# Function to check temperature and notify
-check_temperature() {
-    if ! command -v sensors &>/dev/null; then
-        log_error "lm_sensors not installed. Please install with: sudo dnf install lm_sensors"
-        return 1
-    fi
-
-    local temp
-    temp=$(sensors | grep -E "Package id 0|Core" | awk '{print $3}' | sed 's/+//;s/°C//' | sort -nr | head -1)
-
-    if [ -z "$temp" ]; then
-        log_warn "Could not read CPU temperature. Check sensors output."
-        return 1
-    fi
-
-    local temp_int="${temp%.*}"
-    if [ "$temp_int" -ge "$THRESHOLD" ]; then
-        local summary="⚠ CPU Overheat: ${temp}°C"
-        local body="Temperature exceeded threshold of ${THRESHOLD}°C"
-        log_warn "$summary - $body"
-
-        if command -v notify-send &>/dev/null && [ -n "${DISPLAY:-}" ]; then
-            notify-send -u critical "$summary" "$body"
-        else
-            logger -t temperature-alert "$summary $body"
-            echo "$summary $body" | wall 2>/dev/null || true
-        fi
+    if [ "$temp" -ge "$CRIT_TEMP" ]; then
+        notify-send -u critical -i "dialog-error" "CRITICAL TEMPERATURE" "$device is at ${temp}°C! Thermal throttling likely."
+        echo "CRITICAL: $device at ${temp}C"
+    elif [ "$temp" -ge "$WARN_TEMP" ]; then
+        notify-send -u normal -i "dialog-warning" "High Temperature Alert" "$device is running hot at ${temp}°C."
+        echo "WARNING: $device at ${temp}C"
     else
-        log_debug "Temperature normal: ${temp}°C"
+        echo "OK: $device at ${temp}C"
     fi
 }
 
-# Trap signals for clean exit
-trap 'log_info "Exiting on signal"; exit 0' INT TERM
-
-# Main
-if [ "$ONE_SHOT" = true ]; then
-    check_temperature
-    exit $?
-fi
-
-log_info "Starting temperature monitor (threshold=${THRESHOLD}°C, interval=${CHECK_INTERVAL}s)"
-while true; do
-    check_temperature
-    sleep "$CHECK_INTERVAL"
-done
+check_and_notify "CPU (i7-10870H)" "$CPU_TEMP"
+check_and_notify "GPU (RTX 3080)" "$GPU_TEMP"
