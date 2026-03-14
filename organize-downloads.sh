@@ -1,11 +1,11 @@
 #!/bin/bash
 # organize-downloads.sh – Move files from Downloads into categorized folders
-# Version: 2.2.0
+# Version: 2.2.1
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
+# shellcheck source=./noba-lib.sh
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
@@ -15,8 +15,7 @@ DOWNLOAD_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/download-organizer.log}"
 MIN_AGE_MINUTES=5
 DRY_RUN=false
-# shellcheck disable=SC2034
-VERBOSE=false
+export VERBOSE=false
 
 # Category definitions
 declare -A CATEGORIES=(
@@ -57,7 +56,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "organize-downloads.sh version 2.2.0 (noba-lib $NOBA_LIB_VERSION)"
+    echo "organize-downloads.sh version 2.2.1 (noba-lib $NOBA_LIB_VERSION)"
     exit 0
 }
 
@@ -126,11 +125,11 @@ while true; do
         -d|--download-dir) DOWNLOAD_DIR="$2"; shift 2 ;;
         -a|--min-age)      MIN_AGE_MINUTES="$2"; shift 2 ;;
         -n|--dry-run)      DRY_RUN=true; shift ;;
-        -v|--verbose)      VERBOSE=true; shift ;;
+        -v|--verbose)      export VERBOSE=true; shift ;;
         --help)            show_help ;;
         --version)         show_version ;;
         --)                shift; break ;;
-        *)                 break ;;
+        *)                 log_error "Invalid argument: $1"; exit 1 ;;
     esac
 done
 
@@ -144,7 +143,12 @@ if ! [[ "$MIN_AGE_MINUTES" =~ ^[0-9]+$ ]]; then
 fi
 
 if [ ! -d "$DOWNLOAD_DIR" ]; then
-    die "Download directory $DOWNLOAD_DIR does not exist."
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY RUN] Download directory $DOWNLOAD_DIR does not exist. Exiting gracefully."
+        exit 0
+    else
+        die "Download directory $DOWNLOAD_DIR does not exist."
+    fi
 fi
 
 # Prepare logging

@@ -1,11 +1,11 @@
 #!/bin/bash
 # disk-sentinel.sh – Monitor disk space and alert when threshold exceeded
-# Version: 2.2.0 (compatible with noba-lib.sh 2.2.0)
+# Version: 2.2.1
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
+# shellcheck source=./noba-lib.sh
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
@@ -17,8 +17,9 @@ DEFAULT_TARGETS=("/" "/home")
 CLEANUP="${CLEANUP:-true}"
 EMAIL="${EMAIL:-strikerke@gmail.com}"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/disk-sentinel.log}"
-# shellcheck disable=SC2034
 DRY_RUN=false
+# shellcheck disable=SC2034
+VERBOSE=false
 # Filesystem types to ignore (regex)
 IGNORE_FS="^(proc|sysfs|tmpfs|devpts|securityfs|fusectl|debugfs|pstore|hugetlbfs|mqueue|configfs|devtmpfs|binfmt_misc|overlay)$"
 
@@ -49,7 +50,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "disk-sentinel.sh version 2.2.0"
+    echo "disk-sentinel.sh version 2.2.1"
     exit 0
 }
 
@@ -129,7 +130,7 @@ while true; do
         --help)         show_help ;;
         --version)      show_version ;;
         --)             shift; break ;;
-        *)              break ;;
+        *)              log_error "Invalid argument: $1"; exit 1 ;;
     esac
 done
 

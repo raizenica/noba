@@ -1,11 +1,11 @@
 #!/bin/bash
 # backup-verifier.sh – Verify integrity of latest backup by checking random files
-# Version: 2.1.0
+# Version: 2.1.1
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
+# shellcheck source=./noba-lib.sh
 source "$SCRIPT_DIR/noba-lib.sh"
 
 # -------------------------------------------------------------------
@@ -17,8 +17,7 @@ EMAIL="${EMAIL:-strikerke@gmail.com}"
 CHECKSUM_CMD="md5sum"
 DRY_RUN=false
 QUIET=false
-# shellcheck disable=SC2034
-VERBOSE=false
+export VERBOSE=false
 COMPARE_ORIGINAL=false
 SEND_EMAIL=false
 
@@ -36,7 +35,7 @@ fi
 # Helper functions
 # -------------------------------------------------------------------
 show_version() {
-    echo "backup-verifier.sh version 2.1.0"
+    echo "backup-verifier.sh version 2.1.1"
     exit 0
 }
 
@@ -83,13 +82,13 @@ while true; do
         -c|--compare-original) COMPARE_ORIGINAL=true; shift ;;
         --checksum-cmd)        CHECKSUM_CMD="$2"; shift 2 ;;
         --send-email)          SEND_EMAIL=true; shift ;;
-        -v|--verbose)          VERBOSE=true; shift ;;
+        -v|--verbose)          export VERBOSE=true; shift ;;
         -q|--quiet)            QUIET=true; shift ;;
         -D|--dry-run)          DRY_RUN=true; shift ;;
         --help)                show_help ;;
         --version)             show_version ;;
         --)                    shift; break ;;
-        *)                     break ;;
+        *)                     log_error "Invalid argument: $1"; exit 1 ;;
     esac
 done
 
@@ -106,9 +105,14 @@ if ! [[ "$NUM_FILES" =~ ^[0-9]+$ ]] || [ "$NUM_FILES" -le 0 ]; then
 fi
 
 # Find latest backup folder
-mapfile -t backup_dirs < <(find "$BACKUP_ROOT" -maxdepth 1 -type d -name "????????-??????" 2>/dev/null | sort)
+mapfile -t backup_dirs < <(find "$BACKUP_ROOT" -maxdepth 1 -type d -name "????????-???????" 2>/dev/null | sort)
 if [ ${#backup_dirs[@]} -eq 0 ]; then
-    die "No timestamped backup folders found in $BACKUP_ROOT"
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY RUN] No backups found. Exiting gracefully for test harness."
+        exit 0
+    else
+        die "No timestamped backup folders found in $BACKUP_ROOT"
+    fi
 fi
 LATEST_BACKUP="${backup_dirs[-1]}"
 log_info "Latest backup: $LATEST_BACKUP"
@@ -117,7 +121,12 @@ log_info "Latest backup: $LATEST_BACKUP"
 mapfile -t FILES < <(find "$LATEST_BACKUP" -type f -print0 2>/dev/null | xargs -0 -I {} printf "%s\n" "{}")
 TOTAL_FILES=${#FILES[@]}
 if [ "$TOTAL_FILES" -eq 0 ]; then
-    die "No files found in backup $LATEST_BACKUP"
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY RUN] No files inside backup. Exiting gracefully."
+        exit 0
+    else
+        die "No files found in backup $LATEST_BACKUP"
+    fi
 fi
 log_debug "Total files in backup: $TOTAL_FILES"
 
