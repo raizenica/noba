@@ -79,6 +79,7 @@ if ! command -v "$DIALOG" &>/dev/null; then
 fi
 
 # Use the library's safe temp dir creator with automatic trap cleanup
+# shellcheck disable=SC2034
 TEMP_DIR=$(make_temp_dir_auto "noba-tui.XXXXXXXXXX")
 
 # -------------------------------------------------------------------
