@@ -7,7 +7,7 @@
 if [[ -n "${_NOBA_LIB_LOADED:-}" ]]; then
     return 0
 fi
-export _NOBA_LIB_LOADED=1
+_NOBA_LIB_LOADED=1
 export NOBA_LIB_VERSION="2.2.1"
 
 # -------------------------------------------------------------------
