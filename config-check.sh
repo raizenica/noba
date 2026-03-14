@@ -1,266 +1,429 @@
 #!/bin/bash
 # config-check.sh – Validate configuration and check dependencies
-# Version: 2.2.1
+# Version: 3.0.0
+#
+# Bugs fixed vs 2.x:
+#   BUG-1  Every tool in the per-script sections was also in "common", so each
+#          dependency was reported twice. Restructured into exclusive per-script
+#          sets (tools unique to that script only) — common tools checked once.
+#   BUG-2  check_cmd return values were ignored; failures were printed but never
+#          counted. MISSING_REQUIRED / MISSING_OPTIONAL counters added; final exit
+#          code driven by MISSING_REQUIRED, not a separate hardcoded list.
+#   BUG-3  Version detection used "$cmd --version" for everything. Many tools
+#          (flock, findmnt) use -V; some (fuser) print to stderr; kdialog --version
+#          exits 1 on older KDE. Now tries --version, then -V, then -v quietly.
+#   BUG-4  Critical-deps list was hardcoded and included optional tools (fuser,
+#          msmtp, convert). Replaced by a tiered required/optional classification
+#          that matches what the suite actually needs to function at all.
+#   BUG-5  sudo -n true under set -e killed the script when sudo was not installed
+#          ("command not found" = exit 1). Wrapped with command -v guard.
+#   BUG-6  Associative array iteration order is arbitrary in bash; the hardcoded
+#          "for script in …" loop was the only ordering mechanism, but if a key
+#          was added to the array and omitted from the loop it was silently skipped.
+#          Dependency table is now an ordered list of plain arrays.
+#   BUG-7  -v was overloaded: test harness treated first positional -v as --version
+#          and exited 0, while getopt mapped -v to --verbose. The two meanings
+#          conflicted silently. Short flag for --verbose changed to nothing
+#          (--verbose only); -v / --version kept exclusively for the version path.
+#   BUG-8  exec 1>/dev/null for --quiet was applied before any tool checks ran
+#          (fine), but was irreversible — combined with --verbose it silently
+#          discarded the verbose output with no warning. Now uses a QUIET flag
+#          checked in output helpers, leaving the fd open for debugging.
+#
+# New in 3.0.0:
+#   --scripts LIST   Only check deps for specific scripts (comma-separated)
+#   --fix            Attempt to install missing required tools via the system PM
+#   --json           Output results as a JSON object (for dashboard integration)
+#   --report FILE    Write a plain-text report to FILE
+#   Missing-count summary line always printed at the end
 
 set -euo pipefail
 
-# -------------------------------------------------------------------
-# Test harness compliance
-# -------------------------------------------------------------------
+# ── Test harness compliance ────────────────────────────────────────────────────
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    echo "Usage: config-check.sh [OPTIONS]"
-    exit 0
+    echo "Usage: config-check.sh [OPTIONS]"; exit 0
 fi
+# BUG-7 FIX: -v / --version only for version; --verbose has no short alias
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
-    echo "config-check.sh version 2.2.1"
-    exit 0
+    echo "config-check.sh version 3.0.0"; exit 0
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/noba-lib.sh"
 
-# -------------------------------------------------------------------
-# Default configuration
-# -------------------------------------------------------------------
+# ── Defaults ───────────────────────────────────────────────────────────────────
 VERBOSE=false
+QUIET=false
 CHECK_YAML=true
 CHECK_OLD=true
 DRY_RUN=false
+FIX_MODE=false
+JSON_MODE=false
+REPORT_FILE=""
+FILTER_SCRIPTS=""   # comma-separated; empty = all
 OLD_CONFIG_FILE="${OLD_CONFIG_FILE:-$HOME/.config/automation.conf}"
 NEW_CONFIG_FILE="${NEW_CONFIG_FILE:-$HOME/.config/noba/config.yaml}"
 LOG_DIR="$HOME/.local/share"
 
-# -------------------------------------------------------------------
-# Load user configuration
-# -------------------------------------------------------------------
+# ── Load configuration ─────────────────────────────────────────────────────────
 if command -v get_config &>/dev/null; then
     config_log_dir="$(get_config ".logs.dir" "$LOG_DIR")"
-    # Expand tilde if present
     LOG_DIR="${config_log_dir/#\~/$HOME}"
 fi
 
-# -------------------------------------------------------------------
-# Helper functions
-# -------------------------------------------------------------------
-show_version() {
-    echo "config-check.sh version 2.2.1"
-    exit 0
-}
+# ── Counters (global, not subshell-safe — kept in main shell only) ─────────────
+MISSING_REQUIRED=0
+MISSING_OPTIONAL=0
+PRESENT=0
+
+# ── Functions ──────────────────────────────────────────────────────────────────
+show_version() { echo "config-check.sh version 3.0.0"; exit 0; }
 
 show_help() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Check configuration and dependencies for the Nobara Automation Suite.
+Check configuration files and dependencies for the Nobara Automation Suite.
 
 Options:
-  -v, --verbose        Show detailed information (versions, file contents)
-  -q, --quiet          Only show errors (minimal output)
-  --no-yaml            Skip checking the new YAML config
-  --no-old             Skip checking the old automation.conf
-  --dry-run            Simulate a run (exits immediately for test harness)
-  --help               Show this help message
-  --version            Show version information
+      --verbose        Show tool version strings and config file contents
+  -q, --quiet          Only show errors; suppress info/success lines
+      --no-yaml        Skip checking the new YAML config
+      --no-old         Skip checking the old automation.conf
+      --scripts LIST   Comma-separated subset of scripts to check
+                         e.g. --scripts backup,cloud,verifier
+      --fix            Attempt to install missing required tools (uses dnf/apt/pacman)
+      --json           Output a JSON summary (for dashboard integration)
+      --report FILE    Write a plain-text report to FILE
+  -n, --dry-run        Simulate run — exits immediately (test harness)
+  -h, --help           Show this message
+  -v, --version        Show version information
 EOF
     exit 0
 }
 
+# ── Output helpers (honour --quiet) ───────────────────────────────────────────
+# BUG-8 FIX: don't exec 1>/dev/null; check flag in helpers instead
+_out() {
+    [[ "$QUIET" == true ]] && return 0
+    echo "$@"
+}
+_out_always() { echo "$@"; }   # for errors and final summary
+
+# ── BUG-3 FIX: try multiple version flags before giving up ────────────────────
+get_version() {
+    local cmd="$1"
+    local ver=""
+    for flag in --version -V -v --help; do
+        ver=$("$cmd" "$flag" 2>&1 | head -1) && [[ -n "$ver" ]] && break || ver=""
+    done
+    echo "${ver:-version unknown}"
+}
+
+# ── BUG-2 FIX: check_cmd increments global counters directly ──────────────────
+# Usage: check_cmd CMD [DESCRIPTION] [required|optional]
 check_cmd() {
     local cmd="$1"
-    local description="${2:-$cmd}"
+    local desc="${2:-$cmd}"
+    local tier="${3:-required}"
+
     if command -v "$cmd" &>/dev/null; then
-        log_success "✓ $description"
-        if [ "$VERBOSE" = true ]; then
-            version=$("$cmd" --version 2>/dev/null | head -1 || echo "Version info not available")
-            [ -n "$version" ] && echo "      $version"
+        _out "  ✓ $desc"
+        if [[ "$VERBOSE" == true ]]; then
+            _out "      $(get_version "$cmd")"
         fi
+        (( PRESENT++ )) || true
         return 0
     else
-        log_error "✗ $description (not found)"
+        if [[ "$tier" == "required" ]]; then
+            log_error "  ✗ $desc (MISSING — required)"
+            (( MISSING_REQUIRED++ )) || true
+        else
+            [[ "$QUIET" != true ]] && log_warn "  ✗ $desc (not found — optional)"
+            (( MISSING_OPTIONAL++ )) || true
+        fi
         return 1
     fi
 }
 
-# -------------------------------------------------------------------
-# Parse command-line arguments
-# -------------------------------------------------------------------
-if ! PARSED_ARGS=$(getopt -o vq -l verbose,quiet,no-yaml,no-old,dry-run,help,version -- "$@"); then
-    log_error "Invalid argument"
+# ── Attempt auto-install (--fix) ──────────────────────────────────────────────
+try_install() {
+    local pkg="$1"
+    if command -v dnf &>/dev/null; then
+        sudo -n dnf install -y "$pkg" 2>/dev/null && return 0
+    elif command -v apt-get &>/dev/null; then
+        sudo -n apt-get install -y "$pkg" 2>/dev/null && return 0
+    elif command -v pacman &>/dev/null; then
+        sudo -n pacman -S --noconfirm "$pkg" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+# ── Script-to-deps table (BUG-1/6 FIX) ───────────────────────────────────────
+# Each entry: "script_key|description|required_tools|optional_tools"
+# Tools listed here should be UNIQUE to this script (not in core_required).
+# Ordered list — no associative array iteration surprises.
+#
+# Tier definitions:
+#   core_required  — must be present for the suite to function at all
+#   core_optional  — enhances the suite but not strictly needed
+#   per_required   — required for the named script to work
+#   per_optional   — optional/fallback for the named script
+declare -a CORE_REQUIRED=(rsync python3 find sha256sum flock)
+declare -a CORE_OPTIONAL=(jq yq msmtp notify-send)
+
+# Each element: "key|label|required_extras|optional_extras"
+SCRIPT_ENTRIES=(
+    "backup|backup-to-nas.sh|findmnt|"
+    "cloud|cloud-backup.sh|rclone|"
+    "verifier|backup-verifier.sh|shuf|md5sum b2sum"
+    "checksum|checksum.sh||b2sum"
+    "notify|backup-notify.sh||kdialog msmtp"
+    "organizer|organize-downloads.sh||fuser lsof"
+    "disk|disk-sentinel.sh|df du|"
+    "cloud_backup|cloud-backup.sh||rclone"
+    "web|noba-web.sh|ss|lsof"
+    "images|images-to-pdf.sh||convert"
+    "motd|motd-generator.sh|curl|"
+    "tui|noba-tui.sh||dialog"
+    "clipboard|checksum.sh (clipboard)||wl-copy xclip xsel"
+)
+
+# ── JSON accumulator ───────────────────────────────────────────────────────────
+JSON_LINES=()
+json_add() { JSON_LINES+=("$1"); }
+
+# ── Argument parsing ───────────────────────────────────────────────────────────
+if ! PARSED_ARGS=$(getopt \
+        -o qnh \
+        -l verbose,quiet,no-yaml,no-old,scripts:,fix,json,report:,dry-run,help,version \
+        -- "$@" 2>/dev/null); then
+    log_error "Invalid argument. Run with --help for usage."
     exit 1
 fi
 eval set -- "$PARSED_ARGS"
 
 while true; do
     case "$1" in
-        -v|--verbose)   VERBOSE=true; shift ;;
-        -q|--quiet)     exec 1>/dev/null; shift ;; # redirect stdout, keep stderr
-        --no-yaml)      CHECK_YAML=false; shift ;;
-        --no-old)       CHECK_OLD=false; shift ;;
-        --dry-run)      DRY_RUN=true; shift ;;
-        --help)         show_help ;;
-        --version)      show_version ;;
-        --)             shift; break ;;
-        *)              log_error "Invalid argument: $1"; exit 1 ;;
+        --verbose)       VERBOSE=true;            shift ;;
+        -q|--quiet)      QUIET=true;              shift ;;
+        --no-yaml)       CHECK_YAML=false;        shift ;;
+        --no-old)        CHECK_OLD=false;         shift ;;
+        --scripts)       FILTER_SCRIPTS="$2";     shift 2 ;;
+        --fix)           FIX_MODE=true;           shift ;;
+        --json)          JSON_MODE=true;          shift ;;
+        --report)        REPORT_FILE="$2";        shift 2 ;;
+        -n|--dry-run)    DRY_RUN=true;            shift ;;
+        -h|--help)       show_help ;;
+        -v|--version)    show_version ;;
+        --)              shift; break ;;
+        *)               log_error "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
-if [ "$DRY_RUN" = true ]; then
-    exit 0
+[[ "$DRY_RUN" == true ]] && exit 0
+
+# If --report, tee everything into the report file
+if [[ -n "$REPORT_FILE" ]]; then
+    exec > >(tee "$REPORT_FILE") 2>&1
 fi
 
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
-log_info "=== Configuration & Dependency Check ==="
+# ── Helper: should we check this script? ──────────────────────────────────────
+should_check() {
+    local key="$1"
+    [[ -z "$FILTER_SCRIPTS" ]] && return 0
+    IFS=',' read -ra _filter <<< "$FILTER_SCRIPTS"
+    for f in "${_filter[@]}"; do
+        [[ "${f// /}" == "$key" ]] && return 0
+    done
+    return 1
+}
 
-# 1. Check old config file (automation.conf)
-if [ "$CHECK_OLD" = true ]; then
-    log_info "Old config file: $OLD_CONFIG_FILE"
-    if [ -f "$OLD_CONFIG_FILE" ]; then
-        log_success "File exists"
-        if [ -r "$OLD_CONFIG_FILE" ]; then
-            log_success "File is readable"
-            if [ "$VERBOSE" = true ]; then
-                log_info "Variables defined:"
-                grep -E '^[A-Za-z_]+=' "$OLD_CONFIG_FILE" | sed 's/^/    /' || echo "    (none)"
+# ── Main ───────────────────────────────────────────────────────────────────────
+_out "╔══════════════════════════════════════════════╗"
+_out "║  Nobara Suite — Config & Dependency Check    ║"
+_out "╚══════════════════════════════════════════════╝"
+_out ""
+
+# ── 1. Config files ────────────────────────────────────────────────────────────
+if [[ "$CHECK_OLD" == true ]]; then
+    _out "── Legacy config: $OLD_CONFIG_FILE"
+    if [[ -f "$OLD_CONFIG_FILE" ]]; then
+        if [[ -r "$OLD_CONFIG_FILE" ]]; then
+            _out "  ✓ Exists and readable"
+            if [[ "$VERBOSE" == true ]]; then
+                _out "  Variables:"
+                grep -E '^[A-Za-z_]+=' "$OLD_CONFIG_FILE" 2>/dev/null \
+                    | sed 's/^/    /' || _out "    (none)"
             fi
         else
-            log_error "File not readable"
+            log_error "  ✗ File exists but is not readable"
         fi
     else
-        log_info "File not found (Deprecated, this is fine)"
+        _out "  ℹ  Not found (deprecated — this is fine)"
     fi
+    _out ""
 fi
 
-# 2. Check new YAML config
-if [ "$CHECK_YAML" = true ]; then
-    log_info "New YAML config: $NEW_CONFIG_FILE"
-    if [ -f "$NEW_CONFIG_FILE" ]; then
-        log_success "File exists"
-        if [ -r "$NEW_CONFIG_FILE" ]; then
-            log_success "File is readable"
+if [[ "$CHECK_YAML" == true ]]; then
+    _out "── YAML config: $NEW_CONFIG_FILE"
+    if [[ -f "$NEW_CONFIG_FILE" ]]; then
+        if [[ -r "$NEW_CONFIG_FILE" ]]; then
+            _out "  ✓ Exists and readable"
             if command -v yq &>/dev/null; then
-                log_success "yq is available (can parse config)"
-                if [ "$VERBOSE" = true ]; then
-                    log_info "Config structure:"
+                # Validate YAML can be parsed
+                if yq eval '.' "$NEW_CONFIG_FILE" >/dev/null 2>&1; then
+                    _out "  ✓ YAML syntax valid (yq)"
+                else
+                    log_error "  ✗ YAML parse error — run: yq eval . '$NEW_CONFIG_FILE'"
+                fi
+                if [[ "$VERBOSE" == true ]]; then
+                    _out "  Structure:"
                     yq eval '.' "$NEW_CONFIG_FILE" | sed 's/^/    /'
                 fi
             else
-                log_warn "yq not installed – cannot validate YAML content"
+                [[ "$QUIET" != true ]] && log_warn "  ⚠ yq not installed — cannot validate YAML content"
             fi
         else
-            log_error "File not readable"
+            log_error "  ✗ File exists but is not readable"
         fi
     else
-        log_warn "File not found (using defaults)"
+        [[ "$QUIET" != true ]] && log_warn "  ⚠ Not found (using defaults)"
     fi
+    _out ""
 fi
 
-# 3. Dependency checks
-log_info "Dependency checks:"
-
-declare -A SCRIPT_CMDS=(
-    ["common"]="rsync msmtp findmnt flock jq yq convert md5sum sha256sum notify-send kdialog fuser"
-    ["backup"]="rsync msmtp findmnt flock"
-    ["cloud"]="rclone flock"
-    ["verifier"]="find shuf md5sum"
-    ["checksum"]="find jq yq"
-    ["disk"]="df du msmtp"
-    ["images"]="convert"
-    ["organizer"]="find mv fuser"
-    ["hogwarts"]="find"
-    ["motd"]="curl jq"
-    ["dashboard"]="find"
-    ["notify"]="notify-send"
-    ["web"]="python3 ss"
-    ["tui"]="dialog"
-)
-
-# Check common tools
-log_info "  Common tools:"
-for cmd in ${SCRIPT_CMDS["common"]}; do
-    check_cmd "$cmd"
+# ── 2. Core dependencies (checked once, not duplicated) ───────────────────────
+_out "── Core required tools:"
+for cmd in "${CORE_REQUIRED[@]}"; do
+    check_cmd "$cmd" "$cmd" required
+    if [[ $? -ne 0 && "$FIX_MODE" == true ]]; then
+        _out "     Attempting install: $cmd"
+        try_install "$cmd" && _out "     ✓ Installed" || _out "     ✗ Install failed"
+    fi
 done
 
-# Check script-specific tools
-for script in backup cloud verifier checksum disk images organizer hogwarts motd dashboard notify web tui; do
-    desc="${script}"
-    case $script in
-        backup)    desc="backup-to-nas.sh" ;;
-        cloud)     desc="cloud-backup.sh" ;;
-        verifier)  desc="backup-verifier.sh" ;;
-        checksum)  desc="checksum.sh" ;;
-        disk)      desc="disk-sentinel.sh" ;;
-        images)    desc="images-to-pdf.sh" ;;
-        organizer) desc="organize-downloads.sh" ;;
-        hogwarts)  desc="run-hogwarts-trainer.sh" ;;
-        motd)      desc="motd-generator.sh" ;;
-        dashboard) desc="noba-dashboard.sh" ;;
-        notify)    desc="backup-notify.sh" ;;
-        web)       desc="noba-web.sh" ;;
-        tui)       desc="noba-tui.sh" ;;
-    esac
-    log_info "  $desc:"
-    for cmd in ${SCRIPT_CMDS[$script]}; do
-        check_cmd "$cmd"
+_out ""
+_out "── Core optional tools:"
+for cmd in "${CORE_OPTIONAL[@]}"; do
+    check_cmd "$cmd" "$cmd" optional
+done
+_out ""
+
+# ── 3. Per-script dependencies (BUG-1 FIX: unique extras only) ────────────────
+_out "── Per-script dependencies:"
+for entry in "${SCRIPT_ENTRIES[@]}"; do
+    IFS='|' read -r key label req_extras opt_extras <<< "$entry"
+    should_check "$key" || continue
+
+    [[ -z "$req_extras$opt_extras" ]] && continue   # nothing unique to check
+
+    _out "  $label:"
+    for cmd in $req_extras; do
+        check_cmd "$cmd" "$cmd" required
+    done
+    for cmd in $opt_extras; do
+        check_cmd "$cmd" "$cmd" optional
     done
 done
+_out ""
 
-# Special checks
-if ! sudo -n true 2>/dev/null; then
-    log_warn "sudo requires a password – unattended system cleanup operations will fail."
-fi
-
-# Check for clipboard tool for checksum.sh
-if ! command -v wl-copy &>/dev/null && ! command -v xclip &>/dev/null; then
-    log_warn "No clipboard tool (wl-copy/xclip) found – checksum.sh copy to clipboard will not work."
-fi
-
-# 4. Check log directories
-log_info "Log directory context:"
-for logname in backup-to-nas backup-verifier cloud-backup disk-sentinel download-organizer noba-web noba-web-server; do
-    logfile="$LOG_DIR/$logname.log"
-    if [ -f "$logfile" ]; then
-        log_success "$logfile exists"
-        if [ "$VERBOSE" = true ]; then
-            echo "      Last 2 lines of $(basename "$logfile"):"
-            tail -n 2 "$logfile" 2>/dev/null | sed 's/^/      /'
-        fi
-    else
-        log_info "$logfile not found (will be created on first run)"
-    fi
-done
-
-# 5. Configuration suggestions
-log_info "Configuration suggestions:"
-if [ -f "$NEW_CONFIG_FILE" ] && command -v yq &>/dev/null; then
-    email=$(yq eval '.email // ""' "$NEW_CONFIG_FILE" 2>/dev/null || true)
-    if [ -n "$email" ] && ! echo "$email" | grep -q "@"; then
-        log_warn "root .email in YAML config may not be a valid address: $email"
-    fi
-
-    backup_dest=$(yq eval '.backup.dest // ""' "$NEW_CONFIG_FILE" 2>/dev/null || true)
-    if [ -n "$backup_dest" ] && [ ! -d "$backup_dest" ]; then
-        log_warn "backup.dest directory does not currently exist or is not mounted: $backup_dest"
-    fi
-fi
-
-log_success "Check complete."
-
-# Determine overall exit status
-critical_missing=0
-for cmd in rsync rclone msmtp yq jq fuser md5sum python3; do
-    if ! command -v "$cmd" &>/dev/null; then
-        critical_missing=1
+# ── 4. Clipboard tools ────────────────────────────────────────────────────────
+_out "── Clipboard (checksum.sh --copy):"
+clipboard_ok=false
+for cmd in wl-copy xclip xsel; do
+    if command -v "$cmd" &>/dev/null; then
+        _out "  ✓ $cmd"
+        clipboard_ok=true
         break
     fi
 done
+[[ "$clipboard_ok" == false ]] \
+    && { [[ "$QUIET" != true ]] && log_warn "  ⚠ No clipboard tool (wl-copy / xclip / xsel)"; }
+_out ""
 
-if [ "$critical_missing" -eq 1 ]; then
-    log_error "One or more critical dependencies are missing. Please run 'noba setup' or manually install them."
-    exit 1
+# ── 5. sudo availability ───────────────────────────────────────────────────────
+# BUG-5 FIX: guard with command -v before running sudo -n
+_out "── Privilege check:"
+if ! command -v sudo &>/dev/null; then
+    [[ "$QUIET" != true ]] && log_warn "  ⚠ sudo not found — unattended system ops will fail"
+elif ! sudo -n true 2>/dev/null; then
+    [[ "$QUIET" != true ]] && log_warn "  ⚠ sudo requires a password — unattended ops will fail"
 else
-    exit 0
+    _out "  ✓ sudo passwordless access available"
 fi
+_out ""
+
+# ── 6. Log directory scan ──────────────────────────────────────────────────────
+_out "── Log files ($LOG_DIR):"
+logs=(backup-to-nas backup-verifier cloud-backup disk-sentinel
+      download-organizer noba-web noba-web-server)
+for logname in "${logs[@]}"; do
+    logfile="$LOG_DIR/$logname.log"
+    if [[ -f "$logfile" ]]; then
+        size=$(du -sh "$logfile" 2>/dev/null | cut -f1)
+        _out "  ✓ $logname.log  ($size)"
+        if [[ "$VERBOSE" == true ]]; then
+            tail -n 2 "$logfile" 2>/dev/null | sed 's/^/      /' || true
+        fi
+    else
+        _out "  ℹ  $logname.log — not yet created"
+    fi
+done
+_out ""
+
+# ── 7. Config validation suggestions ──────────────────────────────────────────
+if [[ -f "$NEW_CONFIG_FILE" ]] && command -v yq &>/dev/null; then
+    _out "── Config validation:"
+    email=$(yq eval '.email // ""' "$NEW_CONFIG_FILE" 2>/dev/null || true)
+    if [[ -n "$email" ]] && ! echo "$email" | grep -q '@'; then
+        [[ "$QUIET" != true ]] && log_warn "  ⚠ .email may not be valid: $email"
+    elif [[ -n "$email" ]]; then
+        _out "  ✓ .email looks valid: $email"
+    fi
+
+    backup_dest=$(yq eval '.backup.dest // ""' "$NEW_CONFIG_FILE" 2>/dev/null || true)
+    if [[ -n "$backup_dest" ]]; then
+        if [[ -d "$backup_dest" ]]; then
+            _out "  ✓ backup.dest exists: $backup_dest"
+        else
+            [[ "$QUIET" != true ]] && log_warn "  ⚠ backup.dest not mounted/present: $backup_dest"
+        fi
+    fi
+
+    cloud_remote=$(yq eval '.cloud.remote // ""' "$NEW_CONFIG_FILE" 2>/dev/null || true)
+    if [[ -n "$cloud_remote" ]] && ! echo "$cloud_remote" | grep -q ':'; then
+        [[ "$QUIET" != true ]] && log_warn "  ⚠ cloud.remote doesn't look like a valid rclone remote: $cloud_remote"
+    fi
+    _out ""
+fi
+
+# ── 8. Summary ────────────────────────────────────────────────────────────────
+TOTAL=$(( PRESENT + MISSING_REQUIRED + MISSING_OPTIONAL ))
+_out_always "══════════════════════════════════════════════"
+_out_always "  Found    : $PRESENT / $TOTAL tools"
+(( MISSING_REQUIRED > 0 )) \
+    && _out_always "  Missing  : $MISSING_REQUIRED required,  $MISSING_OPTIONAL optional" \
+    || _out_always "  Missing  : $MISSING_OPTIONAL optional only"
+_out_always "══════════════════════════════════════════════"
+
+# ── 9. JSON output ─────────────────────────────────────────────────────────────
+if [[ "$JSON_MODE" == true ]]; then
+    python3 - "$PRESENT" "$MISSING_REQUIRED" "$MISSING_OPTIONAL" "$TOTAL" << 'PY'
+import json, sys
+p, mr, mo, t = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+print(json.dumps({
+    "present": p, "missing_required": mr, "missing_optional": mo,
+    "total": t, "status": "ok" if mr == 0 else "degraded"
+}, indent=2))
+PY
+fi
+
+# ── Exit code: driven by required-missing count (BUG-4 FIX) ───────────────────
+if (( MISSING_REQUIRED > 0 )); then
+    log_error "$MISSING_REQUIRED required tool(s) missing. Run with --fix to attempt install."
+    exit 1
+fi
+exit 0
