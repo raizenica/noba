@@ -7,6 +7,11 @@
 #   - Settings are now saved to YAML file and survive browser resets
 #   - Settings are shared with other noba scripts
 #   - Creates default YAML if missing
+#   - Password confirmation and secure file creation
+#   - Check for correct yq version (mikefarah/yq)
+#   - Server-side logout endpoint
+#   - Temporary HTML directory with auto-cleanup
+#   - Health check with fallback to wget
 
 set -euo pipefail
 # set -x                          # comment this out for production
@@ -30,6 +35,7 @@ fi
 
 START_PORT="${START_PORT:-8080}"
 MAX_PORT="${MAX_PORT:-8090}"
+# Use a temporary directory for HTML files (cleaned up on exit)
 HTML_DIR="${HTML_DIR:-/tmp/noba-web}"
 SERVER_PID_FILE="${SERVER_PID_FILE:-/tmp/noba-web-server.pid}"
 LOG_FILE="${LOG_FILE:-/tmp/noba-web.log}"
@@ -163,6 +169,7 @@ kill_server() {
             kill -0 "$pid" 2>/dev/null && { kill -9 "$pid" 2>/dev/null || true; }
         fi
         rm -f "$SERVER_PID_FILE"
+        rm -rf "$HTML_DIR"
     fi
 }
 
@@ -249,6 +256,7 @@ fi
 PORT=$(find_free_port "$START_PORT" "$MAX_PORT") || die "No free port in range ${START_PORT}–${MAX_PORT}."
 log_info "Using port $PORT"
 
+# Ensure HTML directory exists (in case it's not the temporary one)
 mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py 2>/dev/null || true
 
@@ -2236,10 +2244,21 @@ nohup python3 server.py >> "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$SERVER_PID_FILE"
 
-# Health check: wait for server to respond
+# Determine health check command
+if command -v curl &>/dev/null; then
+    CHECK_CMD="curl -s -o /dev/null -w '%{http_code}'"
+    CHECK_URL="http://${HOST}:${PORT}/"
+elif command -v wget &>/dev/null; then
+    CHECK_CMD="wget -q --spider --server-response"
+    CHECK_URL="http://${HOST}:${PORT}/"
+else
+    log_error "Neither curl nor wget found, cannot verify server start."
+    exit 1
+fi
+
 MAX_WAIT=10
 WAITED=0
-while ! curl -s -o /dev/null -w "%{http_code}" "http://${HOST}:${PORT}/" | grep -q "200"; do
+while ! $CHECK_CMD "$CHECK_URL" 2>&1 | grep -q "200"; do
     sleep 1
     WAITED=$((WAITED + 1))
     if [[ $WAITED -ge $MAX_WAIT ]]; then
