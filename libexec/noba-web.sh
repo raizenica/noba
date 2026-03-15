@@ -1,30 +1,37 @@
 #!/bin/bash
-# noba-web.sh – Nobara Command Center v8.3.0
-# New: Logout button, persistent settings in YAML config (~/.config/noba/config.yaml)
-# Also creates a starter YAML on first run or when --set-password is used.
-# Improvements over v8.2.0:
-#   - Added logout functionality
-#   - Settings are now saved to YAML file and survive browser resets
-#   - Settings are shared with other noba scripts
-#   - Creates default YAML if missing
-#   - Password confirmation and secure file creation
-#   - Check for correct yq version (mikefarah/yq)
-#   - Server-side logout endpoint
-#   - Temporary HTML directory with auto-cleanup (fixed path /tmp/noba-web)
-#   - Health check with fallback to wget
-#   - Added --restart option to restart the server
+# noba-web.sh – Nobara Command Center v8.4.0
+#
+# Changes from v8.3.0:
+#   Shell   : --status flag (shows PID + URL of running server)
+#             --generate-systemd flag (prints ready-to-use .service unit)
+#             PBKDF2-SHA256 password hashing (200 k iterations) for --set-password
+#             SERVER_URL_FILE tracks the live URL for --status
+#   Backend : BackgroundCollector thread — pre-computes stats every 5 s;
+#               SSE and /api/stats just read from its cache (no more per-request blocking)
+#             LoginRateLimiter — 5 failed attempts per IP → 30 s lockout
+#             PBKDF2 verify with backward-compat for old SHA-256 format
+#             secrets.compare_digest used everywhere (timing-safe)
+#             Token-cleanup daemon thread — evicts expired tokens every 5 min
+#             /api/health endpoint (public, no auth) — version + server uptime
+#   Frontend: Auto-theme from prefers-color-scheme on first visit
+#             Dismissable alerts (× button, per-session memory)
+#             Connection status badge — Live / N s (polling) / Offline
+#             Countdown timer shown in live pill when polling
+#             Keyboard shortcuts: s=Settings  r=Refresh  Esc=close modal
+#             Shortcuts listed in Settings modal
 
 set -euo pipefail
-# set -x                          # comment this out for production
+
+rc=0
 trap 'rc=$?; echo "Exiting with code $rc at line $LINENO" >&2' EXIT
 
 # ── Test harness compliance ─────────────────────────────────────────────────
 if [[ "${1:-}" == "--help"           ]]; then echo "Usage: noba-web.sh [OPTIONS]"; exit 0; fi
-if [[ "${1:-}" == "--version"        ]]; then echo "noba-web.sh version 8.3.0"; exit 0; fi
+if [[ "${1:-}" == "--version"        ]]; then echo "noba-web.sh version 8.4.0"; exit 0; fi
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./noba-lib.sh
+# shellcheck source=lib/noba-lib.sh
 source "$SCRIPT_DIR/lib/noba-lib.sh"
 
 # ── Load optional config file ───────────────────────────────────────────────
@@ -36,20 +43,21 @@ fi
 
 START_PORT="${START_PORT:-8080}"
 MAX_PORT="${MAX_PORT:-8090}"
-# Fixed HTML directory (removed temporary dir to keep files while server runs)
 HTML_DIR="${HTML_DIR:-/tmp/noba-web}"
 SERVER_PID_FILE="${SERVER_PID_FILE:-/tmp/noba-web-server.pid}"
+SERVER_URL_FILE="${SERVER_URL_FILE:-/tmp/noba-web-server.url}"
 LOG_FILE="${LOG_FILE:-/tmp/noba-web.log}"
 KILL_ONLY=false
 RESTART=false
 VERBOSE=false
 HOST="${HOST:-0.0.0.0}"
 SET_PASSWORD=false
+SHOW_STATUS=false
+GEN_SYSTEMD=false
 
-# Path to main noba YAML config
 NOBA_YAML="${NOBA_CONFIG:-$HOME/.config/noba/config.yaml}"
 
-# Function to create a minimal default YAML if it doesn't exist
+# ── Default YAML creator ────────────────────────────────────────────────────
 create_default_yaml() {
     if [[ ! -f "$NOBA_YAML" ]]; then
         log_info "Creating default YAML config at $NOBA_YAML"
@@ -134,11 +142,12 @@ web:
   radarIps: "192.168.100.1, 1.1.1.1, 8.8.8.8"
   bookmarksStr: "TrueNAS (vnnas)|http://vnnas.vannieuwenhove.org|fa-server, TrueNAS (vdhnas)|http://vdhnas.vannieuwenhove.org|fa-server, Pi-Hole|http://dnsa01.vannieuwenhove.org/admin|fa-shield-alt, Home Assistant|http://homeassistant.local:8123|fa-home, ROMM|http://romm.local|fa-gamepad, Prowlarr|http://localhost:9696|fa-search, ASUS Router|http://192.168.100.1|fa-network-wired"
 EOF
-        log_success "Default YAML created. Please edit it to match your setup: $NOBA_YAML"
+        log_success "Default YAML created. Please edit: $NOBA_YAML"
     fi
 }
 
-show_version() { echo "noba-web.sh version 8.3.0"; exit 0; }
+# ── Helpers ─────────────────────────────────────────────────────────────────
+show_version()  { echo "noba-web.sh version 8.4.0"; exit 0; }
 
 show_help() {
     cat <<EOF
@@ -146,22 +155,74 @@ Usage: $0 [OPTIONS]
 Launch the Nobara Command Center web dashboard.
 
 Options:
-  -p, --port PORT   Start searching from PORT (default: 8080)
-  -m, --max  PORT   Maximum port to try (default: 8090)
-  --host     HOST   Bind to specific host/IP (default: 0.0.0.0)
-  -k, --kill        Kill any running noba-web server and exit
-  -v, --verbose     After starting, tail the server log (Ctrl+C to stop)
-  --set-password    Set or change the login credentials
-  --restart         Kill any running server and start a new one
-  --help            Show this help message
-  --version         Show version information
+  -p, --port PORT        Start searching from PORT (default: 8080)
+  -m, --max  PORT        Maximum port to try (default: 8090)
+  --host     HOST        Bind to specific host/IP (default: 0.0.0.0)
+  -k, --kill             Kill any running noba-web server and exit
+  -v, --verbose          After starting, tail the server log (Ctrl+C to stop)
+  --set-password         Set or change the login credentials (PBKDF2-SHA256)
+  --restart              Kill any running server and start a new one
+  --status               Show whether the server is running (PID + URL)
+  --generate-systemd     Print a systemd .service unit to stdout and exit
+  --help                 Show this help message
+  --version              Show version information
 
 Configuration file: ~/.config/noba-web.conf (optional)
-  You can set default values for START_PORT, MAX_PORT, HOST, etc.
+  Override START_PORT, MAX_PORT, HOST, HTML_DIR, LOG_FILE, SERVER_PID_FILE, etc.
 EOF
     exit 0
 }
 
+# ── --status ────────────────────────────────────────────────────────────────
+show_status() {
+    if [[ -f "$SERVER_PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$SERVER_PID_FILE" 2>/dev/null || true)
+        local url
+        url=$(cat "$SERVER_URL_FILE" 2>/dev/null || echo "unknown URL")
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            log_success "Server running  PID=$pid  URL=$url"
+            echo "  Log: $LOG_FILE"
+        else
+            log_warning "PID file present but server is not running (stale PID file)."
+            rm -f "$SERVER_PID_FILE" "$SERVER_URL_FILE"
+        fi
+    else
+        log_info "Server is not running."
+    fi
+    exit 0
+}
+
+# ── --generate-systemd ──────────────────────────────────────────────────────
+generate_systemd() {
+    local self
+    self="$(realpath "$0")"
+    cat <<EOF
+# Save to: ~/.config/systemd/user/noba-web.service
+# Enable:  systemctl --user enable --now noba-web.service
+
+[Unit]
+Description=Nobara Command Center Web Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${self} --port ${START_PORT} --host ${HOST}
+ExecStop=/bin/kill -TERM \$MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=noba-web
+
+[Install]
+WantedBy=default.target
+EOF
+    exit 0
+}
+
+# ── Kill server ─────────────────────────────────────────────────────────────
 kill_server() {
     if [[ -f "$SERVER_PID_FILE" ]]; then
         local pid
@@ -171,12 +232,12 @@ kill_server() {
             kill "$pid" 2>/dev/null && sleep 1
             kill -0 "$pid" 2>/dev/null && { kill -9 "$pid" 2>/dev/null || true; }
         fi
-        rm -f "$SERVER_PID_FILE"
-        # Clean up HTML directory only when killing (not on restart? keep it for restart to reuse)
+        rm -f "$SERVER_PID_FILE" "$SERVER_URL_FILE"
         rm -rf "$HTML_DIR"
     fi
 }
 
+# ── Port finder ─────────────────────────────────────────────────────────────
 find_free_port() {
     local start="$1" max="$2" port
     if command -v ss &>/dev/null; then
@@ -193,88 +254,84 @@ find_free_port() {
     return 1
 }
 
-if ! PARSED_ARGS=$(getopt -o p:m:kv -l port:,max:,host:,kill,verbose,help,version,set-password,restart -- "$@" 2>/dev/null); then
+# ── Argument parsing ────────────────────────────────────────────────────────
+if ! PARSED_ARGS=$(getopt -o p:m:kv -l port:,max:,host:,kill,verbose,help,version,set-password,restart,status,generate-systemd -- "$@" 2>/dev/null); then
     log_error "Invalid argument. Run with --help for usage."; exit 1
 fi
 eval set -- "$PARSED_ARGS"
 
 while true; do
     case "$1" in
-        -p|--port)  START_PORT="$2"; shift 2 ;;
-        -m|--max)   MAX_PORT="$2";   shift 2 ;;
-        --host)     HOST="$2";       shift 2 ;;
-        -k|--kill)  KILL_ONLY=true;  shift   ;;
-        -v|--verbose) VERBOSE=true;  shift   ;;
-        --set-password) SET_PASSWORD=true; shift ;;
-        --restart)  KILL_ONLY=true; RESTART=true; shift ;;
-        --help)     show_help ;;
-        --version)  show_version ;;
-        --)         shift; break ;;
-        *)          log_error "Unknown argument: $1"; exit 1 ;;
+        -p|--port)           START_PORT="$2";   shift 2 ;;
+        -m|--max)            MAX_PORT="$2";     shift 2 ;;
+        --host)              HOST="$2";         shift 2 ;;
+        -k|--kill)           KILL_ONLY=true;    shift   ;;
+        -v|--verbose)        VERBOSE=true;      shift   ;;
+        --set-password)      SET_PASSWORD=true; shift   ;;
+        --restart)           KILL_ONLY=true; RESTART=true; shift ;;
+        --status)            SHOW_STATUS=true;  shift   ;;
+        --generate-systemd)  GEN_SYSTEMD=true;  shift   ;;
+        --help)              show_help ;;
+        --version)           show_version ;;
+        --)                  shift; break ;;
+        *)                   log_error "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
-# Handle password setup
+[[ "$SHOW_STATUS"  == true ]] && show_status
+[[ "$GEN_SYSTEMD"  == true ]] && generate_systemd
+
+# ── --set-password (PBKDF2-SHA256, 200k iterations) ────────────────────────
 if [[ "$SET_PASSWORD" == true ]]; then
     echo "Setting up login credentials for Nobara Web Dashboard"
-    read -p "Username: " username
-    read -s -p "Password: " password
-    echo
-    read -s -p "Confirm password: " password2
-    echo
+    read -rp "Username: " username
+    read -rs -p "Password: " password; echo
+    read -rs -p "Confirm password: " password2; echo
     if [[ "$password" != "$password2" ]]; then
-        echo "Passwords do not match."
-        exit 1
+        echo "Passwords do not match."; exit 1
     fi
     mkdir -p "$HOME/.config/noba-web"
-    # Use umask to create file with 600 permissions
-    (umask 077; python3 -c "
+    (umask 077; python3 - "$HOME/.config/noba-web/auth.conf" "$password" "$username" <<'PYEOF'
 import hashlib, secrets, sys
-salt = secrets.token_hex(16)
-hash = hashlib.sha256((salt + sys.argv[2]).encode()).hexdigest()
+salt   = secrets.token_hex(16)
+dk     = hashlib.pbkdf2_hmac('sha256', sys.argv[2].encode(), salt.encode(), 200_000)
+hstr   = 'pbkdf2:' + salt + ':' + dk.hex()
 with open(sys.argv[1], 'w') as f:
-    f.write(f'{sys.argv[3]}:{salt}:{hash}')
-" "$HOME/.config/noba-web/auth.conf" "$password" "$username")
-    echo "Credentials saved to ~/.config/noba-web/auth.conf"
-    # Also create default YAML if missing
+    f.write(f'{sys.argv[3]}:{hstr}')
+PYEOF
+    )
+    echo "Credentials saved to ~/.config/noba-web/auth.conf  (PBKDF2-SHA256, 200k rounds)"
     create_default_yaml
     exit 0
 fi
 
 if [[ "$KILL_ONLY" == true ]]; then
     kill_server
-    if [[ "$RESTART" != true ]]; then
-        exit 0
-    fi
-    # If restarting, we continue to start a new server
+    [[ "$RESTART" != true ]] && exit 0
 fi
 
 check_deps python3 yq
 
-# Verify yq is the Go version (mikefarah/yq)
 if ! yq --version 2>/dev/null | grep -q "mikefarah"; then
-    log_error "The 'yq' command must be the Go version (mikefarah/yq). Please install it from https://github.com/mikefarah/yq"
+    log_error "'yq' must be the Go version (mikefarah/yq). Install from https://github.com/mikefarah/yq"
     exit 1
 fi
 
-# Check Python version (need >=3.7 for subprocess.run(capture_output=True))
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
-if ! awk -v ver="$PYTHON_VERSION" 'BEGIN { split(ver, v, "."); exit !(v[1] > 3 || (v[1] == 3 && v[2] >= 7)); }'; then
-    log_error "Python 3.7 or higher is required (found $PYTHON_VERSION)."
+if ! awk -v ver="$PYTHON_VERSION" 'BEGIN { split(ver,v,"."); exit !(v[1]>3||(v[1]==3&&v[2]>=7)); }'; then
+    log_error "Python 3.7+ required (found $PYTHON_VERSION)."
     exit 1
 fi
 
 PORT=$(find_free_port "$START_PORT" "$MAX_PORT") || die "No free port in range ${START_PORT}–${MAX_PORT}."
 log_info "Using port $PORT"
 
-# Ensure HTML directory exists
 mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py 2>/dev/null || true
 
-# Ensure YAML exists (create default if missing)
 create_default_yaml
 
-# ── Write index.html (full, with logout button and updated JS) ───────────────
+# ── index.html ───────────────────────────────────────────────────────────────
 cat > "$HTML_DIR/index.html" <<'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -384,16 +441,24 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             cursor: pointer; color: var(--text-muted); transition: all .15s; font-size: .85rem;
         }
         .icon-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+        /* ── Live pill / connection status ── */
         .live-pill {
             display: flex; align-items: center; gap: .45rem;
             background: var(--surface); border: 1px solid var(--border);
             border-radius: 4px; padding: .4rem .8rem;
             font-family: var(--font-data); font-size: .75rem; color: var(--text-muted);
+            transition: border-color .3s;
         }
-        .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
-        .live-dot.syncing { background: var(--warning); animation: none; }
+        .live-pill.conn-sse    { border-color: rgba(0,230,118,.35); }
+        .live-pill.conn-polling{ border-color: rgba(255,179,0,.3); }
+        .live-pill.conn-offline{ border-color: rgba(255,23,68,.35); }
+        .live-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; transition: background .3s; }
+        .live-dot.sse     { background: var(--success); animation: blink 2.5s infinite; }
+        .live-dot.polling { background: var(--warning); }
+        .live-dot.syncing { background: var(--warning); }
+        .live-dot.offline { background: var(--danger); }
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-        .live-dot { animation: blink 2.5s infinite; }
 
         /* ── Alerts ── */
         .alerts { margin-bottom: 1.25rem; display: flex; flex-direction: column; gap: .4rem; }
@@ -404,6 +469,12 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
         }
         .alert.danger  { background: var(--danger-dim);  border-color: var(--danger);  color: var(--danger); }
         .alert.warning { background: var(--warning-dim); border-color: var(--warning); color: var(--warning); }
+        .alert-dismiss {
+            margin-left: auto; background: none; border: none; cursor: pointer;
+            color: inherit; font-size: 1rem; line-height: 1; opacity: .65; padding: 0 .2rem;
+            transition: opacity .15s;
+        }
+        .alert-dismiss:hover { opacity: 1; }
 
         /* ── Grid ── */
         .grid {
@@ -412,7 +483,6 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             gap: 1.125rem; align-items: start;
         }
         .span-full { grid-column: 1 / -1; }
-        @media (max-width: 860px) { .span-full { grid-column: 1 / -1; } }
 
         /* ── Card ── */
         .card {
@@ -593,6 +663,15 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
         .settings-footer { display: flex; justify-content: flex-end; gap: .7rem; margin-top: 1.5rem; }
         .btn-sm { width: auto; padding: .55rem 1.4rem; }
 
+        /* ── Kbd shortcuts ── */
+        .kbd-grid { display: flex; flex-wrap: wrap; gap: .45rem; }
+        .kbd-item { display: flex; align-items: center; gap: .4rem; font-size: .75rem; color: var(--text-muted); }
+        kbd {
+            background: var(--surface-2); border: 1px solid var(--border-hi);
+            border-radius: 3px; padding: .15rem .45rem;
+            font-family: var(--font-data); font-size: .72rem; color: var(--text);
+        }
+
         /* ── Toast ── */
         .toasts { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 200; display: flex; flex-direction: column; gap: .45rem; pointer-events: none; }
         .toast {
@@ -634,24 +713,25 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
                 <option value="dracula">Dracula</option>
                 <option value="nord">Nord</option>
             </select>
-            <div class="icon-btn" @click="showSettings=true" title="Settings"><i class="fas fa-sliders-h"></i></div>
-            <div class="live-pill">
-                <div class="live-dot" :class="refreshing ? 'syncing' : ''"></div>
-                <span x-text="refreshing ? 'Syncing...' : timestamp"></span>
+            <div class="icon-btn" @click="showSettings=true" title="Settings (s)"><i class="fas fa-sliders-h"></i></div>
+            <!-- Connection status pill -->
+            <div class="live-pill" :class="'conn-' + connStatus">
+                <div class="live-dot" :class="refreshing ? 'syncing' : connStatus"></div>
+                <span x-text="livePillText"></span>
             </div>
-            <!-- Logout button -->
             <button class="icon-btn" @click="logout" title="Logout" x-show="authenticated">
                 <i class="fas fa-sign-out-alt"></i>
             </button>
         </div>
     </header>
 
-    <!-- ── Alerts ── -->
-    <div class="alerts" x-show="alerts && alerts.length > 0">
-        <template x-for="a in alerts" :key="a.msg">
+    <!-- ── Alerts (dismissable) ── -->
+    <div class="alerts" x-show="visibleAlerts.length > 0">
+        <template x-for="a in visibleAlerts" :key="a.msg">
             <div class="alert" :class="a.level">
                 <i class="fas" :class="a.level==='danger' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'"></i>
-                <span x-text="a.msg"></span>
+                <span x-text="a.msg" style="flex:1"></span>
+                <button class="alert-dismiss" @click="dismissAlert(a.msg)" title="Dismiss">×</button>
             </div>
         </template>
     </div>
@@ -739,7 +819,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
-        <!-- Battery (hidden on desktop) -->
+        <!-- Battery -->
         <div class="card" data-id="card-battery" x-show="vis.battery && battery && !battery.desktop">
             <div class="card-hdr">
                 <i class="fas fa-battery-half card-icon"></i>
@@ -892,7 +972,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
-        <!-- Services — full width -->
+        <!-- Services -->
         <div class="card span-full" data-id="card-services" x-show="vis.services">
             <div class="card-hdr">
                 <i class="fas fa-cogs card-icon"></i>
@@ -918,7 +998,7 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
-        <!-- Log Viewer — full width -->
+        <!-- Log Viewer -->
         <div class="card span-full" data-id="card-logs" x-show="vis.logs">
             <div class="card-hdr">
                 <i class="fas fa-scroll card-icon"></i>
@@ -1046,6 +1126,16 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
             </div>
         </div>
 
+        <!-- Keyboard shortcuts reference -->
+        <div class="s-section">
+            <span class="s-label">Keyboard Shortcuts</span>
+            <div class="kbd-grid">
+                <div class="kbd-item"><kbd>s</kbd> Settings</div>
+                <div class="kbd-item"><kbd>r</kbd> Refresh now</div>
+                <div class="kbd-item"><kbd>Esc</kbd> Close modal</div>
+            </div>
+        </div>
+
         <div class="settings-footer">
             <button class="btn" @click="showSettings=false" style="width:auto;padding:.55rem 1.4rem">Cancel</button>
             <button class="btn btn-primary" @click="applySettings()" style="width:auto;padding:.55rem 1.4rem"><i class="fas fa-check"></i> Save & Apply</button>
@@ -1053,13 +1143,13 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
     </div>
 </div>
 
-<!-- ── Login Modal (shown if not authenticated) ── -->
+<!-- ── Login Modal ── -->
 <div x-show="!authenticated" class="modal-overlay" style="display:none">
     <div class="modal-box" style="max-width:400px">
         <div class="modal-title"><i class="fas fa-lock" style="color:var(--accent)"></i> Login</div>
         <div style="margin:1rem 0">
             <label class="field-label">Username</label>
-            <input class="field-input" type="text" x-model="loginUsername" @keyup.enter="doLogin">
+            <input class="field-input" type="text" x-model="loginUsername" @keyup.enter="doLogin" autofocus>
         </div>
         <div style="margin:1rem 0">
             <label class="field-label">Password</label>
@@ -1090,15 +1180,20 @@ function dashboard() {
     const DEF_VIS = { core:true, netio:true, hw:true, battery:true, pihole:true, storage:true, radar:true, procs:true, containers:true, services:true, logs:true, actions:true, bookmarks:true };
     const DEF_BOOKMARKS = 'TrueNAS (vnnas)|http://vnnas.vannieuwenhove.org|fa-server, TrueNAS (vdhnas)|http://vdhnas.vannieuwenhove.org|fa-server, Pi-Hole|http://dnsa01.vannieuwenhove.org/admin|fa-shield-alt, Home Assistant|http://homeassistant.local:8123|fa-home, ROMM|http://romm.local|fa-gamepad, Prowlarr|http://localhost:9696|fa-search, ASUS Router|http://192.168.100.1|fa-network-wired';
 
-    return {
-        theme: localStorage.getItem('noba-theme') || 'default',
-        vis:   { ...DEF_VIS, ...JSON.parse(localStorage.getItem('noba-vis') || '{}') },
-        piholeUrl:        localStorage.getItem('noba-pihole')    || 'dnsa01.vannieuwenhove.org',
-        piholeToken:      localStorage.getItem('noba-pihole-tok')|| '',
-        bookmarksStr:     localStorage.getItem('noba-bookmarks') || DEF_BOOKMARKS,
-        monitoredServices:localStorage.getItem('noba-services')  || 'backup-to-nas.service, organize-downloads.service, sshd, podman, syncthing.service',
-        radarIps:         localStorage.getItem('noba-radar')     || '192.168.100.1, 1.1.1.1, 8.8.8.8',
+    // Auto-detect preferred theme on first visit
+    const savedTheme = localStorage.getItem('noba-theme');
+    const autoTheme  = savedTheme || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'nord' : 'default');
 
+    return {
+        theme: autoTheme,
+        vis:   { ...DEF_VIS, ...JSON.parse(localStorage.getItem('noba-vis') || '{}') },
+        piholeUrl:         localStorage.getItem('noba-pihole')    || 'dnsa01.vannieuwenhove.org',
+        piholeToken:       localStorage.getItem('noba-pihole-tok')|| '',
+        bookmarksStr:      localStorage.getItem('noba-bookmarks') || DEF_BOOKMARKS,
+        monitoredServices: localStorage.getItem('noba-services')  || 'backup-to-nas.service, organize-downloads.service, sshd, podman, syncthing.service',
+        radarIps:          localStorage.getItem('noba-radar')     || '192.168.100.1, 1.1.1.1, 8.8.8.8',
+
+        // ── System data ──
         timestamp:'--:--', uptime:'--', loadavg:'--', memory:'--', hostname:'--', defaultIp:'--',
         memPercent:0, cpuPercent:0, cpuHistory:[], cpuTemp:'N/A', gpuTemp:'N/A',
         osName:'--', kernel:'--', hwCpu:'--', hwGpu:'--',
@@ -1111,15 +1206,32 @@ function dashboard() {
         modalTitle:'', modalOutput:'', runningScript:false, refreshing:false,
         toasts:[], _es:null, _poll:null,
 
-        // Authentication properties
-        authenticated: localStorage.getItem('noba-token') ? true : false,
-        loginUsername: '',
-        loginPassword: '',
-        loginLoading: false,
-        loginError: '',
+        // ── Auth ──
+        authenticated: !!localStorage.getItem('noba-token'),
+        loginUsername: '', loginPassword: '', loginLoading: false, loginError: '',
 
+        // ── Connection status ──
+        connStatus: 'offline',   // 'sse' | 'polling' | 'offline'
+        countdown: 5,
+        _countdownTimer: null,
+
+        // ── Dismissable alerts ──
+        _dismissedAlerts: new Set(),
+
+        // ── Computed ──
         get cpuTempClass() { const t=parseInt(this.cpuTemp)||0; return t>80?'bd':t>65?'bw':'bn'; },
         get gpuTempClass() { const t=parseInt(this.gpuTemp)||0; return t>85?'bd':t>70?'bw':'bn'; },
+
+        get visibleAlerts() {
+            return (this.alerts || []).filter(a => !this._dismissedAlerts.has(a.msg));
+        },
+
+        get livePillText() {
+            if (this.refreshing)            return 'Syncing…';
+            if (this.connStatus === 'sse')  return 'Live';
+            if (this.connStatus === 'polling') return this.countdown + 's';
+            return 'Offline';
+        },
 
         get parsedBookmarks() {
             return (this.bookmarksStr||'').split(',').map(b => {
@@ -1130,42 +1242,92 @@ function dashboard() {
 
         get cpuLine() {
             const h = this.cpuHistory;
-            if (h.length < 2) return `0,36 120,36`;
+            if (h.length < 2) return '0,36 120,36';
             return h.map((v,i) => `${Math.round((i/(h.length-1))*120)},${Math.round(36-(v/100)*32)}`).join(' ');
         },
         get cpuFill() {
             const h = this.cpuHistory;
-            if (h.length < 2) return `0,38 120,38 120,38 0,38`;
+            if (h.length < 2) return '0,38 120,38 120,38 0,38';
             const pts = h.map((v,i) => `${Math.round((i/(h.length-1))*120)},${Math.round(36-(v/100)*32)}`).join(' ');
             return `${pts} 120,38 0,38`;
         },
 
+        // ── Init ──
         async init() {
             this.initSortable();
+            this.initKeyboard();
             if (this.authenticated) {
-                await this.fetchSettings();   // load persistent settings from server
+                await this.fetchSettings();
                 await this.fetchLog();
                 this.connectSSE();
-                setInterval(() => { if(this.vis.logs) this.fetchLog(); }, 12000);
+                setInterval(() => { if (this.vis.logs) this.fetchLog(); }, 12000);
             }
         },
 
+        // ── Keyboard shortcuts ──
+        initKeyboard() {
+            document.addEventListener('keydown', (e) => {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                if (e.key === 's' && !this.showSettings && !this.showModal) {
+                    this.showSettings = true;
+                } else if (e.key === 'r' && !this.showSettings && !this.showModal && this.authenticated) {
+                    this.refreshStats();
+                } else if (e.key === 'Escape') {
+                    this.showSettings = false;
+                    this.showModal    = false;
+                }
+            });
+        },
+
+        // ── Alert dismissal ──
+        dismissAlert(msg) {
+            this._dismissedAlerts.add(msg);
+            // Force Alpine reactivity on a Set
+            this._dismissedAlerts = new Set(this._dismissedAlerts);
+        },
+
+        // ── Countdown for polling mode ──
+        _startCountdown(interval=5) {
+            clearInterval(this._countdownTimer);
+            this.countdown = interval;
+            this._countdownTimer = setInterval(() => {
+                this.countdown = Math.max(0, this.countdown - 1);
+                if (this.countdown === 0) this.countdown = interval;
+            }, 1000);
+        },
+        _stopCountdown() {
+            clearInterval(this._countdownTimer);
+            this._countdownTimer = null;
+        },
+
+        // ── SSE connection ──
         connectSSE() {
             if (!this.authenticated) return;
-            if (this._es)   { this._es.close(); this._es = null; }
-            if (this._poll) { clearInterval(this._poll); this._poll = null; }
+            if (this._es)   { this._es.close();           this._es   = null; }
+            if (this._poll) { clearInterval(this._poll);  this._poll = null; }
+            this._stopCountdown();
 
             const token = localStorage.getItem('noba-token');
             const qs = `services=${encodeURIComponent(this.monitoredServices)}&radar=${encodeURIComponent(this.radarIps)}&pihole=${encodeURIComponent(this.piholeUrl)}&piholetok=${encodeURIComponent(this.piholeToken)}&token=${encodeURIComponent(token)}`;
             this._es = new EventSource(`/api/stream?${qs}`);
+
+            this._es.onopen = () => {
+                this.connStatus = 'sse';
+                this._stopCountdown();
+            };
             this._es.onmessage = (e) => {
                 try { Object.assign(this, JSON.parse(e.data)); } catch {}
             };
             this._es.onerror = () => {
                 this._es.close(); this._es = null;
+                this.connStatus = 'polling';
+                this._startCountdown(5);
                 setTimeout(() => {
                     this.refreshStats();
-                    this._poll = setInterval(() => this.refreshStats(), 5000);
+                    this._poll = setInterval(() => {
+                        this.refreshStats();
+                        this._startCountdown(5);
+                    }, 5000);
                 }, 3000);
             };
         },
@@ -1176,38 +1338,40 @@ function dashboard() {
             const token = localStorage.getItem('noba-token');
             try {
                 const url = `/api/stats?services=${encodeURIComponent(this.monitoredServices)}&radar=${encodeURIComponent(this.radarIps)}&pihole=${encodeURIComponent(this.piholeUrl)}&piholetok=${encodeURIComponent(this.piholeToken)}`;
-                const res = await fetch(url, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (res.ok) Object.assign(this, await res.json());
-                else if (res.status === 401) this.authenticated = false;
-            } catch {} finally { this.refreshing = false; }
-        },
-
-        // Fetch settings from server
-        async fetchSettings() {
-            const token = localStorage.getItem('noba-token');
-            try {
-                const res = await fetch('/api/settings', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
+                const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
                 if (res.ok) {
-                    const settings = await res.json();
-                    // Merge into reactive properties (fallback to existing values)
-                    this.piholeUrl = settings.piholeUrl || this.piholeUrl;
-                    this.piholeToken = settings.piholeToken || this.piholeToken;
-                    this.monitoredServices = settings.monitoredServices || this.monitoredServices;
-                    this.radarIps = settings.radarIps || this.radarIps;
-                    this.bookmarksStr = settings.bookmarksStr || this.bookmarksStr;
-                    // Save to localStorage for quick access
-                    this.saveSettings();
+                    Object.assign(this, await res.json());
+                    if (this.connStatus === 'offline') this.connStatus = 'polling';
+                } else if (res.status === 401) {
+                    this.authenticated = false;
+                    this.connStatus = 'offline';
+                } else {
+                    this.connStatus = 'offline';
                 }
-            } catch (e) {
-                console.warn('Could not fetch settings from server', e);
+            } catch {
+                this.connStatus = 'offline';
+            } finally {
+                this.refreshing = false;
             }
         },
 
-        // Save settings to localStorage and also POST to server
+        // ── Settings persistence ──
+        async fetchSettings() {
+            const token = localStorage.getItem('noba-token');
+            try {
+                const res = await fetch('/api/settings', { headers: { 'Authorization': 'Bearer ' + token } });
+                if (res.ok) {
+                    const s = await res.json();
+                    this.piholeUrl         = s.piholeUrl         || this.piholeUrl;
+                    this.piholeToken       = s.piholeToken       || this.piholeToken;
+                    this.monitoredServices = s.monitoredServices || this.monitoredServices;
+                    this.radarIps          = s.radarIps          || this.radarIps;
+                    this.bookmarksStr      = s.bookmarksStr      || this.bookmarksStr;
+                    this.saveSettings();
+                }
+            } catch (e) { console.warn('Could not fetch settings', e); }
+        },
+
         async saveSettings() {
             localStorage.setItem('noba-theme',      this.theme);
             localStorage.setItem('noba-pihole',     this.piholeUrl);
@@ -1222,21 +1386,14 @@ function dashboard() {
                 try {
                     await fetch('/api/settings', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + token
-                        },
+                        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
                         body: JSON.stringify({
-                            piholeUrl: this.piholeUrl,
-                            piholeToken: this.piholeToken,
+                            piholeUrl: this.piholeUrl, piholeToken: this.piholeToken,
                             monitoredServices: this.monitoredServices,
-                            radarIps: this.radarIps,
-                            bookmarksStr: this.bookmarksStr
+                            radarIps: this.radarIps, bookmarksStr: this.bookmarksStr
                         })
                     });
-                } catch (e) {
-                    console.warn('Could not save settings to server', e);
-                }
+                } catch (e) { console.warn('Could not save settings to server', e); }
             }
         },
 
@@ -1264,13 +1421,11 @@ function dashboard() {
             this.logLoading = true;
             const token = localStorage.getItem('noba-token');
             try {
-                const res = await fetch('/api/log-viewer?type=' + this.selectedLog, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
+                const res = await fetch('/api/log-viewer?type=' + this.selectedLog, { headers: { 'Authorization': 'Bearer ' + token } });
                 if (res.ok) this.logContent = await res.text();
                 else if (res.status === 401) this.authenticated = false;
             } catch { this.logContent = 'Failed to fetch log.'; }
-            finally { this.logLoading = false; }
+            finally  { this.logLoading = false; }
         },
 
         async svcAction(svc, action) {
@@ -1278,7 +1433,7 @@ function dashboard() {
             const token = localStorage.getItem('noba-token');
             try {
                 const res = await fetch('/api/service-control', {
-                    method:'POST', headers:{'Content-Type':'application/json', 'Authorization': 'Bearer ' + token},
+                    method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
                     body: JSON.stringify({ service:svc.name, action, is_user:svc.is_user })
                 });
                 const d = await res.json();
@@ -1290,16 +1445,14 @@ function dashboard() {
         async runScript(script) {
             if (!this.authenticated || this.runningScript) return;
             this.runningScript = true;
-            this.modalTitle = `Running: ${script}`;
+            this.modalTitle  = `Running: ${script}`;
             this.modalOutput = `>> [${new Date().toLocaleTimeString()}] Starting ${script}...\n`;
-            this.showModal = true;
+            this.showModal   = true;
+            const token      = localStorage.getItem('noba-token');
 
-            const token = localStorage.getItem('noba-token');
             const poll = setInterval(async () => {
                 try {
-                    const r = await fetch('/api/action-log', {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
+                    const r = await fetch('/api/action-log', { headers: { 'Authorization': 'Bearer ' + token } });
                     if (r.ok) {
                         this.modalOutput = await r.text();
                         const el = document.getElementById('console-out');
@@ -1310,7 +1463,7 @@ function dashboard() {
 
             try {
                 const res = await fetch('/api/run', {
-                    method:'POST', headers:{'Content-Type':'application/json', 'Authorization': 'Bearer ' + token},
+                    method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
                     body: JSON.stringify({ script })
                 });
                 const result = await res.json();
@@ -1320,52 +1473,48 @@ function dashboard() {
                 this.modalTitle = '✗ Connection Error';
             } finally {
                 clearInterval(poll);
-                try { const r=await fetch('/api/action-log', { headers: { 'Authorization': 'Bearer ' + token } }); if(r.ok) this.modalOutput=await r.text(); } catch {}
+                try {
+                    const r = await fetch('/api/action-log', { headers: { 'Authorization': 'Bearer ' + token } });
+                    if (r.ok) this.modalOutput = await r.text();
+                } catch {}
                 this.runningScript = false;
                 await this.refreshStats();
             }
         },
 
         async doLogin() {
-            this.loginLoading = true;
-            this.loginError = '';
+            this.loginLoading = true; this.loginError = '';
             try {
                 const res = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ username: this.loginUsername, password: this.loginPassword })
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({ username:this.loginUsername, password:this.loginPassword })
                 });
                 const data = await res.json();
                 if (res.ok && data.token) {
                     localStorage.setItem('noba-token', data.token);
                     this.authenticated = true;
-                    await this.fetchSettings();   // load settings from server
-                    this.init();                  // re-initialize data fetching
+                    await this.fetchSettings();
+                    this.init();
                 } else {
                     this.loginError = data.error || 'Login failed';
                 }
-            } catch (e) {
-                this.loginError = 'Network error';
-            } finally {
-                this.loginLoading = false;
-            }
+            } catch { this.loginError = 'Network error'; }
+            finally  { this.loginLoading = false; }
         },
 
         async logout() {
             const token = localStorage.getItem('noba-token');
             if (token) {
                 try {
-                    await fetch('/api/logout?token=' + encodeURIComponent(token), {
-                        method: 'POST'
-                    });
-                } catch (e) {
-                    console.warn('Logout request failed', e);
-                }
+                    await fetch('/api/logout?token=' + encodeURIComponent(token), { method:'POST' });
+                } catch {}
             }
             localStorage.removeItem('noba-token');
             this.authenticated = false;
-            if (this._es) this._es.close();
-            if (this._poll) clearInterval(this._poll);
+            this.connStatus    = 'offline';
+            this._stopCountdown();
+            if (this._es)   { this._es.close();          this._es   = null; }
+            if (this._poll) { clearInterval(this._poll); this._poll = null; }
         },
 
         addToast(msg, type='info') {
@@ -1380,11 +1529,20 @@ function dashboard() {
 </html>
 HTMLEOF
 
-# ── Write server.py with YAML settings support ───────────────────────────────
+# ── server.py ────────────────────────────────────────────────────────────────
 cat > "$HTML_DIR/server.py" <<'PYEOF'
 #!/usr/bin/env python3
-"""Nobara Command Center – Backend v8.3.0
-New: Logout, persistent settings in YAML config (~/.config/noba/config.yaml)
+"""Nobara Command Center – Backend v8.4.0
+
+New vs v8.3.0:
+  - BackgroundCollector thread: stats pre-computed every 5 s; SSE/stats endpoints
+    just read from its cache → no more blocking-compute per request
+  - LoginRateLimiter: 5 failed attempts per IP → 30 s lockout
+  - PBKDF2-SHA256 password hashing (backward-compat with old SHA-256 format)
+  - secrets.compare_digest used everywhere (timing-safe)
+  - Token-cleanup daemon thread (runs every 5 min)
+  - _server_start_time for /api/health uptime reporting
+  - /api/health endpoint (public, no auth) → {"status":"ok","version":"8.4.0","uptime_s":N}
 """
 import http.server
 import socketserver
@@ -1410,6 +1568,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs
 
 # ── Config ────────────────────────────────────────────────────────────────────
+VERSION    = '8.4.0'
 PORT       = int(os.environ.get('PORT',   8080))
 HOST       = os.environ.get('HOST',       '0.0.0.0')
 SCRIPT_DIR = os.environ.get('NOBA_SCRIPT_DIR', os.path.expanduser('~/.local/bin'))
@@ -1419,25 +1578,20 @@ ACTION_LOG = '/tmp/noba-action.log'
 AUTH_CONFIG = os.path.expanduser('~/.config/noba-web/auth.conf')
 NOBA_YAML   = os.environ.get('NOBA_CONFIG', os.path.expanduser('~/.config/noba/config.yaml'))
 
-# Ensure log directory exists
+_server_start_time = time.time()
+
 try:
     os.makedirs(LOG_DIR, exist_ok=True)
 except Exception:
     pass
 
-# Setup logging – fallback to console if file fails
 log_file = os.path.join(LOG_DIR, 'noba-web-server.log')
 try:
-    logging.basicConfig(
-        filename=log_file,
-        level=logging.INFO,
-        format='%(asctime)s %(levelname)s %(message)s'
-    )
+    logging.basicConfig(filename=log_file, level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s')
 except Exception:
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s %(levelname)s %(message)s'
-    )
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger('noba')
 
 ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -1453,17 +1607,32 @@ SCRIPT_MAP = {
 ALLOWED_ACTIONS = {'start', 'stop', 'restart'}
 
 # ── Authentication ────────────────────────────────────────────────────────────
-tokens = {}  # token -> expiry datetime
+_tokens_lock = threading.Lock()
+_tokens: dict[str, datetime] = {}   # token → expiry
 
-def hash_password(password):
+def hash_password_pbkdf2(password: str) -> str:
+    """Return a pbkdf2:salt:dk_hex string (PBKDF2-SHA256, 200k rounds)."""
     salt = secrets.token_hex(16)
-    return salt + ':' + hashlib.sha256((salt + password).encode()).hexdigest()
+    dk   = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 200_000)
+    return f'pbkdf2:{salt}:{dk.hex()}'
 
-def verify_password(stored, password):
+def verify_password(stored: str, password: str) -> bool:
+    """Verify against PBKDF2 or legacy SHA-256 format. Always timing-safe."""
+    if not stored:
+        return False
+    if stored.startswith('pbkdf2:'):
+        parts = stored.split(':', 2)
+        if len(parts) != 3:
+            return False
+        _, salt, expected = parts
+        dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 200_000)
+        return secrets.compare_digest(expected, dk.hex())
+    # Legacy: salt:sha256hash
     if ':' not in stored:
         return False
-    salt, hashval = stored.split(':', 1)
-    return hashval == hashlib.sha256((salt + password).encode()).hexdigest()
+    salt, expected = stored.split(':', 1)
+    actual = hashlib.sha256((salt + password).encode()).hexdigest()
+    return secrets.compare_digest(expected, actual)
 
 def load_user():
     if not os.path.exists(AUTH_CONFIG):
@@ -1471,104 +1640,147 @@ def load_user():
     try:
         with open(AUTH_CONFIG) as f:
             line = f.read().strip()
-            if ':' in line:
-                username, pwhash = line.split(':', 1)
-                return username, pwhash
+        if ':' in line:
+            username, rest = line.split(':', 1)
+            return username, rest
     except Exception as e:
-        logger.warning(f"Could not read auth config: {e}")
+        logger.warning(f'Could not read auth config: {e}')
     return None
 
-def generate_token():
+def generate_token() -> str:
     token = str(uuid.uuid4())
-    tokens[token] = datetime.now() + timedelta(hours=24)
+    with _tokens_lock:
+        _tokens[token] = datetime.now() + timedelta(hours=24)
     return token
 
-def validate_token(token):
-    expiry = tokens.get(token)
-    if expiry and expiry > datetime.now():
-        return True
-    if token in tokens:
-        del tokens[token]  # remove expired
+def validate_token(token: str) -> bool:
+    with _tokens_lock:
+        expiry = _tokens.get(token)
+        if expiry and expiry > datetime.now():
+            return True
+        if token in _tokens:
+            del _tokens[token]
     return False
 
-def authenticate_request(headers, query=None):
+def revoke_token(token: str) -> None:
+    with _tokens_lock:
+        _tokens.pop(token, None)
+
+def _token_cleanup_loop():
+    """Remove expired tokens every 5 minutes."""
+    while not _shutdown_flag.is_set():
+        _shutdown_flag.wait(300)
+        now = datetime.now()
+        with _tokens_lock:
+            expired = [t for t, exp in list(_tokens.items()) if exp <= now]
+            for t in expired:
+                del _tokens[t]
+        if expired:
+            logger.info(f'Token cleanup: removed {len(expired)} expired token(s)')
+
+def authenticate_request(headers, query=None) -> bool:
     auth_header = headers.get('Authorization', '')
     if auth_header.startswith('Bearer '):
-        token = auth_header[7:]
-        if validate_token(token):
+        if validate_token(auth_header[7:]):
             return True
     if query and 'token' in query:
-        token = query['token'][0]
-        if validate_token(token):
+        if validate_token(query['token'][0]):
             return True
     return False
 
-# ── YAML settings helpers (using yq) ─────────────────────────────────────────
+# ── Login rate limiter ────────────────────────────────────────────────────────
+class LoginRateLimiter:
+    """5 failed attempts per IP per 60 s → 30 s lockout."""
+    def __init__(self, max_attempts=5, window_s=60, lockout_s=30):
+        self._lock     = threading.Lock()
+        self._attempts: dict[str, list] = {}
+        self._lockouts: dict[str, datetime] = {}
+        self.max_attempts = max_attempts
+        self.window_s     = window_s
+        self.lockout_s    = lockout_s
+
+    def is_locked(self, ip: str) -> bool:
+        with self._lock:
+            expiry = self._lockouts.get(ip)
+            if expiry and datetime.now() < expiry:
+                return True
+            self._lockouts.pop(ip, None)
+            return False
+
+    def record_failure(self, ip: str) -> bool:
+        """Record a failure. Returns True if the IP just got locked out."""
+        now = datetime.now()
+        with self._lock:
+            cutoff   = now - timedelta(seconds=self.window_s)
+            attempts = [t for t in self._attempts.get(ip, []) if t > cutoff]
+            attempts.append(now)
+            self._attempts[ip] = attempts
+            if len(attempts) >= self.max_attempts:
+                self._lockouts[ip] = now + timedelta(seconds=self.lockout_s)
+                self._attempts.pop(ip, None)
+                logger.warning(f'Login lockout for {ip} ({self.lockout_s}s)')
+                return True
+        return False
+
+    def reset(self, ip: str) -> None:
+        with self._lock:
+            self._attempts.pop(ip, None)
+            self._lockouts.pop(ip, None)
+
+_rate_limiter = LoginRateLimiter()
+
+# ── YAML settings helpers ─────────────────────────────────────────────────────
 def read_yaml_settings():
-    """Read web settings from YAML config under 'web:' key."""
     default = {
-        'piholeUrl': '',
-        'piholeToken': '',
+        'piholeUrl': '', 'piholeToken': '',
         'monitoredServices': 'backup-to-nas.service, organize-downloads.service, sshd, podman, syncthing.service',
         'radarIps': '192.168.100.1, 1.1.1.1, 8.8.8.8',
-        'bookmarksStr': 'TrueNAS (vnnas)|http://vnnas.vannieuwenhove.org|fa-server, TrueNAS (vdhnas)|http://vdhnas.vannieuwenhove.org|fa-server, Pi-Hole|http://dnsa01.vannieuwenhove.org/admin|fa-shield-alt, Home Assistant|http://homeassistant.local:8123|fa-home, ROMM|http://romm.local|fa-gamepad, Prowlarr|http://localhost:9696|fa-search, ASUS Router|http://192.168.100.1|fa-network-wired'
+        'bookmarksStr': 'TrueNAS (vnnas)|http://vnnas.vannieuwenhove.org|fa-server'
     }
     if not os.path.exists(NOBA_YAML):
         return default
     try:
-        # Use yq to extract web.* values as JSON
-        cmd = ['yq', 'eval', '-o=json', '.web', NOBA_YAML]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+        r = subprocess.run(['yq', 'eval', '-o=json', '.web', NOBA_YAML],
+                           capture_output=True, text=True, timeout=2)
         if r.returncode == 0 and r.stdout.strip():
             web = json.loads(r.stdout)
-            # Merge with defaults (only keys we care about)
             for k in default:
                 if k in web:
                     default[k] = web[k]
-        return default
     except Exception as e:
-        logger.warning(f"Failed to read YAML settings: {e}")
-        return default
+        logger.warning(f'Failed to read YAML settings: {e}')
+    return default
 
 def write_yaml_settings(settings):
-    """Write web settings to YAML config under 'web:' key."""
     try:
-        # Create a temporary YAML snippet with the web settings
         import tempfile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
-            tmp.write("web:\n")
+            tmp.write('web:\n')
             for k, v in settings.items():
-                # For strings that might need quoting
-                if isinstance(v, str):
-                    if any(c in v for c in '\n:#'):
-                        # Use JSON string representation which is valid YAML
-                        v = json.dumps(v)
-                tmp.write(f"  {k}: {v}\n")
+                if isinstance(v, str) and any(c in v for c in '\n:#'):
+                    v = json.dumps(v)
+                tmp.write(f'  {k}: {v}\n')
             tmp_path = tmp.name
-
         if os.path.exists(NOBA_YAML):
-            # Merge with existing file using yq
-            cmd = ['yq', 'eval-all', 'select(fileIndex==0) * select(fileIndex==1)', NOBA_YAML, tmp_path]
+            cmd = ['yq', 'eval-all', 'select(fileIndex==0) * select(fileIndex==1)',
+                   NOBA_YAML, tmp_path]
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
             if r.returncode == 0:
-                merged = r.stdout
                 with open(NOBA_YAML, 'w') as f:
-                    f.write(merged)
+                    f.write(r.stdout)
             else:
-                raise Exception("yq merge failed")
+                raise RuntimeError('yq merge failed')
         else:
-            # No existing file, just use the snippet
             os.makedirs(os.path.dirname(NOBA_YAML), exist_ok=True)
-            with open(NOBA_YAML, 'w') as f:
-                f.write(open(tmp_path).read())
-
+            with open(tmp_path) as src, open(NOBA_YAML, 'w') as dst:
+                dst.write(src.read())
         os.unlink(tmp_path)
         return True
     except Exception as e:
-        logger.exception(f"Failed to write YAML settings: {e}")
+        logger.exception(f'Failed to write YAML settings: {e}')
         return False
 
-# ── Input validation ─────────────────────────────────────────────────────────
+# ── Input validation ──────────────────────────────────────────────────────────
 def validate_service_name(name):
     return bool(re.match(r'^[a-zA-Z0-9_.@-]+$', name))
 
@@ -1579,26 +1791,24 @@ def validate_ip(ip):
     except ValueError:
         return False
 
-# ── Simple TTL cache (thread-safe) ─────────────────────────────────────────
+# ── TTL cache ─────────────────────────────────────────────────────────────────
 class TTLCache:
     def __init__(self):
         self._store = {}
         self._lock  = threading.Lock()
-
     def get(self, key, ttl=30):
         with self._lock:
-            entry = self._store.get(key)
-            if entry and (time.time() - entry['t']) < ttl:
-                return entry['v']
+            e = self._store.get(key)
+            if e and (time.time() - e['t']) < ttl:
+                return e['v']
         return None
-
     def set(self, key, val):
         with self._lock:
             self._store[key] = {'v': val, 't': time.time()}
 
 _cache = TTLCache()
 
-# ── Global state (lock-protected) ───────────────────────────────────────────
+# ── Global state ──────────────────────────────────────────────────────────────
 _state_lock  = threading.Lock()
 _cpu_history = deque(maxlen=20)
 _cpu_prev    = None
@@ -1606,27 +1816,28 @@ _net_prev    = None
 _net_prev_t  = None
 _shutdown_flag = threading.Event()
 
-# ── Signal handler for graceful shutdown ───────────────────────────────────
+# ── Signal handler ────────────────────────────────────────────────────────────
 def sigterm_handler(signum, frame):
-    logger.info("Received SIGTERM, shutting down...")
+    logger.info('Received SIGTERM, shutting down…')
     _shutdown_flag.set()
-    threading.Thread(target=lambda: server.shutdown()).start()
+    threading.Thread(target=lambda: server.shutdown(), daemon=True).start()
+
 signal.signal(signal.SIGTERM, sigterm_handler)
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 def run(cmd, timeout=3, cache_key=None, cache_ttl=30, ignore_rc=False):
     if cache_key:
         hit = _cache.get(cache_key, cache_ttl)
         if hit is not None:
             return hit
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r   = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         out = r.stdout.strip() if (r.returncode == 0 or ignore_rc) else ''
         if cache_key and out:
             _cache.set(cache_key, out)
         return out
     except Exception as e:
-        logger.debug(f"Command failed: {cmd} – {e}")
+        logger.debug(f'Command failed: {cmd} – {e}')
         return ''
 
 def human_bps(bps):
@@ -1636,7 +1847,7 @@ def human_bps(bps):
         bps /= 1024
     return f'{bps:.1f} TB/s'
 
-# ── Stats collectors (unchanged from v8.2.0) ─────────────────────────────────
+# ── Stats collectors ──────────────────────────────────────────────────────────
 def get_cpu_percent():
     global _cpu_prev
     with _state_lock:
@@ -1667,20 +1878,17 @@ def get_net_io():
             for line in lines[2:]:
                 parts = line.split()
                 if len(parts) > 9 and not parts[0].startswith('lo'):
-                    rx += int(parts[1])
-                    tx += int(parts[9])
+                    rx += int(parts[1]); tx += int(parts[9])
             now = time.time()
             if _net_prev is None:
-                _net_prev  = (rx, tx)
-                _net_prev_t = now
+                _net_prev = (rx, tx); _net_prev_t = now
                 return 0.0, 0.0
             dt = now - _net_prev_t
             if dt < 0.05:
                 return 0.0, 0.0
             rx_bps = max(0.0, (rx - _net_prev[0]) / dt)
             tx_bps = max(0.0, (tx - _net_prev[1]) / dt)
-            _net_prev  = (rx, tx)
-            _net_prev_t = now
+            _net_prev = (rx, tx); _net_prev_t = now
             return rx_bps, tx_bps
         except Exception:
             return 0.0, 0.0
@@ -1709,8 +1917,8 @@ def get_service_status(svc):
         if d.get('LoadState') not in (None, '', 'not-found'):
             state = d.get('ActiveState', 'unknown')
             if state == 'inactive' and svc.endswith('.service'):
-                timer_name = svc.replace('.service', '.timer')
-                t = run(['systemctl'] + scope + ['show', '-p', 'ActiveState', timer_name], timeout=1)
+                tn = svc.replace('.service', '.timer')
+                t  = run(['systemctl'] + scope + ['show', '-p', 'ActiveState', tn], timeout=1)
                 if 'ActiveState=active' in t:
                     return 'timer-active', is_user
             return state, is_user
@@ -1734,7 +1942,7 @@ def get_battery():
                     cfull  = int(open(f'{bats[0]}/charge_full').read().strip())
                     charge = int(open(f'{bats[0]}/charge_now').read().strip())
                     hrs = (cfull - charge) / current
-                time_rem = f'{int(hrs)}h {int((hrs % 1) * 60)}m'
+                time_rem = f'{int(hrs)}h {int((hrs%1)*60)}m'
                 if stat != 'Discharging':
                     time_rem += ' to full'
         except Exception:
@@ -1744,61 +1952,52 @@ def get_battery():
         return {'percent': 0, 'status': 'Error', 'desktop': False, 'timeRemaining': ''}
 
 def get_containers():
-    for runtime in (['podman', 'ps', '-a', '--format', 'json'],
-                    ['docker', 'ps', '-a', '--format', '{{json .}}']):
-        out = run(runtime, timeout=4, cache_key=' '.join(runtime), cache_ttl=10)
+    for cmd in (['podman', 'ps', '-a', '--format', 'json'],
+                ['docker', 'ps', '-a', '--format', '{{json .}}']):
+        out = run(cmd, timeout=4, cache_key=' '.join(cmd), cache_ttl=10)
         if not out:
             continue
         try:
-            if out.lstrip().startswith('['):
-                items = json.loads(out)
-            else:
-                items = [json.loads(line) for line in out.splitlines() if line.strip()]
+            items = json.loads(out) if out.lstrip().startswith('[') else \
+                    [json.loads(l) for l in out.splitlines() if l.strip()]
             result = []
             for c in items[:16]:
                 name  = c.get('Names', c.get('Name', '?'))
-                if isinstance(name, list):
-                    name = name[0] if name else '?'
+                if isinstance(name, list): name = name[0] if name else '?'
                 image = c.get('Image', c.get('Repository', '?')).split('/')[-1][:32]
                 state = (c.get('State', c.get('Status', '?')) or '?').lower().split()[0]
                 result.append({'name': name, 'image': image, 'state': state,
                                'status': c.get('Status', state)})
             return result
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except Exception:
             continue
     return []
 
 def get_pihole(url, token):
-    if not url:
-        return None
+    if not url: return None
     base = url if url.startswith('http') else 'http://' + url
     base = base.rstrip('/').replace('/admin', '')
-
     def _get(endpoint, extra_headers=None):
-        hdrs = {'User-Agent': 'noba-web/8.3.0', 'Accept': 'application/json'}
-        if extra_headers:
-            hdrs.update(extra_headers)
+        hdrs = {'User-Agent': f'noba-web/{VERSION}', 'Accept': 'application/json'}
+        if extra_headers: hdrs.update(extra_headers)
         req = urllib.request.Request(base + endpoint, headers=hdrs)
         with urllib.request.urlopen(req, timeout=3) as r:
             return json.loads(r.read().decode())
-
     # v6 API
     try:
         auth = {'sid': token} if token else {}
         data = _get('/api/stats/summary', auth)
-        q    = data.get('queries', {}).get('total', 0)
-        b    = data.get('ads', {}).get('blocked', 0)
-        p    = data.get('ads', {}).get('percentage', 0.0)
-        s    = data.get('gravity', {}).get('status', 'unknown')
-        dom  = data.get('gravity', {}).get('domains_being_blocked', 0)
-        return {'queries': q, 'blocked': b, 'percent': round(p, 1),
-                'status': s, 'domains': f'{dom:,}'}
+        q = data.get('queries', {}).get('total', 0)
+        b = data.get('ads', {}).get('blocked', 0)
+        p = data.get('ads', {}).get('percentage', 0.0)
+        s = data.get('gravity', {}).get('status', 'unknown')
+        d = data.get('gravity', {}).get('domains_being_blocked', 0)
+        return {'queries': q, 'blocked': b, 'percent': round(p,1), 'status': s, 'domains': f'{d:,}'}
     except Exception:
         pass
-
     # v5 fallback
     try:
-        ep  = f'/admin/api.php?summaryRaw' + (f'&auth={token}' if token else '')
+        ep   = f'/admin/api.php?summaryRaw' + (f'&auth={token}' if token else '')
         data = _get(ep)
         return {
             'queries': data.get('dns_queries_today', 0),
@@ -1813,18 +2012,18 @@ def get_pihole(url, token):
 def collect_stats(qs):
     stats = {'timestamp': datetime.now().strftime('%H:%M:%S')}
 
-    # ── Quick reads ──
     try:
         with open('/etc/os-release') as f:
             for line in f:
                 if line.startswith('PRETTY_NAME='):
-                    stats['osName'] = line.split('=', 1)[1].strip().strip('"')
+                    stats['osName'] = line.split('=',1)[1].strip().strip('"')
     except Exception:
         stats['osName'] = 'Linux'
 
-    stats['kernel']   = run(['uname', '-r'], cache_key='uname-r', cache_ttl=3600)
-    stats['hostname'] = run(['hostname'], cache_key='hostname', cache_ttl=3600)
-    stats['defaultIp']= run(['bash', '-c', "ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \\K[\\d.]+'"], timeout=1)
+    stats['kernel']    = run(['uname', '-r'], cache_key='uname-r', cache_ttl=3600)
+    stats['hostname']  = run(['hostname'], cache_key='hostname', cache_ttl=3600)
+    stats['defaultIp'] = run(['bash', '-c',
+        "ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \\K[\\d.]+'"], timeout=1)
 
     try:
         uptime_s = float(open('/proc/uptime').read().split()[0])
@@ -1833,11 +2032,11 @@ def collect_stats(qs):
         m = rem // 60
         stats['uptime']  = (f'{d}d ' if d else '') + f'{h}h {m}m'
         stats['loadavg'] = ' '.join(open('/proc/loadavg').read().split()[:3])
-        mlines = open('/proc/meminfo').readlines()
-        mmap   = {l.split(':')[0]: int(l.split()[1]) for l in mlines if ':' in l}
-        tot    = mmap.get('MemTotal', 0) // 1024
-        avail  = mmap.get('MemAvailable', 0) // 1024
-        used   = tot - avail
+        ml   = open('/proc/meminfo').readlines()
+        mm   = {l.split(':')[0]: int(l.split()[1]) for l in ml if ':' in l}
+        tot  = mm.get('MemTotal', 0) // 1024
+        avail= mm.get('MemAvailable', 0) // 1024
+        used = tot - avail
         stats['memory']     = f'{used} MiB / {tot} MiB'
         stats['memPercent'] = round(100 * used / tot) if tot > 0 else 0
     except Exception:
@@ -1845,8 +2044,7 @@ def collect_stats(qs):
         stats.setdefault('loadavg', '--')
         stats.setdefault('memPercent', 0)
 
-    cpu_pct = get_cpu_percent()
-    stats['cpuPercent'] = cpu_pct
+    stats['cpuPercent'] = get_cpu_percent()
     with _state_lock:
         stats['cpuHistory'] = list(_cpu_history)
 
@@ -1861,34 +2059,33 @@ def collect_stats(qs):
     gpu_t = run(['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader'],
                 timeout=2, cache_key='nvidia-temp', cache_ttl=5)
     if not gpu_t:
-        raw = run(['bash', '-c', "cat /sys/class/drm/card*/device/hwmon/hwmon*/temp1_input 2>/dev/null | head -1"], timeout=1)
+        raw = run(['bash', '-c',
+            'cat /sys/class/drm/card*/device/hwmon/hwmon*/temp1_input 2>/dev/null | head -1'], timeout=1)
         gpu_t = f'{int(raw)//1000}°C' if raw else 'N/A'
     else:
         gpu_t = f'{gpu_t}°C'
-    stats['gpuTemp'] = gpu_t
-
-    stats['battery'] = get_battery()
-
-    stats['hwCpu'] = run(['bash', '-c', "lscpu | grep 'Model name' | head -1 | cut -d: -f2 | xargs"],
-                         cache_key='lscpu', cache_ttl=3600)
+    stats['gpuTemp']  = gpu_t
+    stats['battery']  = get_battery()
+    stats['hwCpu']    = run(['bash', '-c',
+        "lscpu | grep 'Model name' | head -1 | cut -d: -f2 | xargs"],
+        cache_key='lscpu', cache_ttl=3600)
     raw_gpu = run(['bash', '-c', "lspci | grep -i 'vga\\|3d' | cut -d: -f3"],
                   cache_key='lspci', cache_ttl=3600)
-    stats['hwGpu'] = raw_gpu.replace('\n', '<br>') if raw_gpu else 'Unknown GPU'
+    stats['hwGpu'] = raw_gpu.replace('\n','<br>') if raw_gpu else 'Unknown GPU'
 
     disks = []
     for line in run(['df', '-BM'], cache_key='df', cache_ttl=10).splitlines()[1:]:
         parts = line.split()
         if len(parts) >= 6 and parts[0].startswith('/dev/'):
             mount = parts[5]
-            if any(mount.startswith(p) for p in ('/var/lib/snapd', '/boot', '/run', '/snap')):
+            if any(mount.startswith(p) for p in ('/var/lib/snapd','/boot','/run','/snap')):
                 continue
             try:
-                pct  = int(parts[4].replace('%', ''))
-                size = parts[1].replace('M', ' MiB')
-                used = parts[2].replace('M', ' MiB')
-                bc   = 'danger' if pct >= 90 else 'warning' if pct >= 75 else 'success'
+                pct  = int(parts[4].replace('%',''))
+                bc   = 'danger' if pct>=90 else 'warning' if pct>=75 else 'success'
                 disks.append({'mount': mount, 'percent': pct, 'barClass': bc,
-                              'size': size, 'used': used})
+                              'size': parts[1].replace('M',' MiB'),
+                              'used': parts[2].replace('M',' MiB')})
             except (ValueError, IndexError):
                 pass
     stats['disks'] = disks
@@ -1902,36 +2099,33 @@ def collect_stats(qs):
             pools.append({'name': n.strip(), 'health': h.strip()})
     stats['zfs'] = {'pools': pools}
 
-    cpu_ps = run(['ps', 'ax', '--format', 'comm,%cpu', '--sort', '-%cpu'], timeout=2)
-    mem_ps = run(['ps', 'ax', '--format', 'comm,%mem', '--sort', '-%mem'], timeout=2)
+    cpu_ps = run(['ps','ax','--format','comm,%cpu','--sort','-%cpu'], timeout=2)
+    mem_ps = run(['ps','ax','--format','comm,%mem','--sort','-%mem'], timeout=2)
     def parse_ps(out):
         result = []
         for line in out.splitlines()[1:6]:
             parts = line.strip().rsplit(None, 1)
-            if len(parts) == 2 and parts[1] != '%CPU' and parts[1] != '%MEM':
-                result.append({'name': parts[0][:16], 'val': parts[1] + '%'})
+            if len(parts) == 2 and parts[1] not in ('%CPU','%MEM'):
+                result.append({'name': parts[0][:16], 'val': parts[1]+'%'})
         return result
     stats['topCpu'] = parse_ps(cpu_ps)
     stats['topMem'] = parse_ps(mem_ps)
 
-    # ── Parallel tasks with validation ──
-    svc_list  = [s.strip() for s in qs.get('services', [''])[0].split(',') if s.strip()]
-    ip_list   = [ip.strip() for ip in qs.get('radar',   [''])[0].split(',') if ip.strip()]
-    ph_url    = qs.get('pihole',    [''])[0]
-    ph_tok    = qs.get('piholetok', [''])[0]
+    svc_list = [s.strip() for s in qs.get('services',[''])[0].split(',') if s.strip()]
+    ip_list  = [ip.strip() for ip in qs.get('radar',[''])[0].split(',') if ip.strip()]
+    ph_url   = qs.get('pihole',[''])[0]
+    ph_tok   = qs.get('piholetok',[''])[0]
 
-    with ThreadPoolExecutor(max_workers=max(4, len(svc_list) + len(ip_list) + 3)) as ex:
+    with ThreadPoolExecutor(max_workers=max(4, len(svc_list)+len(ip_list)+3)) as ex:
         svc_futs  = {ex.submit(get_service_status, s): s for s in svc_list}
-        ping_futs = {ex.submit(ping_host, ip):       ip for ip in ip_list}
+        ping_futs = {ex.submit(ping_host, ip):        ip for ip in ip_list}
         ph_fut    = ex.submit(get_pihole, ph_url, ph_tok) if ph_url else None
         ct_fut    = ex.submit(get_containers)
 
         services = []
         for fut, svc in svc_futs.items():
-            try:
-                status, is_user = fut.result(timeout=4)
-            except Exception:
-                status, is_user = 'error', False
+            try:   status, is_user = fut.result(timeout=4)
+            except Exception: status, is_user = 'error', False
             services.append({'name': svc, 'status': status, 'is_user': is_user})
         stats['services'] = services
 
@@ -1944,39 +2138,72 @@ def collect_stats(qs):
                 radar.append({'ip': ip, 'status': 'Down', 'ms': 0})
         stats['radar'] = radar
 
-        try:
-            stats['pihole'] = ph_fut.result(timeout=4) if ph_fut else None
-        except Exception:
-            stats['pihole'] = None
+        try:   stats['pihole']     = ph_fut.result(timeout=4) if ph_fut else None
+        except Exception: stats['pihole'] = None
 
-        try:
-            stats['containers'] = ct_fut.result(timeout=5)
-        except Exception:
-            stats['containers'] = []
+        try:   stats['containers'] = ct_fut.result(timeout=5)
+        except Exception: stats['containers'] = []
 
-    # ── Alerts ──
+    # Alerts
     alerts = []
     cpu = stats.get('cpuPercent', 0)
-    if   cpu > 90: alerts.append({'level': 'danger',  'msg': f'CPU critical: {cpu}%'})
-    elif cpu > 75: alerts.append({'level': 'warning', 'msg': f'CPU high: {cpu}%'})
+    if   cpu > 90: alerts.append({'level':'danger',  'msg':f'CPU critical: {cpu}%'})
+    elif cpu > 75: alerts.append({'level':'warning', 'msg':f'CPU high: {cpu}%'})
 
-    ct = stats.get('cpuTemp', 'N/A')
+    ct = stats.get('cpuTemp','N/A')
     if ct != 'N/A':
-        t = int(ct.replace('°C', ''))
-        if   t > 85: alerts.append({'level': 'danger',  'msg': f'CPU temp critical: {t}°C'})
-        elif t > 70: alerts.append({'level': 'warning', 'msg': f'CPU temp elevated: {t}°C'})
+        t = int(ct.replace('°C',''))
+        if   t > 85: alerts.append({'level':'danger',  'msg':f'CPU temp critical: {t}°C'})
+        elif t > 70: alerts.append({'level':'warning', 'msg':f'CPU temp elevated: {t}°C'})
 
-    for disk in stats.get('disks', []):
-        p = disk.get('percent', 0)
-        if   p >= 90: alerts.append({'level': 'danger',  'msg': f"Disk {disk['mount']} at {p}%"})
-        elif p >= 80: alerts.append({'level': 'warning', 'msg': f"Disk {disk['mount']} at {p}%"})
+    for disk in stats.get('disks',[]):
+        p = disk.get('percent',0)
+        if   p >= 90: alerts.append({'level':'danger',  'msg':f"Disk {disk['mount']} at {p}%"})
+        elif p >= 80: alerts.append({'level':'warning', 'msg':f"Disk {disk['mount']} at {p}%"})
 
-    for svc in stats.get('services', []):
+    for svc in stats.get('services',[]):
         if svc.get('status') == 'failed':
-            alerts.append({'level': 'danger', 'msg': f"Service failed: {svc['name']}"})
+            alerts.append({'level':'danger', 'msg':f"Service failed: {svc['name']}"})
 
     stats['alerts'] = alerts
     return stats
+
+# ── Background stats collector ────────────────────────────────────────────────
+class BackgroundCollector:
+    """Pre-computes stats every `interval` seconds in a daemon thread.
+    SSE and /api/stats endpoints read from its cache instead of blocking."""
+
+    def __init__(self, interval: int = 5):
+        self._lock     = threading.Lock()
+        self._latest: dict = {}
+        self._qs: dict     = {}
+        self._interval     = interval
+
+    def update_qs(self, qs: dict) -> None:
+        with self._lock:
+            self._qs = dict(qs)
+
+    def get(self) -> dict:
+        with self._lock:
+            return dict(self._latest)
+
+    def start(self) -> None:
+        t = threading.Thread(target=self._loop, daemon=True, name='stats-collector')
+        t.start()
+
+    def _loop(self) -> None:
+        while not _shutdown_flag.is_set():
+            try:
+                with self._lock:
+                    qs = dict(self._qs)
+                data = collect_stats(qs)
+                with self._lock:
+                    self._latest = data
+            except Exception as e:
+                logger.warning(f'BackgroundCollector error: {e}')
+            _shutdown_flag.wait(self._interval)
+
+_bg = BackgroundCollector(interval=5)
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -1986,10 +2213,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def _client_ip(self) -> str:
+        return self.client_address[0] if self.client_address else '0.0.0.0'
+
     def _json(self, data, status=200):
         body = json.dumps(data).encode()
         self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Type',   'application/json')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1999,44 +2229,58 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         qs     = parse_qs(parsed.query)
         path   = parsed.path
 
-        # Public endpoints (no auth required)
-        if path == '/api/login' or path == '/' or path == '/index.html':
+        # ── Public endpoints ──
+        if path in ('/', '/index.html'):
             super().do_GET()
             return
 
-        # All other endpoints require authentication
+        if path == '/api/health':
+            self._json({
+                'status':   'ok',
+                'version':  VERSION,
+                'uptime_s': round(time.time() - _server_start_time)
+            })
+            return
+
+        # ── Auth-gated endpoints ──
         if not authenticate_request(self.headers, qs):
             self.send_error(401, 'Unauthorized')
             return
 
         if path == '/api/stats':
+            # Update collector's query params so background thread uses latest settings
+            _bg.update_qs(qs)
+            cached = _bg.get()
+            # First-hit fallback: collector may not have run yet
             try:
-                self._json(collect_stats(qs))
+                self._json(cached if cached else collect_stats(qs))
             except Exception as e:
                 logger.exception('Error in /api/stats')
                 self._json({'error': str(e)}, 500)
 
         elif path == '/api/settings':
-            # Return web settings from YAML
-            settings = read_yaml_settings()
-            self._json(settings)
+            self._json(read_yaml_settings())
 
         elif path == '/api/stream':
+            _bg.update_qs(qs)
             self.send_response(200)
             self.send_header('Content-Type',  'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection',    'keep-alive')
             self.end_headers()
             try:
+                # Send first frame immediately from cache or fresh
+                first = _bg.get() or collect_stats(qs)
+                self.wfile.write(f'data: {json.dumps(first)}\n\n'.encode())
+                self.wfile.flush()
                 while not _shutdown_flag.is_set():
-                    data = collect_stats(qs)
-                    msg  = f'data: {json.dumps(data)}\n\n'.encode()
-                    self.wfile.write(msg)
-                    self.wfile.flush()
-                    for _ in range(5):
-                        if _shutdown_flag.is_set():
-                            return
-                        time.sleep(1)
+                    _shutdown_flag.wait(5)
+                    if _shutdown_flag.is_set():
+                        break
+                    data = _bg.get()
+                    if data:
+                        self.wfile.write(f'data: {json.dumps(data)}\n\n'.encode())
+                        self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             except Exception as e:
@@ -2047,16 +2291,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if log_type == 'syserr':
                 text = run(['journalctl', '-p', '3', '-n', '25', '--no-pager'], timeout=4)
             elif log_type == 'action':
-                try:
-                    text = strip_ansi(open(ACTION_LOG).read())
-                except FileNotFoundError:
-                    text = 'No recent actions.'
+                try:    text = strip_ansi(open(ACTION_LOG).read())
+                except FileNotFoundError: text = 'No recent actions.'
             elif log_type == 'backup':
                 try:
                     lines = open(os.path.join(LOG_DIR, 'backup-to-nas.log')).readlines()
                     text  = strip_ansi(''.join(lines[-30:]))
-                except FileNotFoundError:
-                    text = 'No backup log found.'
+                except FileNotFoundError: text = 'No backup log found.'
             else:
                 text = 'Unknown log type.'
             body = (text or 'Empty.').encode()
@@ -2067,10 +2308,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
         elif path == '/api/action-log':
-            try:
-                text = strip_ansi(open(ACTION_LOG).read())
-            except FileNotFoundError:
-                text = 'Waiting for output...'
+            try:    text = strip_ansi(open(ACTION_LOG).read())
+            except FileNotFoundError: text = 'Waiting for output…'
             body = text.encode()
             self.send_response(200)
             self.send_header('Content-Type', 'text/plain; charset=utf-8')
@@ -2081,61 +2320,58 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        path = self.path
+        path = self.path.split('?')[0]
+        ip   = self._client_ip()
 
-        # Public login endpoint
+        # ── Login (public, rate-limited) ──
         if path == '/api/login':
+            if _rate_limiter.is_locked(ip):
+                self._json({'error': 'Too many failed attempts. Try again shortly.'}, 429)
+                return
             try:
-                length = int(self.headers.get('Content-Length', 0))
-                body   = json.loads(self.rfile.read(length))
+                length   = int(self.headers.get('Content-Length', 0))
+                body     = json.loads(self.rfile.read(length))
                 username = body.get('username', '')
                 password = body.get('password', '')
-                user = load_user()
-                if user and username == user[0] and verify_password(user[1], password):
-                    token = generate_token()
-                    self._json({'token': token})
+                user     = load_user()
+                if user and secrets.compare_digest(username, user[0]) and verify_password(user[1], password):
+                    _rate_limiter.reset(ip)
+                    self._json({'token': generate_token()})
                 else:
-                    self._json({'error': 'Invalid credentials'}, 401)
+                    locked = _rate_limiter.record_failure(ip)
+                    msg    = 'Too many failed attempts. Try again shortly.' if locked else 'Invalid credentials'
+                    self._json({'error': msg}, 401)
             except Exception as e:
                 logger.exception('Error in /api/login')
                 self._json({'error': str(e)}, 500)
             return
 
-        # Public logout endpoint (no auth required, but we check token in query/header)
+        # ── Logout (public — idempotent) ──
         if path == '/api/logout':
-            # Try to get token from Authorization header or query string
-            token = None
-            auth_header = self.headers.get('Authorization', '')
-            if auth_header.startswith('Bearer '):
-                token = auth_header[7:]
-            else:
-                # Check query string for token
-                parsed = urlparse(self.path)
-                qs = parse_qs(parsed.query)
-                if 'token' in qs:
-                    token = qs['token'][0]
-            if token and token in tokens:
-                del tokens[token]
-                self._json({'status': 'ok'})
-            else:
-                # Still return 200 even if token not found (idempotent)
-                self._json({'status': 'ok'})
+            parsed = urlparse(self.path)
+            qs     = parse_qs(parsed.query)
+            token  = None
+            auth   = self.headers.get('Authorization', '')
+            if auth.startswith('Bearer '):
+                token = auth[7:]
+            elif 'token' in qs:
+                token = qs['token'][0]
+            if token:
+                revoke_token(token)
+            self._json({'status': 'ok'})
             return
 
-        # All other POST endpoints require authentication
+        # ── Auth-gated POSTs ──
         if not authenticate_request(self.headers):
             self.send_error(401, 'Unauthorized')
             return
 
         if path == '/api/settings':
-            # Save web settings to YAML
             try:
                 length = int(self.headers.get('Content-Length', 0))
                 body   = json.loads(self.rfile.read(length))
-                if write_yaml_settings(body):
-                    self._json({'status': 'ok'})
-                else:
-                    self._json({'error': 'Failed to write settings'}, 500)
+                self._json({'status': 'ok'} if write_yaml_settings(body)
+                           else {'error': 'Failed to write settings'}, 200 if write_yaml_settings(body) else 500)
             except Exception as e:
                 logger.exception('Error in /api/settings POST')
                 self._json({'error': str(e)}, 500)
@@ -2145,10 +2381,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 length = int(self.headers.get('Content-Length', 0))
                 body   = json.loads(self.rfile.read(length))
                 script = body.get('script', '')
-
                 with open(ACTION_LOG, 'w') as f:
                     f.write(f'>> [{datetime.now().strftime("%H:%M:%S")}] Initiating: {script}\n\n')
-
                 success = False
                 if script == 'speedtest':
                     with open(ACTION_LOG, 'a') as f:
@@ -2171,7 +2405,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 else:
                     with open(ACTION_LOG, 'a') as f:
                         f.write(f'[ERROR] Unknown script: {script}\n')
-
                 self._json({'success': success})
             except subprocess.TimeoutExpired:
                 self._json({'success': False, 'error': 'Script timed out'})
@@ -2181,24 +2414,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         elif path == '/api/service-control':
             try:
-                length = int(self.headers.get('Content-Length', 0))
-                body   = json.loads(self.rfile.read(length))
-                svc    = body.get('service', '').strip()
-                action = body.get('action',  '').strip()
-                is_user= bool(body.get('is_user', False))
-
+                length  = int(self.headers.get('Content-Length', 0))
+                body    = json.loads(self.rfile.read(length))
+                svc     = body.get('service', '').strip()
+                action  = body.get('action',  '').strip()
+                is_user = bool(body.get('is_user', False))
                 if action not in ALLOWED_ACTIONS:
                     return self._json({'success': False, 'error': f'Action "{action}" not allowed'})
                 if not svc:
                     return self._json({'success': False, 'error': 'No service name provided'})
                 if not validate_service_name(svc):
                     return self._json({'success': False, 'error': 'Invalid service name'})
-
                 cmd = (['systemctl', '--user', action, svc] if is_user
                        else ['sudo', '-n', 'systemctl', action, svc])
                 r   = subprocess.run(cmd, timeout=10, capture_output=True)
-                self._json({'success': r.returncode == 0,
-                            'stderr': r.stderr.decode().strip()})
+                self._json({'success': r.returncode == 0, 'stderr': r.stderr.decode().strip()})
             except Exception as e:
                 self._json({'success': False, 'error': str(e)})
 
@@ -2210,41 +2440,40 @@ class ThreadingHTTPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads      = True
 
-
-# Global server reference for signal handler
-server = None
+server = None   # global ref for signal handler
 
 if __name__ == '__main__':
-    # Write PID file
     try:
         with open(PID_FILE, 'w') as f:
             f.write(str(os.getpid()))
     except Exception as e:
-        logger.warning(f"Could not write PID file: {e}")
+        logger.warning(f'Could not write PID file: {e}')
+
+    # Start background threads
+    _bg.start()
+    threading.Thread(target=_token_cleanup_loop, daemon=True, name='token-cleanup').start()
 
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    logger.warning(f'Serving at http://{HOST}:{PORT}')
-    print(f"Noba server starting at http://{HOST}:{PORT}", file=sys.stderr)
+    logger.warning(f'Serving at http://{HOST}:{PORT}  (v{VERSION})')
+    print(f'Noba server v{VERSION} starting at http://{HOST}:{PORT}', file=sys.stderr)
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        logger.info('Shutting down…')
     except Exception as e:
-        logger.exception("Unhandled exception")
+        logger.exception('Unhandled exception')
     finally:
         _shutdown_flag.set()
         server.shutdown()
-        try:
-            os.unlink(PID_FILE)
-        except Exception:
-            pass
-        logger.info("Server stopped.")
+        try:   os.unlink(PID_FILE)
+        except Exception: pass
+        logger.info('Server stopped.')
 PYEOF
 
 chmod +x "$HTML_DIR/server.py"
 
-# ── Launch with health check ─────────────────────────────────────────────────
+# ── Launch server ─────────────────────────────────────────────────────────────
 kill_server
 
 export PORT HOST PID_FILE="$SERVER_PID_FILE" NOBA_SCRIPT_DIR="$SCRIPT_DIR" NOBA_CONFIG="$NOBA_YAML"
@@ -2254,26 +2483,23 @@ cd "$HTML_DIR"
 nohup python3 server.py >> "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$SERVER_PID_FILE"
+echo "http://${HOST}:${PORT}" > "$SERVER_URL_FILE"
 
-# Determine health check command
-if command -v curl &>/dev/null; then
-    CHECK_CMD="curl -s -o /dev/null -w '%{http_code}'"
-    CHECK_URL="http://${HOST}:${PORT}/"
-elif command -v wget &>/dev/null; then
-    CHECK_CMD="wget -q --spider --server-response"
-    CHECK_URL="http://${HOST}:${PORT}/"
-else
-    log_error "Neither curl nor wget found, cannot verify server start."
-    exit 1
-fi
-
+# Health-check with fallback
 MAX_WAIT=10
 WAITED=0
-while ! $CHECK_CMD "$CHECK_URL" 2>&1 | grep -q "200"; do
-    sleep 1
-    WAITED=$((WAITED + 1))
+while true; do
+    if command -v curl &>/dev/null; then
+        CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://${HOST}:${PORT}/api/health" 2>/dev/null || true)
+    elif command -v wget &>/dev/null; then
+        CODE=$(wget -qO- "http://${HOST}:${PORT}/api/health" 2>/dev/null | python3 -c "import sys,json; print(200 if json.load(sys.stdin).get('status')=='ok' else 0)" 2>/dev/null || true)
+    else
+        log_error "Neither curl nor wget found."; exit 1
+    fi
+    [[ "$CODE" == "200" ]] && break
+    sleep 1; WAITED=$((WAITED+1))
     if [[ $WAITED -ge $MAX_WAIT ]]; then
-        log_error "Server did not respond within ${MAX_WAIT} seconds. Last 20 lines of log:"
+        log_error "Server did not respond within ${MAX_WAIT}s. Last 20 lines of log:"
         tail -20 "$LOG_FILE" | sed 's/^/  /' >&2
         kill "$SERVER_PID" 2>/dev/null || true
         exit 1
@@ -2283,15 +2509,12 @@ done
 log_success "Dashboard live → http://${HOST}:${PORT}"
 
 if [[ "$VERBOSE" == true ]]; then
-    log_info "Tailing log file (Ctrl+C to stop)..."
+    log_info "Tailing log (Ctrl+C to stop)…"
     tail -f "$LOG_FILE" &
     TAIL_PID=$!
 fi
 
-# Block and wait for the Python server (keeps systemd happy)
 wait "$SERVER_PID"
 EXIT_CODE=$?
-
-# Cleanup if stopped
 [[ -n "${TAIL_PID:-}" ]] && kill "$TAIL_PID" 2>/dev/null || true
 exit $EXIT_CODE
