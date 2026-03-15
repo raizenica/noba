@@ -202,15 +202,15 @@ acquire_lock() {
 _NOBA_CLEANUP_DIRS=()
 
 _noba_cleanup() {
-
     local dir
-
-    for dir in "${_NOBA_CLEANUP_DIRS[@]:-}"; do
-        [[ -d "$dir" ]] && rm -rf "$dir"
+    for dir in "${_NOBA_CLEANUP_DIRS[@]}"; do
+        # Only act if dir is non‑empty and actually a directory
+        if [[ -n "$dir" && -d "$dir" ]]; then
+            rm -rf "$dir"
+        fi
     done
+    return 0   # ensure the function itself returns success
 }
-
-trap '_noba_cleanup' EXIT
 
 make_temp_dir() {
 

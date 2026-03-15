@@ -1,19 +1,30 @@
 #!/bin/bash
-# noba-web.sh – Nobara Command Center v8.0.0
-# Improvements: SSE streaming, parallel radar/services, CPU sparklines,
-#   containers module, network I/O, toast notifications, alerts panel,
-#   service-action allowlist, better error handling, full UI redesign.
+# noba-web.sh – Nobara Command Center v8.2.0
+# New: Simple token authentication with login page.
+# Improvements over v8.1.0:
+#   - Added --set-password to configure credentials.
+#   - Login modal, token storage in localStorage.
+#   - Backend validates token for all endpoints.
 
 set -euo pipefail
+set -x                          # print every command before executing
+trap 'rc=$?; echo "Exiting with code $rc at line $LINENO" >&2' EXIT
 
 # ── Test harness compliance ─────────────────────────────────────────────────
 if [[ "${1:-}" == "--help"           ]]; then echo "Usage: noba-web.sh [OPTIONS]"; exit 0; fi
-if [[ "${1:-}" == "--version"        ]]; then echo "noba-web.sh version 8.0.0"; exit 0; fi
+if [[ "${1:-}" == "--version"        ]]; then echo "noba-web.sh version 8.2.0"; exit 0; fi
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./noba-lib.sh
 source "$SCRIPT_DIR/noba-lib.sh"
+
+# ── Load optional config file ───────────────────────────────────────────────
+CONFIG_FILE="${HOME}/.config/noba-web.conf"
+if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+fi
 
 START_PORT="${START_PORT:-8080}"
 MAX_PORT="${MAX_PORT:-8090}"
@@ -21,9 +32,11 @@ HTML_DIR="${HTML_DIR:-/tmp/noba-web}"
 SERVER_PID_FILE="${SERVER_PID_FILE:-/tmp/noba-web-server.pid}"
 LOG_FILE="${LOG_FILE:-/tmp/noba-web.log}"
 KILL_ONLY=false
+VERBOSE=false
 HOST="${HOST:-0.0.0.0}"
+SET_PASSWORD=false
 
-show_version() { echo "noba-web.sh version 8.0.0"; exit 0; }
+show_version() { echo "noba-web.sh version 8.2.0"; exit 0; }
 
 show_help() {
     cat <<EOF
@@ -35,8 +48,13 @@ Options:
   -m, --max  PORT   Maximum port to try (default: 8090)
   --host     HOST   Bind to specific host/IP (default: 0.0.0.0)
   -k, --kill        Kill any running noba-web server and exit
+  -v, --verbose     After starting, tail the server log (Ctrl+C to stop)
+  --set-password    Set or change the login credentials
   --help            Show this help message
   --version         Show version information
+
+Configuration file: ~/.config/noba-web.conf (optional)
+  You can set default values for START_PORT, MAX_PORT, HOST, etc.
 EOF
     exit 0
 }
@@ -70,7 +88,7 @@ find_free_port() {
     return 1
 }
 
-if ! PARSED_ARGS=$(getopt -o p:m:k -l port:,max:,host:,kill,help,version -- "$@" 2>/dev/null); then
+if ! PARSED_ARGS=$(getopt -o p:m:kv -l port:,max:,host:,kill,verbose,help,version,set-password -- "$@" 2>/dev/null); then
     log_error "Invalid argument. Run with --help for usage."; exit 1
 fi
 eval set -- "$PARSED_ARGS"
@@ -81,6 +99,8 @@ while true; do
         -m|--max)   MAX_PORT="$2";   shift 2 ;;
         --host)     HOST="$2";       shift 2 ;;
         -k|--kill)  KILL_ONLY=true;  shift   ;;
+        -v|--verbose) VERBOSE=true;  shift   ;;
+        --set-password) SET_PASSWORD=true; shift ;;
         --help)     show_help ;;
         --version)  show_version ;;
         --)         shift; break ;;
@@ -88,16 +108,42 @@ while true; do
     esac
 done
 
+# Handle password setup
+if [[ "$SET_PASSWORD" == true ]]; then
+    echo "Setting up login credentials for Nobara Web Dashboard"
+    read -p "Username: " username
+    read -s -p "Password: " password
+    echo
+    mkdir -p "$HOME/.config/noba-web"
+    python3 -c "
+import hashlib, secrets, sys
+salt = secrets.token_hex(16)
+hash = hashlib.sha256((salt + sys.argv[2]).encode()).hexdigest()
+with open(sys.argv[1], 'w') as f:
+    f.write(f'{sys.argv[3]}:{salt}:{hash}')
+" "$HOME/.config/noba-web/auth.conf" "$password" "$username"
+    echo "Credentials saved to ~/.config/noba-web/auth.conf"
+    exit 0
+fi
+
 if [[ "$KILL_ONLY" == true ]]; then kill_server; exit 0; fi
 
 check_deps python3
+
+# Check Python version (need >=3.7 for subprocess.run(capture_output=True))
+PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
+if ! awk -v ver="$PYTHON_VERSION" 'BEGIN { split(ver, v, "."); exit !(v[1] > 3 || (v[1] == 3 && v[2] >= 7)); }'; then
+    log_error "Python 3.7 or higher is required (found $PYTHON_VERSION)."
+    exit 1
+fi
+
 PORT=$(find_free_port "$START_PORT" "$MAX_PORT") || die "No free port in range ${START_PORT}–${MAX_PORT}."
 log_info "Using port $PORT"
 
 mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py 2>/dev/null || true
 
-# ── Write index.html ────────────────────────────────────────────────────────
+# ── Write index.html (full, with login modal) ───────────────────────────────
 cat > "$HTML_DIR/index.html" <<'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -872,6 +918,28 @@ cat > "$HTML_DIR/index.html" <<'HTMLEOF'
     </div>
 </div>
 
+<!-- ── Login Modal (shown if not authenticated) ── -->
+<div x-show="!authenticated" class="modal-overlay" style="display:none">
+    <div class="modal-box" style="max-width:400px">
+        <div class="modal-title"><i class="fas fa-lock" style="color:var(--accent)"></i> Login</div>
+        <div style="margin:1rem 0">
+            <label class="field-label">Username</label>
+            <input class="field-input" type="text" x-model="loginUsername" @keyup.enter="doLogin">
+        </div>
+        <div style="margin:1rem 0">
+            <label class="field-label">Password</label>
+            <input class="field-input" type="password" x-model="loginPassword" @keyup.enter="doLogin">
+        </div>
+        <div class="settings-footer">
+            <button class="btn btn-primary" @click="doLogin" :disabled="loginLoading">
+                <i class="fas fa-spinner fa-spin" x-show="loginLoading"></i>
+                <span x-show="!loginLoading">Login</span>
+            </button>
+        </div>
+        <p x-show="loginError" class="alert danger" style="margin-top:0.5rem" x-text="loginError"></p>
+    </div>
+</div>
+
 <!-- ── Toasts ── -->
 <div class="toasts">
     <template x-for="t in toasts" :key="t.id">
@@ -908,6 +976,13 @@ function dashboard() {
         modalTitle:'', modalOutput:'', runningScript:false, refreshing:false,
         toasts:[], _es:null, _poll:null,
 
+        // Authentication properties
+        authenticated: localStorage.getItem('noba-token') ? true : false,
+        loginUsername: '',
+        loginPassword: '',
+        loginLoading: false,
+        loginError: '',
+
         get cpuTempClass() { const t=parseInt(this.cpuTemp)||0; return t>80?'bd':t>65?'bw':'bn'; },
         get gpuTempClass() { const t=parseInt(this.gpuTemp)||0; return t>85?'bd':t>70?'bw':'bn'; },
 
@@ -932,23 +1007,26 @@ function dashboard() {
 
         async init() {
             this.initSortable();
-            await this.fetchLog();
-            this.connectSSE();
-            setInterval(() => { if(this.vis.logs) this.fetchLog(); }, 12000);
+            if (this.authenticated) {
+                await this.fetchLog();
+                this.connectSSE();
+                setInterval(() => { if(this.vis.logs) this.fetchLog(); }, 12000);
+            }
         },
 
         connectSSE() {
+            if (!this.authenticated) return;
             if (this._es)   { this._es.close(); this._es = null; }
             if (this._poll) { clearInterval(this._poll); this._poll = null; }
 
-            const qs = `services=${encodeURIComponent(this.monitoredServices)}&radar=${encodeURIComponent(this.radarIps)}&pihole=${encodeURIComponent(this.piholeUrl)}&piholetok=${encodeURIComponent(this.piholeToken)}`;
+            const token = localStorage.getItem('noba-token');
+            const qs = `services=${encodeURIComponent(this.monitoredServices)}&radar=${encodeURIComponent(this.radarIps)}&pihole=${encodeURIComponent(this.piholeUrl)}&piholetok=${encodeURIComponent(this.piholeToken)}&token=${encodeURIComponent(token)}`;
             this._es = new EventSource(`/api/stream?${qs}`);
             this._es.onmessage = (e) => {
                 try { Object.assign(this, JSON.parse(e.data)); } catch {}
             };
             this._es.onerror = () => {
                 this._es.close(); this._es = null;
-                // Fallback to polling if SSE fails
                 setTimeout(() => {
                     this.refreshStats();
                     this._poll = setInterval(() => this.refreshStats(), 5000);
@@ -957,12 +1035,16 @@ function dashboard() {
         },
 
         async refreshStats() {
-            if (this.refreshing) return;
+            if (!this.authenticated || this.refreshing) return;
             this.refreshing = true;
+            const token = localStorage.getItem('noba-token');
             try {
                 const url = `/api/stats?services=${encodeURIComponent(this.monitoredServices)}&radar=${encodeURIComponent(this.radarIps)}&pihole=${encodeURIComponent(this.piholeUrl)}&piholetok=${encodeURIComponent(this.piholeToken)}`;
-                const res = await fetch(url);
+                const res = await fetch(url, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
                 if (res.ok) Object.assign(this, await res.json());
+                else if (res.status === 401) this.authenticated = false;
             } catch {} finally { this.refreshing = false; }
         },
 
@@ -979,7 +1061,7 @@ function dashboard() {
         applySettings() {
             this.saveSettings();
             this.showSettings = false;
-            this.connectSSE();
+            if (this.authenticated) this.connectSSE();
             this.addToast('Settings saved', 'success');
         },
 
@@ -996,18 +1078,25 @@ function dashboard() {
         },
 
         async fetchLog() {
+            if (!this.authenticated) return;
             this.logLoading = true;
+            const token = localStorage.getItem('noba-token');
             try {
-                const res = await fetch('/api/log-viewer?type=' + this.selectedLog);
-                this.logContent = await res.text();
+                const res = await fetch('/api/log-viewer?type=' + this.selectedLog, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (res.ok) this.logContent = await res.text();
+                else if (res.status === 401) this.authenticated = false;
             } catch { this.logContent = 'Failed to fetch log.'; }
             finally { this.logLoading = false; }
         },
 
         async svcAction(svc, action) {
+            if (!this.authenticated) return;
+            const token = localStorage.getItem('noba-token');
             try {
                 const res = await fetch('/api/service-control', {
-                    method:'POST', headers:{'Content-Type':'application/json'},
+                    method:'POST', headers:{'Content-Type':'application/json', 'Authorization': 'Bearer ' + token},
                     body: JSON.stringify({ service:svc.name, action, is_user:svc.is_user })
                 });
                 const d = await res.json();
@@ -1017,15 +1106,18 @@ function dashboard() {
         },
 
         async runScript(script) {
-            if (this.runningScript) return;
+            if (!this.authenticated || this.runningScript) return;
             this.runningScript = true;
             this.modalTitle = `Running: ${script}`;
             this.modalOutput = `>> [${new Date().toLocaleTimeString()}] Starting ${script}...\n`;
             this.showModal = true;
 
+            const token = localStorage.getItem('noba-token');
             const poll = setInterval(async () => {
                 try {
-                    const r = await fetch('/api/action-log');
+                    const r = await fetch('/api/action-log', {
+                        headers: { 'Authorization': 'Bearer ' + token }
+                    });
                     if (r.ok) {
                         this.modalOutput = await r.text();
                         const el = document.getElementById('console-out');
@@ -1036,7 +1128,7 @@ function dashboard() {
 
             try {
                 const res = await fetch('/api/run', {
-                    method:'POST', headers:{'Content-Type':'application/json'},
+                    method:'POST', headers:{'Content-Type':'application/json', 'Authorization': 'Bearer ' + token},
                     body: JSON.stringify({ script })
                 });
                 const result = await res.json();
@@ -1046,9 +1138,33 @@ function dashboard() {
                 this.modalTitle = '✗ Connection Error';
             } finally {
                 clearInterval(poll);
-                try { const r=await fetch('/api/action-log'); if(r.ok) this.modalOutput=await r.text(); } catch {}
+                try { const r=await fetch('/api/action-log', { headers: { 'Authorization': 'Bearer ' + token } }); if(r.ok) this.modalOutput=await r.text(); } catch {}
                 this.runningScript = false;
                 await this.refreshStats();
+            }
+        },
+
+        async doLogin() {
+            this.loginLoading = true;
+            this.loginError = '';
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ username: this.loginUsername, password: this.loginPassword })
+                });
+                const data = await res.json();
+                if (res.ok && data.token) {
+                    localStorage.setItem('noba-token', data.token);
+                    this.authenticated = true;
+                    this.init();  // re-initialize data fetching
+                } else {
+                    this.loginError = data.error || 'Login failed';
+                }
+            } catch (e) {
+                this.loginError = 'Network error';
+            } finally {
+                this.loginLoading = false;
             }
         },
 
@@ -1064,13 +1180,11 @@ function dashboard() {
 </html>
 HTMLEOF
 
-# ── Write server.py ─────────────────────────────────────────────────────────
+# ── Write server.py with improvements and authentication ─────────────────────
 cat > "$HTML_DIR/server.py" <<'PYEOF'
 #!/usr/bin/env python3
-"""Nobara Command Center – Backend v8.0.0
-New: SSE streaming, parallel pings/service-checks, CPU history,
-     network I/O rates, container detection, better error handling,
-     service-action allowlist.
+"""Nobara Command Center – Backend v8.2.0
+New: Simple token authentication.
 """
 import http.server
 import socketserver
@@ -1084,9 +1198,15 @@ import glob
 import threading
 import urllib.request
 import urllib.error
+import signal
+import sys
+import ipaddress
+import uuid
+import hashlib
+import secrets
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -1096,12 +1216,28 @@ SCRIPT_DIR = os.environ.get('NOBA_SCRIPT_DIR', os.path.expanduser('~/.local/bin'
 LOG_DIR    = os.path.expanduser('~/.local/share')
 PID_FILE   = os.environ.get('PID_FILE',  '/tmp/noba-web-server.pid')
 ACTION_LOG = '/tmp/noba-action.log'
+AUTH_CONFIG = os.path.expanduser('~/.config/noba-web/auth.conf')
 
-logging.basicConfig(
-    filename=os.path.join(LOG_DIR, 'noba-web-server.log'),
-    level=logging.WARNING,
-    format='%(asctime)s %(levelname)s %(message)s'
-)
+# Ensure log directory exists
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+except Exception:
+    pass  # if it fails, we'll fall back to console logging
+
+# Setup logging – fallback to console if file fails
+log_file = os.path.join(LOG_DIR, 'noba-web-server.log')
+try:
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(message)s'
+    )
+except Exception:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(message)s'
+    )
+logger = logging.getLogger('noba')
 
 ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 def strip_ansi(s): return ANSI_RE.sub('', s)
@@ -1115,7 +1251,71 @@ SCRIPT_MAP = {
 }
 ALLOWED_ACTIONS = {'start', 'stop', 'restart'}
 
-# ── Simple TTL cache ─────────────────────────────────────────────────────────
+# ── Authentication ────────────────────────────────────────────────────────────
+tokens = {}  # token -> expiry datetime
+
+def hash_password(password):
+    salt = secrets.token_hex(16)
+    return salt + ':' + hashlib.sha256((salt + password).encode()).hexdigest()
+
+def verify_password(stored, password):
+    if ':' not in stored:
+        return False
+    salt, hashval = stored.split(':', 1)
+    return hashval == hashlib.sha256((salt + password).encode()).hexdigest()
+
+def load_user():
+    if not os.path.exists(AUTH_CONFIG):
+        return None
+    try:
+        with open(AUTH_CONFIG) as f:
+            line = f.read().strip()
+            if ':' in line:
+                username, pwhash = line.split(':', 1)
+                return username, pwhash
+    except Exception as e:
+        logger.warning(f"Could not read auth config: {e}")
+    return None
+
+def generate_token():
+    token = str(uuid.uuid4())
+    tokens[token] = datetime.now() + timedelta(hours=24)
+    return token
+
+def validate_token(token):
+    expiry = tokens.get(token)
+    if expiry and expiry > datetime.now():
+        return True
+    if token in tokens:
+        del tokens[token]  # remove expired
+    return False
+
+def authenticate_request(headers, query=None):
+    # Try Authorization header first
+    auth_header = headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        token = auth_header[7:]
+        if validate_token(token):
+            return True
+    # Fallback to token in query string (for SSE)
+    if query and 'token' in query:
+        token = query['token'][0]
+        if validate_token(token):
+            return True
+    return False
+
+# ── Input validation ─────────────────────────────────────────────────────────
+def validate_service_name(name):
+    return bool(re.match(r'^[a-zA-Z0-9_.@-]+$', name))
+
+def validate_ip(ip):
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
+# ── Simple TTL cache (thread-safe) ─────────────────────────────────────────
 class TTLCache:
     def __init__(self):
         self._store = {}
@@ -1134,66 +1334,23 @@ class TTLCache:
 
 _cache = TTLCache()
 
-# ── Global streaming state (lock-protected) ───────────────────────────────────
+# ── Global state (lock-protected) ───────────────────────────────────────────
 _state_lock  = threading.Lock()
-
-
-
-
-
 _cpu_history = deque(maxlen=20)
 _cpu_prev    = None          # (total, idle)
 _net_prev    = None          # (rx_bytes, tx_bytes)
 _net_prev_t  = None
+_shutdown_flag = threading.Event()
 
+# ── Signal handler for graceful shutdown ───────────────────────────────────
+def sigterm_handler(signum, frame):
+    logger.info("Received SIGTERM, shutting down...")
+    _shutdown_flag.set()
+    # Shutdown the server from a separate thread because we are in a signal handler
+    threading.Thread(target=lambda: server.shutdown()).start()
+signal.signal(signal.SIGTERM, sigterm_handler)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────
 def run(cmd, timeout=3, cache_key=None, cache_ttl=30, ignore_rc=False):
     if cache_key:
         hit = _cache.get(cache_key, cache_ttl)
@@ -1205,7 +1362,8 @@ def run(cmd, timeout=3, cache_key=None, cache_ttl=30, ignore_rc=False):
         if cache_key and out:
             _cache.set(cache_key, out)
         return out
-    except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, OSError):
+    except Exception as e:
+        logger.debug(f"Command failed: {cmd} – {e}")
         return ''
 
 def human_bps(bps):
@@ -1215,7 +1373,7 @@ def human_bps(bps):
         bps /= 1024
     return f'{bps:.1f} TB/s'
 
-# ── Stats collectors ──────────────────────────────────────────────────────────
+# ── Stats collectors (identical to v8.0.0 but with validation) ─────────────
 def get_cpu_percent():
     global _cpu_prev
     with _state_lock:
@@ -1266,9 +1424,8 @@ def get_net_io():
 
 def ping_host(ip):
     ip = ip.strip()
-
-
-
+    if not validate_ip(ip):
+        return ip, False, 0
     try:
         t0 = time.time()
         r  = subprocess.run(['ping', '-c', '1', '-W', '1', ip],
@@ -1280,9 +1437,8 @@ def ping_host(ip):
 
 def get_service_status(svc):
     svc = svc.strip()
-
-
-
+    if not validate_service_name(svc):
+        return 'invalid', False
     for scope, is_user in ((['--user'], True), ([], False)):
         cmd = ['systemctl'] + scope + ['show', '-p', 'ActiveState,LoadState', svc]
         out = run(cmd, timeout=2)
@@ -1296,12 +1452,6 @@ def get_service_status(svc):
                     return 'timer-active', is_user
             return state, is_user
     return 'not-found', False
-
-
-
-
-
-
 
 def get_battery():
     bats = glob.glob('/sys/class/power_supply/BAT*')
@@ -1337,7 +1487,6 @@ def get_containers():
         if not out:
             continue
         try:
-            # podman returns a JSON array; docker returns one JSON object per line
             if out.lstrip().startswith('['):
                 items = json.loads(out)
             else:
@@ -1359,14 +1508,11 @@ def get_containers():
 def get_pihole(url, token):
     if not url:
         return None
-
-
-
     base = url if url.startswith('http') else 'http://' + url
     base = base.rstrip('/').replace('/admin', '')
 
     def _get(endpoint, extra_headers=None):
-        hdrs = {'User-Agent': 'noba-web/8.0', 'Accept': 'application/json'}
+        hdrs = {'User-Agent': 'noba-web/8.2.0', 'Accept': 'application/json'}
         if extra_headers:
             hdrs.update(extra_headers)
         req = urllib.request.Request(base + endpoint, headers=hdrs)
@@ -1384,7 +1530,6 @@ def get_pihole(url, token):
         dom  = data.get('gravity', {}).get('domains_being_blocked', 0)
         return {'queries': q, 'blocked': b, 'percent': round(p, 1),
                 'status': s, 'domains': f'{dom:,}'}
-
     except Exception:
         pass
 
@@ -1399,12 +1544,9 @@ def get_pihole(url, token):
             'status':  data.get('status', 'enabled'),
             'domains': f"{data.get('domains_being_blocked', 0):,}"
         }
-
-
     except Exception:
         return None
 
-# ── Main stats aggregator ─────────────────────────────────────────────────────
 def collect_stats(qs):
     stats = {'timestamp': datetime.now().strftime('%H:%M:%S')}
 
@@ -1440,23 +1582,19 @@ def collect_stats(qs):
         stats.setdefault('loadavg', '--')
         stats.setdefault('memPercent', 0)
 
-    # CPU
     cpu_pct = get_cpu_percent()
     stats['cpuPercent'] = cpu_pct
-    stats['cpuHistory'] = list(_cpu_history)
+    with _state_lock:
+        stats['cpuHistory'] = list(_cpu_history)
 
-
-    # Network I/O
     rx_bps, tx_bps = get_net_io()
     stats['netRx'] = human_bps(rx_bps)
     stats['netTx'] = human_bps(tx_bps)
 
-    # CPU temp
     sensors = run(['sensors'], timeout=2, cache_key='sensors', cache_ttl=5)
     m = re.search(r'(?:Tctl|Package id \d+|Core 0|temp1).*?\+?(\d+\.?\d*)[°℃]', sensors)
     stats['cpuTemp'] = f'{int(float(m.group(1)))}°C' if m else 'N/A'
 
-    # GPU temp
     gpu_t = run(['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader'],
                 timeout=2, cache_key='nvidia-temp', cache_ttl=5)
     if not gpu_t:
@@ -1474,7 +1612,6 @@ def collect_stats(qs):
                   cache_key='lspci', cache_ttl=3600)
     stats['hwGpu'] = raw_gpu.replace('\n', '<br>') if raw_gpu else 'Unknown GPU'
 
-    # Disks
     disks = []
     for line in run(['df', '-BM'], cache_key='df', cache_ttl=10).splitlines()[1:]:
         parts = line.split()
@@ -1493,7 +1630,6 @@ def collect_stats(qs):
                 pass
     stats['disks'] = disks
 
-    # ZFS
     zfs_out = run(['zpool', 'list', '-H', '-o', 'name,health'], timeout=3,
                   cache_key='zpool', cache_ttl=15)
     pools = []
@@ -1503,7 +1639,6 @@ def collect_stats(qs):
             pools.append({'name': n.strip(), 'health': h.strip()})
     stats['zfs'] = {'pools': pools}
 
-    # Top processes
     cpu_ps = run(['ps', 'ax', '--format', 'comm,%cpu', '--sort', '-%cpu'], timeout=2)
     mem_ps = run(['ps', 'ax', '--format', 'comm,%mem', '--sort', '-%mem'], timeout=2)
     def parse_ps(out):
@@ -1516,7 +1651,7 @@ def collect_stats(qs):
     stats['topCpu'] = parse_ps(cpu_ps)
     stats['topMem'] = parse_ps(mem_ps)
 
-    # ── Parallel: services + radar + pihole + containers ──
+    # ── Parallel tasks with validation ──
     svc_list  = [s.strip() for s in qs.get('services', [''])[0].split(',') if s.strip()]
     ip_list   = [ip.strip() for ip in qs.get('radar',   [''])[0].split(',') if ip.strip()]
     ph_url    = qs.get('pihole',    [''])[0]
@@ -1580,7 +1715,6 @@ def collect_stats(qs):
     stats['alerts'] = alerts
     return stats
 
-
 # ── HTTP handler ──────────────────────────────────────────────────────────────
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -1602,31 +1736,44 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         qs     = parse_qs(parsed.query)
         path   = parsed.path
 
+        # Public endpoints (no auth required)
+        if path == '/api/login' or path == '/' or path == '/index.html':
+            super().do_GET()
+            return
+
+        # All other endpoints require authentication
+        if not authenticate_request(self.headers, qs):
+            self.send_error(401, 'Unauthorized')
+            return
+
         if path == '/api/stats':
             try:
                 self._json(collect_stats(qs))
             except Exception as e:
-                logging.exception('Error in /api/stats')
+                logger.exception('Error in /api/stats')
                 self._json({'error': str(e)}, 500)
 
         elif path == '/api/stream':
-            # Server-Sent Events – push stats every 5 s
             self.send_response(200)
             self.send_header('Content-Type',  'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection',    'keep-alive')
             self.end_headers()
             try:
-                while True:
+                while not _shutdown_flag.is_set():
                     data = collect_stats(qs)
                     msg  = f'data: {json.dumps(data)}\n\n'.encode()
                     self.wfile.write(msg)
                     self.wfile.flush()
-                    time.sleep(5)
+                    # sleep in small chunks to notice shutdown early
+                    for _ in range(5):
+                        if _shutdown_flag.is_set():
+                            return
+                        time.sleep(1)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass  # client disconnected
             except Exception as e:
-                logging.warning(f'SSE stream error: {e}')
+                logger.warning(f'SSE stream error: {e}')
 
         elif path == '/api/log-viewer':
             log_type = qs.get('type', ['syserr'])[0]
@@ -1663,13 +1810,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
-        elif path in ('/', '/index.html'):
-            super().do_GET()
         else:
             self.send_error(404)
 
     def do_POST(self):
         path = self.path
+
+        # Public login endpoint
+        if path == '/api/login':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body   = json.loads(self.rfile.read(length))
+                username = body.get('username', '')
+                password = body.get('password', '')
+                user = load_user()
+                if user and username == user[0] and verify_password(user[1], password):
+                    token = generate_token()
+                    self._json({'token': token})
+                else:
+                    self._json({'error': 'Invalid credentials'}, 401)
+            except Exception as e:
+                logger.exception('Error in /api/login')
+                self._json({'error': str(e)}, 500)
+            return
+
+        # All other POST endpoints require authentication
+        if not authenticate_request(self.headers):
+            self.send_error(401, 'Unauthorized')
+            return
 
         if path == '/api/run':
             try:
@@ -1707,7 +1875,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except subprocess.TimeoutExpired:
                 self._json({'success': False, 'error': 'Script timed out'})
             except Exception as e:
-                logging.exception('Error in /api/run')
+                logger.exception('Error in /api/run')
                 self._json({'success': False, 'error': str(e)})
 
         elif path == '/api/service-control':
@@ -1722,6 +1890,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return self._json({'success': False, 'error': f'Action "{action}" not allowed'})
                 if not svc:
                     return self._json({'success': False, 'error': 'No service name provided'})
+                if not validate_service_name(svc):
+                    return self._json({'success': False, 'error': 'Invalid service name'})
 
                 cmd = (['systemctl', '--user', action, svc] if is_user
                        else ['sudo', '-n', 'systemctl', action, svc])
@@ -1740,18 +1910,40 @@ class ThreadingHTTPServer(socketserver.ThreadingTCPServer):
     daemon_threads      = True   # SSE threads die with the main process
 
 
-if __name__ == '__main__':
-    with open(PID_FILE, 'w') as f:
-        f.write(str(os.getpid()))
+# Global server reference for signal handler
+server = None
 
-    with ThreadingHTTPServer((HOST, PORT), Handler) as httpd:
-        logging.warning(f'Serving at http://{HOST}:{PORT}')
-        httpd.serve_forever()
+if __name__ == '__main__':
+    # Write PID file
+    try:
+        with open(PID_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+    except Exception as e:
+        logger.warning(f"Could not write PID file: {e}")
+
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    logger.warning(f'Serving at http://{HOST}:{PORT}')
+    print(f"Noba server starting at http://{HOST}:{PORT}", file=sys.stderr)
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+    except Exception as e:
+        logger.exception("Unhandled exception")
+    finally:
+        _shutdown_flag.set()
+        server.shutdown()
+        try:
+            os.unlink(PID_FILE)
+        except Exception:
+            pass
+        logger.info("Server stopped.")
 PYEOF
 
 chmod +x "$HTML_DIR/server.py"
 
-# ── Launch ──────────────────────────────────────────────────────────────────
+# ── Launch with health check ─────────────────────────────────────────────────
 kill_server
 
 export PORT HOST PID_FILE="$SERVER_PID_FILE" NOBA_SCRIPT_DIR="$SCRIPT_DIR"
@@ -1762,10 +1954,24 @@ nohup python3 server.py >> "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$SERVER_PID_FILE"
 
-sleep 2
-if kill -0 "$SERVER_PID" 2>/dev/null; then
-    log_success "Dashboard live → http://${HOST}:${PORT}"
-else
-    log_error "Server failed to start. Check: $LOG_FILE"
-    exit 1
+# Health check: wait for server to respond
+MAX_WAIT=10
+WAITED=0
+while ! curl -s -o /dev/null -w "%{http_code}" "http://${HOST}:${PORT}/" | grep -q "200"; do
+    sleep 1
+    WAITED=$((WAITED + 1))
+    if [[ $WAITED -ge $MAX_WAIT ]]; then
+        log_error "Server did not respond within ${MAX_WAIT} seconds. Last 20 lines of log:"
+        tail -20 "$LOG_FILE" | sed 's/^/  /' >&2
+        kill "$SERVER_PID" 2>/dev/null || true
+        exit 1
+    fi
+done
+
+log_success "Dashboard live → http://${HOST}:${PORT}"
+
+if [[ "$VERBOSE" == true ]]; then
+    log_info "Tailing log file (Ctrl+C to stop)..."
+    tail -f "$LOG_FILE"
 fi
+exit 0
