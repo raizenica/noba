@@ -320,3 +320,8 @@ if [[ -f "$HOME/.config/noba/noba-lib.local.sh" ]]; then
     # shellcheck source=/dev/null
     source "$HOME/.config/noba/noba-lib.local.sh"
 fi
+
+log_verbose() {
+    [[ "${VERBOSE:-false}" == true ]] && \
+        printf "%b[%s] [VERBOSE]%b %s\n" "$CYAN" "$(_timestamp)" "$NC" "$*"
+}
