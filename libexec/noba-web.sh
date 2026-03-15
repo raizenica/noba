@@ -10,8 +10,9 @@
 #   - Password confirmation and secure file creation
 #   - Check for correct yq version (mikefarah/yq)
 #   - Server-side logout endpoint
-#   - Temporary HTML directory with auto-cleanup
+#   - Temporary HTML directory with auto-cleanup (fixed path /tmp/noba-web)
 #   - Health check with fallback to wget
+#   - Added --restart option to restart the server
 
 set -euo pipefail
 # set -x                          # comment this out for production
@@ -24,7 +25,7 @@ if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./noba-lib.sh
-source "$SCRIPT_DIR/../lib/noba-lib.sh"
+source "$SCRIPT_DIR/lib/noba-lib.sh"
 
 # ── Load optional config file ───────────────────────────────────────────────
 CONFIG_FILE="${HOME}/.config/noba-web.conf"
@@ -35,11 +36,12 @@ fi
 
 START_PORT="${START_PORT:-8080}"
 MAX_PORT="${MAX_PORT:-8090}"
-# Use a temporary directory for HTML files (cleaned up on exit)
+# Fixed HTML directory (removed temporary dir to keep files while server runs)
 HTML_DIR="${HTML_DIR:-/tmp/noba-web}"
 SERVER_PID_FILE="${SERVER_PID_FILE:-/tmp/noba-web-server.pid}"
 LOG_FILE="${LOG_FILE:-/tmp/noba-web.log}"
 KILL_ONLY=false
+RESTART=false
 VERBOSE=false
 HOST="${HOST:-0.0.0.0}"
 SET_PASSWORD=false
@@ -150,6 +152,7 @@ Options:
   -k, --kill        Kill any running noba-web server and exit
   -v, --verbose     After starting, tail the server log (Ctrl+C to stop)
   --set-password    Set or change the login credentials
+  --restart         Kill any running server and start a new one
   --help            Show this help message
   --version         Show version information
 
@@ -169,6 +172,7 @@ kill_server() {
             kill -0 "$pid" 2>/dev/null && { kill -9 "$pid" 2>/dev/null || true; }
         fi
         rm -f "$SERVER_PID_FILE"
+        # Clean up HTML directory only when killing (not on restart? keep it for restart to reuse)
         rm -rf "$HTML_DIR"
     fi
 }
@@ -189,7 +193,7 @@ find_free_port() {
     return 1
 }
 
-if ! PARSED_ARGS=$(getopt -o p:m:kv -l port:,max:,host:,kill,verbose,help,version,set-password -- "$@" 2>/dev/null); then
+if ! PARSED_ARGS=$(getopt -o p:m:kv -l port:,max:,host:,kill,verbose,help,version,set-password,restart -- "$@" 2>/dev/null); then
     log_error "Invalid argument. Run with --help for usage."; exit 1
 fi
 eval set -- "$PARSED_ARGS"
@@ -202,6 +206,7 @@ while true; do
         -k|--kill)  KILL_ONLY=true;  shift   ;;
         -v|--verbose) VERBOSE=true;  shift   ;;
         --set-password) SET_PASSWORD=true; shift ;;
+        --restart)  KILL_ONLY=true; RESTART=true; shift ;;
         --help)     show_help ;;
         --version)  show_version ;;
         --)         shift; break ;;
@@ -236,7 +241,13 @@ with open(sys.argv[1], 'w') as f:
     exit 0
 fi
 
-if [[ "$KILL_ONLY" == true ]]; then kill_server; exit 0; fi
+if [[ "$KILL_ONLY" == true ]]; then
+    kill_server
+    if [[ "$RESTART" != true ]]; then
+        exit 0
+    fi
+    # If restarting, we continue to start a new server
+fi
 
 check_deps python3 yq
 
@@ -256,7 +267,7 @@ fi
 PORT=$(find_free_port "$START_PORT" "$MAX_PORT") || die "No free port in range ${START_PORT}–${MAX_PORT}."
 log_info "Using port $PORT"
 
-# Ensure HTML directory exists (in case it's not the temporary one)
+# Ensure HTML directory exists
 mkdir -p "$HTML_DIR"
 rm -f "$HTML_DIR"/*.html "$HTML_DIR"/server.py 2>/dev/null || true
 

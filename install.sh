@@ -333,7 +333,7 @@ fi
 header "Installing components"
 
 # 1. Install Library
-src="$SCRIPT_DIR/lib/noba-lib.sh"
+src="$SCRIPT_DIR/libexec/lib/noba-lib.sh"
 dst="$LIBEXEC_DIR/lib/noba-lib.sh"
 if [[ -f "$src" ]]; then
     if [[ "$DRY_RUN" == true ]]; then dry "cp lib/noba-lib.sh → $LIBEXEC_DIR/lib/"; else
