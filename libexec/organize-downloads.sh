@@ -95,7 +95,7 @@ acquire_lock() {
     if ! mkdir "$lock_dir" 2>/dev/null; then
         local holder
         holder=$(cat "$lock_dir/pid" 2>/dev/null || echo "unknown")
-        die "Another instance is already running (PID $holder). Remove $lock_dir to force."
+        log_info "Another instance is already running (PID $holder). Yielding." && exit 0
     fi
     echo $$ > "$lock_dir/pid"
 
@@ -360,7 +360,7 @@ while IFS= read -r -d '' file; do
         ext=""
     fi
 
-    category="${EXT_TO_CAT[$ext]:-Others}"
+    if [[ -n "$ext" ]]; then category="${EXT_TO_CAT[$ext]:-Others}"; else category="Others"; fi
 
     if [[ -n "${CAT_TARGET[$category]:-}" ]]; then
         dest_folder="${CAT_TARGET[$category]}"

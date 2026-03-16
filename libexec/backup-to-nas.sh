@@ -70,7 +70,7 @@ if command -v get_config &>/dev/null; then
     fi
 
     DEST="$(get_config ".backup.dest"                    "$DEST")"
-    EMAIL="$(get_config ".backup.email"                  "$EMAIL")"
+    EMAIL="$(get_config ".backup.email" "$(get_config ".email" "$EMAIL")")"
     RETENTION_DAYS="$(get_config ".backup.retention_days"         "$RETENTION_DAYS")"
     KEEP_COUNT="$(get_config ".backup.keep_count"                  "$KEEP_COUNT")"
     SPACE_MARGIN_PERCENT="$(get_config ".backup.space_margin_percent" "$SPACE_MARGIN_PERCENT")"
