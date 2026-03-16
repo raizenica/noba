@@ -1,500 +1,267 @@
-#!/bin/bash
-# backup-verifier.sh – Verify backup integrity by sampling random files
-# Version: 3.0.0
+#!/usr/bin/env bash
+# backup-verifier.sh – Standalone integrity verifier for noba backup snapshots
+# Version: 1.0.0
 #
-# Bugs fixed vs 2.x:
-#   BUG-1  Glob '????????-???????' has 7 ?-marks for the time part but HHMMSS is 6 chars.
-#          → No backup dirs ever matched; script always died with "no backups found".
-#   BUG-2  mapfile -t FILES < <(find -print0 | xargs -0 printf '%s\n') reconverts
-#          NUL-delimited output back to newlines, breaking on filenames with newlines.
-#          Replaced with mapfile -d '' for true NUL-safe array population.
-#   BUG-3  Fallback randomizer used RANDOM % TOTAL — biased for N>32767; also allowed
-#          duplicate selections (same file verified twice). Rewritten with a
-#          Fisher-Yates partial shuffle so selection is always unique.
-#   BUG-4  config/.config/* path reconstruction stripped 'config/.config/' but forgot
-#          to re-add '.config/' — produced $HOME/nvim/init.lua instead of
-#          $HOME/.config/nvim/init.lua.
-#   BUG-5  Documents/* case used original="$HOME/$rel_path" where rel_path already
-#          starts with 'Documents/' → $HOME/Documents/Documents/foo — doubled directory.
-#   BUG-6  ((FAILED++)) exits 1 under set -e when FAILED==0 because ((0)) evaluates
-#          to false. All arithmetic increments changed to (( VAR++ )) || true.
-#   BUG-7  Trap composition via sed+eval is fragile when the existing trap body
-#          contains single quotes (malformed result). Replaced with a simple
-#          dedicated cleanup() function registered with trap … EXIT.
-#   BUG-8  Path reconstruction case patterns assumed backup-to-nas stored '.config'
-#          as 'config/.config/' (nested), but backup-to-nas v3 stores it as 'config/'
-#          (leading dot stripped, no nesting). Reconstruction now mirrors
-#          backup-to-nas v3's destpath_for() / the actual stored layout.
-#   BUG-9  ${backup_dirs[-1]} on an empty array under set -u is an unbound-variable
-#          error — the guard only reached die() if bash didn't abort first.
-#          Fixed by checking array length before any subscript access.
+# Verifies that files in a backup snapshot still match their originals on disk,
+# and optionally checks snapshot-to-snapshot consistency using hardlink counts.
 #
-# New in 3.0.0:
-#   --snapshot SNAP    Verify a specific snapshot instead of the latest
-#   --all              Verify the N most-recent snapshots, not just the latest
-#   --min-size BYTES   Skip files smaller than BYTES (avoids checksumming 0-byte sentinels)
-#   --json             Write a machine-readable JSON summary alongside the text report
-#   --fail-fast        Abort as soon as one file fails (useful in CI)
-#   Exit codes: 0=all OK  1=warnings (originals differ)  2=read failures  3=setup error
+# Usage:
+#   noba verify --dest /mnt/nas/backups [--snapshot 20240601-120000] [--sample N] [--full]
+#
+# Exit codes:
+#   0  All checks passed
+#   1  One or more verification failures
+#   2  Fatal error (missing dest, no snapshots found, etc.)
 
 set -euo pipefail
 
-# ── Test harness compliance ────────────────────────────────────────────────────
-if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
-if [[ "${1:-}" == "--help"    || "${1:-}" == "-h" ]]; then
-    echo "Usage: backup-verifier.sh [OPTIONS]"; exit 0
-fi
-if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
-    echo "backup-verifier.sh version 3.0.0"; exit 0
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./noba-lib.sh
+# shellcheck source=./lib/noba-lib.sh
 source "$SCRIPT_DIR/lib/noba-lib.sh"
 
-# ── Defaults ───────────────────────────────────────────────────────────────────
-BACKUP_ROOT="${BACKUP_DEST:-/mnt/vnnas/backups/raizen}"
-NUM_FILES=5
-EMAIL="${EMAIL:-}"
-CHECKSUM_CMD="sha256sum"   # upgraded from md5sum — faster on modern CPUs, collision-resistant
-DRY_RUN=false
+# ── Defaults ──────────────────────────────────────────────────────────────────
+DEST=""
+SNAPSHOT=""        # empty = use latest
+SAMPLE=20          # files to spot-check (ignored when --full is set)
+FULL_VERIFY=false  # check every file
 QUIET=false
-export VERBOSE=false
-COMPARE_ORIGINAL=false
-SEND_EMAIL=false
-SPECIFIC_SNAP=""
-VERIFY_ALL=false
-ALL_COUNT=3          # number of snapshots to verify when --all is used
-MIN_SIZE=0           # bytes; 0 = no minimum
-JSON_OUTPUT=false
-FAIL_FAST=false
+CHECK_HARDLINKS=false   # verify hardlink counts between consecutive snapshots
+LOG_FILE="${LOG_FILE:-$HOME/.local/share/backup-verifier.log}"
 
-# ── Load configuration ─────────────────────────────────────────────────────────
-if command -v get_config &>/dev/null; then
-    BACKUP_ROOT="$(get_config ".backup_verifier.dest"         "$BACKUP_ROOT")"
-    NUM_FILES="$(get_config ".backup_verifier.num_files"       "$NUM_FILES")"
-    EMAIL="$(get_config ".email"                               "$EMAIL")"
-    CHECKSUM_CMD="$(get_config ".backup_verifier.checksum_cmd" "$CHECKSUM_CMD")"
-    MIN_SIZE="$(get_config ".backup_verifier.min_size"         "$MIN_SIZE")"
-fi
-
-# ── Functions ──────────────────────────────────────────────────────────────────
-show_version() { echo "backup-verifier.sh version 3.0.0"; exit 0; }
-
+# ── Help ──────────────────────────────────────────────────────────────────────
 show_help() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Verify the integrity of one or more backups by sampling and checksumming random files.
+Verify integrity of a noba backup snapshot against the live source files.
 
 Options:
-  -b, --backup-dir DIR   Root dir containing timestamped backups (default: $BACKUP_ROOT)
-  -n, --num-files N      Files to sample per snapshot (default: $NUM_FILES)
-  -c, --compare-original Compare backup files against their originals on disk
-      --snapshot SNAP    Verify a specific snapshot by name/path (skips auto-detect)
-      --all              Verify the $ALL_COUNT most-recent snapshots (see --all-count)
-      --all-count N      How many snapshots to verify with --all (default: $ALL_COUNT)
-      --min-size BYTES   Skip files smaller than BYTES (default: 0 = no minimum)
-      --checksum-cmd CMD Checksum command (default: $CHECKSUM_CMD)
-      --send-email       Email the report (requires email configured)
-      --json             Write JSON summary to stdout (in addition to text report)
-      --fail-fast        Stop immediately on first read failure
-  -v, --verbose          Verbose output
-  -q, --quiet            Suppress non-error output
-  -D, --dry-run          Simulate without actually checksumming
-  --help                 Show this message
-  --version              Show version information
+  -d, --dest DIR          Root directory where snapshots live (required)
+  -S, --snapshot NAME     Snapshot to verify (default: latest, e.g. 20240601-120000)
+  -s, --sample N          Files to spot-check when not using --full (default: $SAMPLE)
+  -f, --full              Verify every file instead of a random sample
+  -H, --hardlinks         Also check hardlink counts between the two most-recent snapshots
+  -q, --quiet             Suppress informational output; only print failures
+      --help              Show this message and exit
 
 Exit codes:
-  0  All sampled files verified OK
-  1  One or more originals differ from backup (--compare-original only)
-  2  One or more backup files could not be read
-  3  Setup/configuration error (missing directory, bad args, etc.)
+  0  All checks passed
+  1  One or more verification failures detected
+  2  Fatal / setup error (missing dest, sha256sum unavailable, etc.)
+
+Examples:
+  noba verify --dest /mnt/nas/backups
+  noba verify --dest /mnt/nas/backups --snapshot 20240601-120000 --full
+  noba verify --dest /mnt/nas/backups --sample 50 --hardlinks
 EOF
     exit 0
 }
 
-# ── Cleanup ────────────────────────────────────────────────────────────────────
-TEMP_DIR=""
-cleanup() {
-    [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup EXIT INT TERM
-
-# ── File size (portable) ───────────────────────────────────────────────────────
-get_size() {
-    stat -c %s "$1" 2>/dev/null \
-        || stat -f %z "$1" 2>/dev/null \
-        || wc -c < "$1" 2>/dev/null | tr -d ' ' \
-        || echo 0
-}
-
-# ── BUG-3 FIX: duplicate-free random sample using Fisher-Yates partial shuffle ─
-# Usage: random_sample N array_name   → populates global SELECTED array
-random_sample() {
-    local n="$1"
-    local -n _src="$2"
-    local total="${#_src[@]}"
-
-    SELECTED=()
-
-    if (( total <= n )); then
-        SELECTED=("${_src[@]}")
-        return
-    fi
-
-    # Copy indices into a local array and do a partial Fisher-Yates shuffle
-    local -a indices
-    for (( i=0; i<total; i++ )); do indices+=("$i"); done
-
-    for (( i=0; i<n; i++ )); do
-        # Pick a random index in [i, total)
-        if command -v shuf &>/dev/null; then
-            j=$(shuf -i "$i-$(( total - 1 ))" -n 1)
-        else
-            j=$(( i + RANDOM % (total - i) ))
-        fi
-        # Swap
-        local tmp="${indices[$i]}"
-        indices[$i]="${indices[$j]}"
-        indices[$j]="$tmp"
-        SELECTED+=("${_src[${indices[$i]}]}")
-    done
-}
-
-# ── BUG-4/5/8 FIX: reconstruct original source path from backup relative path ─
-# Mirrors backup-to-nas v3's destpath_for() logic:
-#   .config  → stored as  config/
-#   .ssh     → stored as  ssh/
-#   Documents → stored as  Documents/  (top dir preserved, no doubling)
-#
-# Input:  rel_path (relative to snapshot root, e.g. "config/nvim/init.lua")
-# Output: prints the best-guess original absolute path, or empty string if unknown
-original_for() {
-    local rel="$1"
-    local top="${rel%%/*}"       # first directory component
-    local rest="${rel#*/}"       # everything after the first /
-
-    # Re-add leading dot for directories that backup-to-nas stripped it from
-    # (any source dir that started with '.' is stored without it)
-    local orig_top
-    # Heuristic: if a source with a dot-prefixed version of $top exists under $HOME, use it
-    if [[ -d "$HOME/.$top" ]]; then
-        orig_top=".$top"
-    else
-        orig_top="$top"
-    fi
-
-    # For top-level dirs that live directly in $HOME (Documents, Pictures, etc.)
-    # rel_path = "Documents/foo.pdf"  → original = $HOME/Documents/foo.pdf
-    # For dotfiles stored as "config/nvim/init.lua" → $HOME/.config/nvim/init.lua
-    echo "$HOME/$orig_top/$rest"
-}
-
-# ── Send email report ──────────────────────────────────────────────────────────
-send_report() {
-    local subject="$1" body_file="$2"
-    [[ -z "$EMAIL" ]] && { log_warn "No email address configured — skipping report."; return 0; }
-
-    if command -v msmtp &>/dev/null; then
-        { echo "Subject: $subject"; echo ""; cat "$body_file"; } | msmtp "$EMAIL"
-        log_info "Report emailed via msmtp to $EMAIL"
-    elif command -v mutt &>/dev/null; then
-        mutt -s "$subject" --quiet, "$EMAIL" < "$body_file"
-        log_info "Report emailed via mutt to $EMAIL"
-    elif command -v mail &>/dev/null; then
-        mail -s "$subject" "$EMAIL" < "$body_file"
-        log_info "Report emailed via mail to $EMAIL"
-    else
-        log_warn "No mail program found (msmtp / mutt / mail) — skipping report."
-    fi
-}
-
-# ── Verify one snapshot ────────────────────────────────────────────────────────
-# Returns: 0=ok  1=warnings  2=failures
-verify_snapshot() {
-    local snap="$1"
-    local report="$2"   # path to append results to
-
-    if [[ ! -d "$snap" ]]; then
-        log_error "Snapshot directory does not exist: $snap"
-        return 2
-    fi
-
-    log_info "Verifying snapshot: $(basename "$snap")"
-
-    # BUG-2 FIX: NUL-safe file list via mapfile -d ''
-    local -a FILES=()
-    while IFS= read -r -d '' f; do
-        # BUG min-size filter
-        if (( MIN_SIZE > 0 )); then
-            local fsz; fsz=$(get_size "$f")
-            (( fsz >= MIN_SIZE )) && FILES+=("$f")
-        else
-            FILES+=("$f")
-        fi
-    done < <(find "$snap" -type f -print0 2>/dev/null)
-
-    local total="${#FILES[@]}"
-    if (( total == 0 )); then
-        log_warn "No files found in $snap"
-        echo "  [WARN] No files found." >> "$report"
-        return 0
-    fi
-    log_verbose "  Total files in snapshot: $total"
-
-    # Random sample (BUG-3 FIX)
-    SELECTED=()
-    random_sample "$NUM_FILES" FILES
-
-    local failed=0 warnings=0
-
-    {
-        echo ""
-        echo "Snapshot: $(basename "$snap")"
-        echo "Files sampled: ${#SELECTED[@]} of $total"
-        echo "──────────────────────────────────────────"
-    } >> "$report"
-
-    for file in "${SELECTED[@]}"; do
-        local rel="${file#"$snap"/}"
-        local size; size=$(get_size "$file")
-        local size_hr; size_hr=$(human_size "$size" 2>/dev/null || echo "${size}B")
-
-        if [[ "$DRY_RUN" == true ]]; then
-            log_info "  [DRY RUN] Would verify: $rel"
-            echo "  [DRY RUN] $rel" >> "$report"
-            continue
-        fi
-
-        log_verbose "  Checksumming: $rel"
-
-        local backup_hash
-        # BUG-6 FIX: all arithmetic increments guarded with || true
-        if backup_hash=$("$CHECKSUM_CMD" "$file" 2>/dev/null | cut -d' ' -f1) && [[ -n "$backup_hash" ]]; then
-
-            if [[ "$COMPARE_ORIGINAL" == true ]]; then
-                local original
-                original=$(original_for "$rel")
-
-                if [[ -f "$original" ]]; then
-                    local orig_hash
-                    orig_hash=$("$CHECKSUM_CMD" "$original" 2>/dev/null | cut -d' ' -f1)
-
-                    if [[ "$backup_hash" == "$orig_hash" ]]; then
-                        echo "  ✅ OK       $rel ($size_hr, matches original)" >> "$report"
-                        log_verbose "     ✅ matches original"
-                    else
-                        echo "  ⚠️  DIFFERS  $rel ($size_hr, differs from original)" >> "$report"
-                        log_warn "  DIFFERS: $rel"
-                        (( warnings++ )) || true
-                    fi
-                else
-                    echo "  ✅ READABLE $rel ($size_hr, original not found for comparison)" >> "$report"
-                    log_verbose "     readable, no original to compare"
-                fi
-            else
-                echo "  ✅ OK       $rel ($size_hr)" >> "$report"
-                log_verbose "     ✅ readable"
-            fi
-
-        else
-            echo "  ❌ FAILED   $rel ($size_hr, read/checksum error)" >> "$report"
-            log_error "  FAILED: $rel"
-            (( failed++ )) || true
-            if [[ "$FAIL_FAST" == true ]]; then
-                log_error "  --fail-fast: aborting after first failure."
-                break
-            fi
-        fi
-    done
-
-    {
-        echo "──────────────────────────────────────────"
-        echo "  Read failures : $failed"
-        echo "  Mismatches    : $warnings"
-    } >> "$report"
-
-    if   (( failed   > 0 )); then return 2
-    elif (( warnings > 0 )); then return 1
-    else return 0
-    fi
-}
-
-# ── Argument parsing ───────────────────────────────────────────────────────────
-if ! PARSED_ARGS=$(getopt \
-        -o b:n:cDvqh \
-        -l backup-dir:,num-files:,compare-original,snapshot:,all,all-count:,\
-min-size:,checksum-cmd:,send-email,json,fail-fast,verbose,quiet,dry-run,help,version \
-        --quiet, "$@" 2>/dev/null); then
+# ── Argument parsing ──────────────────────────────────────────────────────────
+if ! PARSED_ARGS=$(getopt -o d:S:s:fHqh \
+    -l dest:,snapshot:,sample:,full,hardlinks,quiet,help \
+    -- "$@" 2>/dev/null); then
     log_error "Invalid argument. Run with --help for usage."
-    exit 3
+    exit 2
 fi
-eval set --quiet, "$PARSED_ARGS"
+eval set -- "$PARSED_ARGS"
 
 while true; do
     case "$1" in
-        -q|--quiet) shift ;;
-        -b|--backup-dir)        BACKUP_ROOT="$2";    shift 2 ;;
-        -n|--num-files)         NUM_FILES="$2";      shift 2 ;;
-        -c|--compare-original)  COMPARE_ORIGINAL=true; shift ;;
-           --snapshot)          SPECIFIC_SNAP="$2";  shift 2 ;;
-           --all)               VERIFY_ALL=true;     shift   ;;
-           --all-count)         ALL_COUNT="$2";      shift 2 ;;
-           --min-size)          MIN_SIZE="$2";       shift 2 ;;
-           --checksum-cmd)      CHECKSUM_CMD="$2";   shift 2 ;;
-           --send-email)        SEND_EMAIL=true;     shift   ;;
-           --json)              JSON_OUTPUT=true;    shift   ;;
-           --fail-fast)         FAIL_FAST=true;      shift   ;;
-        -v|--verbose)           export VERBOSE=true; shift   ;;
-        -q|--quiet)             QUIET=true;          shift   ;;
-        -D|--dry-run)           DRY_RUN=true;        shift   ;;
-        -h|--help)              show_help ;;
-           --version)           show_version ;;
-        --)                     shift; break ;;
-        *)                      log_error "Unknown argument: $1"; exit 3 ;;
+        -d|--dest)      DEST="$2";            shift 2 ;;
+        -S|--snapshot)  SNAPSHOT="$2";        shift 2 ;;
+        -s|--sample)    SAMPLE="$2";          shift 2 ;;
+        -f|--full)      FULL_VERIFY=true;     shift   ;;
+        -H|--hardlinks) CHECK_HARDLINKS=true; shift   ;;
+        -q|--quiet)     QUIET=true;           shift   ;;
+        -h|--help)      show_help ;;
+        --)             shift; break ;;
+        *)              log_error "Unknown argument: $1"; exit 2 ;;
     esac
 done
 
-# ── Validation ─────────────────────────────────────────────────────────────────
-for v in NUM_FILES ALL_COUNT MIN_SIZE; do
-    [[ "${!v}" =~ ^[0-9]+$ ]] || { log_error "$v must be a non-negative integer."; exit 3; }
-done
-(( NUM_FILES > 0 )) || { log_error "--num-files must be at least 1."; exit 3; }
+# ── Validation ────────────────────────────────────────────────────────────────
+[[ -z "$DEST" ]] && die "--dest is required. Run with --help for usage."
+[[ ! -d "$DEST" ]] && die "Destination $DEST does not exist — is the NAS mounted?"
+[[ "$SAMPLE" =~ ^[0-9]+$ ]] || die "--sample must be a positive integer, got: $SAMPLE"
+command -v sha256sum &>/dev/null || die "sha256sum is required but not installed."
 
-if ! command -v "$CHECKSUM_CMD" &>/dev/null; then
-    log_error "Checksum command not found: $CHECKSUM_CMD"
-    exit 3
-fi
+# ── Logging setup ─────────────────────────────────────────────────────────────
+mkdir -p "$(dirname "$LOG_FILE")"
+touch "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-check_deps find sort
-
-# ── Resolve snapshots to verify ────────────────────────────────────────────────
-SNAPSHOTS=()
-
-if [[ -n "$SPECIFIC_SNAP" ]]; then
-    # Absolute path or name relative to BACKUP_ROOT
-    if [[ -d "$SPECIFIC_SNAP" ]]; then
-        SNAPSHOTS=("$SPECIFIC_SNAP")
-    elif [[ -d "$BACKUP_ROOT/$SPECIFIC_SNAP" ]]; then
-        SNAPSHOTS=("$BACKUP_ROOT/$SPECIFIC_SNAP")
-    else
-        log_error "Specified snapshot not found: $SPECIFIC_SNAP"
-        exit 3
-    fi
+# ── Resolve snapshot ──────────────────────────────────────────────────────────
+if [[ -n "$SNAPSHOT" ]]; then
+    SNAP_PATH="$DEST/$SNAPSHOT"
+    [[ -d "$SNAP_PATH" ]] || die "Snapshot '$SNAPSHOT' not found in $DEST."
 else
-    # BUG-1 FIX: correct glob — YYYYMMDD-HHMMSS = 8+1+6 = 15 chars total, pattern ????????-??????
-    # BUG-9 FIX: collect into array first, check length before using subscripts
+    # Find the most-recent snapshot (YYYYMMDD-HHMMSS naming)
+    SNAP_PATH=""
     while IFS= read -r -d '' d; do
-        SNAPSHOTS+=("$d")
-    done < <(find "$BACKUP_ROOT" -maxdepth 1 -type d -name "????????-??????" -print0 2>/dev/null \
-             | sort -z)
+        SNAP_PATH="$d"
+    done < <(find "$DEST" -maxdepth 1 -type d -name "????????-??????" -print0 2>/dev/null | sort -z)
+    [[ -n "$SNAP_PATH" ]] || die "No snapshots found in $DEST (expected YYYYMMDD-HHMMSS directories)."
+fi
 
-    if (( ${#SNAPSHOTS[@]} == 0 )); then
-        if [[ "$DRY_RUN" == true ]]; then
-            log_info "[DRY RUN] No backups found in $BACKUP_ROOT — exiting gracefully."
-            exit 0
+SNAP_NAME=$(basename "$SNAP_PATH")
+
+# ── Summary header ────────────────────────────────────────────────────────────
+log_info "============================================================"
+log_info "  Backup Verifier v1.0.0"
+log_info "  Snapshot:  $SNAP_NAME"
+log_info "  Mode:      $([ "$FULL_VERIFY" = true ] && echo 'full' || echo "sample ($SAMPLE files)")"
+log_info "  Started:   $(date)"
+log_info "============================================================"
+
+FAIL_COUNT=0
+CHECK_COUNT=0
+MISSING_COUNT=0
+
+# ── Per-source-directory verification ────────────────────────────────────────
+# Each top-level directory inside the snapshot corresponds to one backed-up source.
+# We attempt to reconstruct the original path from the stored name, reversing the
+# dot-stripping that backup-to-nas.sh applies (.config → config, .ssh → ssh).
+while IFS= read -r -d '' src_dir; do
+    top_name=$(basename "$src_dir")
+
+    # Candidate original paths: check HOME first, then root-level dirs, with and without leading dot
+    original_dir=""
+    for candidate in "$HOME/$top_name" "$HOME/.$top_name" "/$top_name" "/.$top_name"; do
+        if [[ -d "$candidate" ]]; then
+            original_dir="$candidate"
+            break
         fi
-        log_error "No timestamped backup folders found in $BACKUP_ROOT"
-        exit 3
+    done
+
+    if [[ -z "$original_dir" ]]; then
+        [[ "$QUIET" != true ]] && \
+            log_warn "Cannot locate original source for '$top_name' — skipping (source may have moved or been removed)."
+        continue
     fi
 
-    if [[ "$VERIFY_ALL" == true ]]; then
-        # Most-recent ALL_COUNT snapshots
-        local_start=$(( ${#SNAPSHOTS[@]} - ALL_COUNT ))
-        (( local_start < 0 )) && local_start=0
-        SNAPSHOTS=("${SNAPSHOTS[@]:$local_start}")
+    [[ "$QUIET" != true ]] && log_info "Checking: $src_dir  →  $original_dir"
+
+    local_fail=0
+    local_check=0
+    local_missing=0
+
+    # Build file list: full = all files; sample = random N via shuf
+    if [[ "$FULL_VERIFY" == true ]]; then
+        mapfile -d '' file_list < <(find "$src_dir" -type f -print0 2>/dev/null)
     else
-        # Just the latest
-        SNAPSHOTS=("${SNAPSHOTS[-1]}")
+        if command -v shuf &>/dev/null; then
+            mapfile -d '' file_list < <(find "$src_dir" -type f -print0 2>/dev/null | shuf -z -n "$SAMPLE")
+        else
+            log_warn "shuf not available — using first $SAMPLE files (install coreutils for random sampling)."
+            mapfile -d '' file_list < <(find "$src_dir" -type f -print0 2>/dev/null | head -zn "$SAMPLE")
+        fi
+    fi
+
+    for backed_up in "${file_list[@]}"; do
+        [[ -z "$backed_up" ]] && continue
+
+        rel="${backed_up#"$src_dir/"}"
+        original_file="$original_dir/$rel"
+
+        if [[ ! -f "$original_file" ]]; then
+            [[ "$QUIET" != true ]] && log_warn "MISSING in source: $original_file"
+            (( local_missing++ )) || true
+            (( local_check++ ))   || true
+            continue
+        fi
+
+        orig_sum=$(sha256sum "$original_file" 2>/dev/null | cut -d' ' -f1)
+        bkp_sum=$( sha256sum "$backed_up"     2>/dev/null | cut -d' ' -f1)
+
+        if [[ "$orig_sum" != "$bkp_sum" ]]; then
+            log_warn "MISMATCH: $backed_up"
+            log_warn "  source:  $orig_sum  $original_file"
+            log_warn "  backup:  $bkp_sum  $backed_up"
+            (( local_fail++ )) || true
+        else
+            [[ "$QUIET" != true ]] && log_verbose "OK: $rel"
+        fi
+        (( local_check++ )) || true
+    done
+
+    (( FAIL_COUNT    += local_fail    )) || true
+    (( CHECK_COUNT   += local_check   )) || true
+    (( MISSING_COUNT += local_missing )) || true
+
+    if (( local_fail > 0 || local_missing > 0 )); then
+        log_error "  ✗ $top_name: $local_fail mismatch(es), $local_missing missing from source"
+    else
+        [[ "$QUIET" != true ]] && log_info "  ✓ $top_name: $local_check file(s) OK"
+    fi
+
+done < <(find "$SNAP_PATH" -maxdepth 1 -mindepth 1 -type d -print0 2>/dev/null)
+
+# ── Optional hardlink consistency check ──────────────────────────────────────
+# Between the two most-recent snapshots, unchanged files should be hardlinked
+# (same inode, nlink ≥ 2). A nlink of 1 on a file that also exists in the
+# previous snapshot suggests --link-dest failed silently for that file.
+if [[ "$CHECK_HARDLINKS" == true ]]; then
+    log_info "------------------------------------------------------------"
+    log_info "Hardlink consistency check..."
+
+    PREV_SNAP=""
+    # Sort all snapshots descending; the one immediately after ours is the previous
+    FOUND_CURRENT=false
+    while IFS= read -r -d '' d; do
+        if [[ "$d" == "$SNAP_PATH" ]]; then
+            FOUND_CURRENT=true
+        elif [[ "$FOUND_CURRENT" == false ]]; then
+            PREV_SNAP="$d"
+        fi
+    done < <(find "$DEST" -maxdepth 1 -type d -name "????????-??????" -print0 2>/dev/null | sort -rz)
+
+    if [[ -z "$PREV_SNAP" ]]; then
+        log_warn "No previous snapshot found — skipping hardlink check."
+    else
+        PREV_NAME=$(basename "$PREV_SNAP")
+        log_info "Comparing $SNAP_NAME against $PREV_NAME"
+
+        HL_CHECKED=0
+        HL_UNLINKED=0
+
+        while IFS= read -r -d '' f; do
+            nlink=$(stat --format="%h" "$f" 2>/dev/null || echo 1)
+            if (( nlink < 2 )); then
+                rel="${f#"$SNAP_PATH/"}"
+                prev_copy="$PREV_SNAP/$rel"
+                # Only flag as suspicious if the file also exists in the previous snapshot
+                if [[ -f "$prev_copy" ]]; then
+                    log_warn "NOT HARDLINKED (nlink=1, exists in prev): $rel"
+                    (( HL_UNLINKED++ )) || true
+                fi
+            fi
+            (( HL_CHECKED++ )) || true
+        done < <(find "$SNAP_PATH" -type f -print0 2>/dev/null)
+
+        if (( HL_UNLINKED > 0 )); then
+            log_warn "Hardlink check: $HL_UNLINKED/$HL_CHECKED file(s) not hardlinked to previous snapshot."
+            log_warn "This may indicate --link-dest failed. Consider re-running a full backup."
+            (( FAIL_COUNT += HL_UNLINKED )) || true
+        else
+            log_info "Hardlink check passed: all $HL_CHECKED file(s) properly linked where expected."
+        fi
     fi
 fi
 
-log_info "Snapshots to verify: ${#SNAPSHOTS[@]}"
-[[ "$VERBOSE" == true ]] && printf '  %s\n' "${SNAPSHOTS[@]}"
+# ── Final summary ─────────────────────────────────────────────────────────────
+log_info "============================================================"
+log_info "  Snapshot:   $SNAP_NAME"
+log_info "  Checked:    $CHECK_COUNT file(s)"
+log_info "  Missing:    $MISSING_COUNT"
+log_info "  Mismatches: $FAIL_COUNT"
+log_info "  Finished:   $(date)"
+log_info "============================================================"
 
-# ── Setup report ───────────────────────────────────────────────────────────────
-TEMP_DIR=$(mktemp -d "/tmp/noba-verify.XXXXXX")
-REPORT_FILE="$TEMP_DIR/report.txt"
-JSON_FILE="$TEMP_DIR/summary.json"
-
-{
-    echo "Backup Verification Report"
-    echo "=========================================="
-    echo "Date          : $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "Backup root   : $BACKUP_ROOT"
-    echo "Checksum cmd  : $CHECKSUM_CMD"
-    echo "Files/snapshot: $NUM_FILES"
-    echo "Min file size : ${MIN_SIZE}B"
-    echo "Compare orig  : $COMPARE_ORIGINAL"
-    echo "=========================================="
-} > "$REPORT_FILE"
-
-# ── Run verification over each snapshot ───────────────────────────────────────
-OVERALL_EXIT=0
-TOTAL_SNAPS="${#SNAPSHOTS[@]}"
-PASSED=0
-WARNED=0
-ERRORED=0
-
-for snap in "${SNAPSHOTS[@]}"; do
-    snap_result=0
-    verify_snapshot "$snap" "$REPORT_FILE" || snap_result=$?
-
-    case $snap_result in
-        0) (( PASSED++  )) || true ;;
-        1) (( WARNED++  )) || true; (( OVERALL_EXIT < 1 )) && OVERALL_EXIT=1 ;;
-        2) (( ERRORED++ )) || true; (( OVERALL_EXIT < 2 )) && OVERALL_EXIT=2 ;;
-    esac
-done
-
-# ── Overall summary ────────────────────────────────────────────────────────────
-{
-    echo ""
-    echo "=========================================="
-    echo "OVERALL SUMMARY"
-    echo "=========================================="
-    printf "  Snapshots verified : %d\n" "$TOTAL_SNAPS"
-    printf "  Passed             : %d\n" "$PASSED"
-    printf "  Warnings (differs) : %d\n" "$WARNED"
-    printf "  Errors (unreadable): %d\n" "$ERRORED"
-    echo "=========================================="
-} >> "$REPORT_FILE"
-
-if   (( ERRORED > 0 )); then log_error  "Verification: $ERRORED snapshot(s) had unreadable files."
-elif (( WARNED  > 0 )); then log_warn   "Verification: $WARNED snapshot(s) had files differing from originals."
-else                         log_success "All $TOTAL_SNAPS snapshot(s) verified — no issues found."
+if (( FAIL_COUNT > 0 || MISSING_COUNT > 0 )); then
+    log_error "Verification FAILED — $FAIL_COUNT mismatch(es), $MISSING_COUNT missing."
+    exit 1
+else
+    log_success "Verification passed — $CHECK_COUNT file(s) OK."
+    exit 0
 fi
-
-# ── Optional JSON output ───────────────────────────────────────────────────────
-if [[ "$JSON_OUTPUT" == true ]]; then
-    python3 - "$TOTAL_SNAPS" "$PASSED" "$WARNED" "$ERRORED" "$OVERALL_EXIT" <<'PY'
-import json, sys, datetime
-t, p, w, e, code = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
-print(json.dumps({
-    "timestamp": datetime.datetime.now().isoformat(),
-    "snapshots_checked": t,
-    "passed": p,
-    "warnings": w,
-    "errors": e,
-    "exit_code": code,
-    "status": "error" if e>0 else "warning" if w>0 else "ok"
-}, indent=2))
-PY
-fi
-
-# ── Display report ─────────────────────────────────────────────────────────────
-if [[ "$QUIET" != true ]]; then
-    echo ""
-    cat "$REPORT_FILE"
-fi
-
-# ── Email ─────────────────────────────────────────────────────────────────────
-if [[ "$SEND_EMAIL" == true ]]; then
-    status_word="OK"
-    (( WARNED  > 0 )) && status_word="WARNINGS"
-    (( ERRORED > 0 )) && status_word="FAILURES"
-    send_report "Backup Verification [$status_word] – $(hostname) – $(date '+%Y-%m-%d')" "$REPORT_FILE"
-fi
-
-exit "$OVERALL_EXIT"
