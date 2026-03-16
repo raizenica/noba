@@ -126,8 +126,8 @@ Options:
       --du-timeout N      Seconds allowed for du scan (default: $DU_TIMEOUT)
   -n, --dry-run           Show what would happen, make no changes
       --verbose           Enable verbose output
-  --help                  Show this message
-  -v, --version           Show version
+  -h, --help              Show this message
+      --version           Show version
 
 Exit codes:
   0  All disks within threshold
@@ -330,7 +330,8 @@ for target in "${TARGETS[@]}"; do
 
     # ── Alert ────────────────────────────────────────────────────────────────
     icon="⚠"; [[ "$level" == "critical" ]] && icon="🔴"
-    log_warn "$icon $mount exceeded ${level} threshold (${usage}% ≥ ${THRESHOLD}%)"
+    _active_threshold="$( [[ "$level" == "warning" ]] && echo "$WARN_THRESHOLD" || echo "$THRESHOLD" )"
+    log_warn "$icon $mount exceeded ${level} threshold (${usage}% ≥ ${_active_threshold}%)"
     (( ALERT_COUNT++ )) || true
 
     # BUG-3 FIX: timeout-wrapped, non-blocking du
@@ -380,7 +381,7 @@ if [[ "$DRY_RUN" != true ]]; then
     {
         echo "LAST_RUN=$(date '+%Y-%m-%d %H:%M:%S')"
         echo "ALERT_COUNT=$ALERT_COUNT"
-        echo "STATUS=$(( ALERT_COUNT > 0 )) && echo 'alert' || echo 'ok'"
+        (( ALERT_COUNT > 0 )) && echo "STATUS=alert" || echo "STATUS=ok"
     } > "$STATE_FILE"
 fi
 
