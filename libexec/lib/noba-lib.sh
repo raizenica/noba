@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # noba-lib.sh – Shared functions for Nobara automation scripts
-# Version: 3.1.0
+# Version: 3.1.1
 # Must be sourced, not executed.
 
 if [[ -n "${_NOBA_LIB_LOADED:-}" ]]; then
@@ -8,7 +8,7 @@ if [[ -n "${_NOBA_LIB_LOADED:-}" ]]; then
 fi
 _NOBA_LIB_LOADED=1
 
-export NOBA_LIB_VERSION="3.1.0"
+export NOBA_LIB_VERSION="3.1.1"
 
 : "${NOBA_CONFIG:=$HOME/.config/noba/config.yaml}"
 export CONFIG_FILE="$NOBA_CONFIG"
@@ -143,12 +143,15 @@ acquire_lock() {
     fi
 }
 
+# --- THE FIX: Captures the real exit code, uses safe array fallback, and exits properly ---
 _NOBA_CLEANUP_DIRS=()
 _noba_cleanup() {
-    local dir
-    for dir in "${_NOBA_CLEANUP_DIRS[@]:-}"; do
-        [[ -d "$dir" ]] && rm -rf "$dir"
+    local rc=$?
+    local d
+    for d in "${_NOBA_CLEANUP_DIRS[@]:-}"; do
+        [[ -n "$d" && -d "$d" ]] && rm -rf "$d"
     done
+    exit "$rc"
 }
 trap '_noba_cleanup' EXIT
 
