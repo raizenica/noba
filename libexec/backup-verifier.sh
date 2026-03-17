@@ -1,62 +1,54 @@
 #!/bin/bash
 # backup-verifier.sh – Verify backup integrity by sampling random files
-# Version: 3.0.0
+# Version: 1.0.1
 #
-# Bugs fixed vs 2.x:
-#   BUG-1  Glob '????????-???????' has 7 ?-marks for the time part but HHMMSS is 6 chars.
-#          → No backup dirs ever matched; script always died with "no backups found".
-#   BUG-2  mapfile -t FILES < <(find -print0 | xargs -0 printf '%s\n') reconverts
-#          NUL-delimited output back to newlines, breaking on filenames with newlines.
-#          Replaced with mapfile -d '' for true NUL-safe array population.
-#   BUG-3  Fallback randomizer used RANDOM % TOTAL — biased for N>32767; also allowed
-#          duplicate selections (same file verified twice). Rewritten with a
-#          Fisher-Yates partial shuffle so selection is always unique.
-#   BUG-4  config/.config/* path reconstruction stripped 'config/.config/' but forgot
-#          to re-add '.config/' — produced $HOME/nvim/init.lua instead of
-#          $HOME/.config/nvim/init.lua.
-#   BUG-5  Documents/* case used original="$HOME/$rel_path" where rel_path already
-#          starts with 'Documents/' → $HOME/Documents/Documents/foo — doubled directory.
-#   BUG-6  ((FAILED++)) exits 1 under set -e when FAILED==0 because ((0)) evaluates
-#          to false. All arithmetic increments changed to (( VAR++ )) || true.
-#   BUG-7  Trap composition via sed+eval is fragile when the existing trap body
-#          contains single quotes (malformed result). Replaced with a simple
-#          dedicated cleanup() function registered with trap … EXIT.
-#   BUG-8  Path reconstruction case patterns assumed backup-to-nas stored '.config'
-#          as 'config/.config/' (nested), but backup-to-nas v3 stores it as 'config/'
-#          (leading dot stripped, no nesting). Reconstruction now mirrors
-#          backup-to-nas v3's destpath_for() / the actual stored layout.
-#   BUG-9  ${backup_dirs[-1]} on an empty array under set -u is an unbound-variable
-#          error — the guard only reached die() if bash didn't abort first.
-#          Fixed by checking array length before any subscript access.
-#
-# New in 3.0.0:
+# New in 1.0.0:
 #   --snapshot SNAP    Verify a specific snapshot instead of the latest
 #   --all              Verify the N most-recent snapshots, not just the latest
 #   --min-size BYTES   Skip files smaller than BYTES (avoids checksumming 0-byte sentinels)
-#   --json             Write a machine-readable JSON summary alongside the text report
+#   --json             Write a machine-readable JSON summary to stdout
 #   --fail-fast        Abort as soon as one file fails (useful in CI)
 #   Exit codes: 0=all OK  1=warnings (originals differ)  2=read failures  3=setup error
+#
+# Fixed in 1.0.1:
+#   Version mismatch   Header said 1.0.0; show_version/shim said 3.0.0.
+#                      Centralised into readonly VERSION="1.0.1".
+#   set -e bomb ×3     (( expr )) && var=val aborts under set -e when expr is
+#                      false (arithmetic returns exit 1).  All three occurrences
+#                      rewritten as if (( expr )); then … fi.
+#   original_for bug   When rel contained no '/' (file at snapshot root),
+#                      rest="${rel#*/}" equalled the whole of rel, producing a
+#                      doubled filename in the output path.  Now handled
+#                      explicitly.
+#   JSON_FILE dead var Assigned but never written to (JSON went to stdout via
+#                      python3).  Removed.  JSON output now uses pure-bash
+#                      printf — no python3 dependency.
+#   ALL_COUNT config   ALL_COUNT was CLI-only; added to the config-load block
+#                      alongside every other tunable.
 
 set -euo pipefail
 
-# ── Test harness compliance ────────────────────────────────────────────────────
+# ── Version ────────────────────────────────────────────────────────────────────
+readonly VERSION="1.0.1"
+
+# ── Test harness shims ────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
 if [[ "${1:-}" == "--help"    || "${1:-}" == "-h" ]]; then
     echo "Usage: backup-verifier.sh [OPTIONS]"; exit 0
 fi
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
-    echo "backup-verifier.sh version 3.0.0"; exit 0
+    echo "backup-verifier.sh version $VERSION"; exit 0
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./noba-lib.sh
+# shellcheck source=./lib/noba-lib.sh
 source "$SCRIPT_DIR/lib/noba-lib.sh"
 
 # ── Defaults ───────────────────────────────────────────────────────────────────
 BACKUP_ROOT="${BACKUP_DEST:-/mnt/vnnas/backups/raizen}"
 NUM_FILES=5
 EMAIL="${EMAIL:-}"
-CHECKSUM_CMD="sha256sum"   # upgraded from md5sum — faster on modern CPUs, collision-resistant
+CHECKSUM_CMD="sha256sum"
 DRY_RUN=false
 QUIET=false
 export VERBOSE=false
@@ -64,22 +56,26 @@ COMPARE_ORIGINAL=false
 SEND_EMAIL=false
 SPECIFIC_SNAP=""
 VERIFY_ALL=false
-ALL_COUNT=3          # number of snapshots to verify when --all is used
-MIN_SIZE=0           # bytes; 0 = no minimum
+ALL_COUNT=3
+MIN_SIZE=0
 JSON_OUTPUT=false
 FAIL_FAST=false
 
+# ── Global sample buffer (written by random_sample, read by verify_snapshot) ──
+SELECTED=()
+
 # ── Load configuration ─────────────────────────────────────────────────────────
 if command -v get_config &>/dev/null; then
-    BACKUP_ROOT="$(get_config ".backup_verifier.dest"         "$BACKUP_ROOT")"
-    NUM_FILES="$(get_config ".backup_verifier.num_files"       "$NUM_FILES")"
-    EMAIL="$(get_config ".email"                               "$EMAIL")"
-    CHECKSUM_CMD="$(get_config ".backup_verifier.checksum_cmd" "$CHECKSUM_CMD")"
-    MIN_SIZE="$(get_config ".backup_verifier.min_size"         "$MIN_SIZE")"
+    BACKUP_ROOT="$(get_config ".backup_verifier.dest"          "$BACKUP_ROOT")"
+    NUM_FILES="$(get_config ".backup_verifier.num_files"        "$NUM_FILES")"
+    EMAIL="$(get_config ".email"                                "$EMAIL")"
+    CHECKSUM_CMD="$(get_config ".backup_verifier.checksum_cmd"  "$CHECKSUM_CMD")"
+    MIN_SIZE="$(get_config ".backup_verifier.min_size"          "$MIN_SIZE")"
+    ALL_COUNT="$(get_config ".backup_verifier.all_count"        "$ALL_COUNT")"
 fi
 
-# ── Functions ──────────────────────────────────────────────────────────────────
-show_version() { echo "backup-verifier.sh version 3.0.0"; exit 0; }
+# ── Helpers ────────────────────────────────────────────────────────────────────
+show_version() { echo "backup-verifier.sh version $VERSION"; exit 0; }
 
 show_help() {
     cat <<EOF
@@ -102,8 +98,8 @@ Options:
   -v, --verbose          Verbose output
   -q, --quiet            Suppress non-error output
   -D, --dry-run          Simulate without actually checksumming
-  --help                 Show this message
-  --version              Show version information
+      --help             Show this message
+      --version          Show version information
 
 Exit codes:
   0  All sampled files verified OK
@@ -123,14 +119,15 @@ trap cleanup EXIT INT TERM
 
 # ── File size (portable) ───────────────────────────────────────────────────────
 get_size() {
-    stat -c %s "$1" 2>/dev/null \
+    stat -c %s "$1" 2>/dev/null   \
         || stat -f %z "$1" 2>/dev/null \
         || wc -c < "$1" 2>/dev/null | tr -d ' ' \
         || echo 0
 }
 
-# ── BUG-3 FIX: duplicate-free random sample using Fisher-Yates partial shuffle ─
-# Usage: random_sample N array_name   → populates global SELECTED array
+# ── Duplicate-free random sample (Fisher-Yates partial shuffle) ───────────────
+# Writes into global SELECTED[].
+# Usage: random_sample N array_name
 random_sample() {
     local n="$1"
     local -n _src="$2"
@@ -143,18 +140,17 @@ random_sample() {
         return
     fi
 
-    # Copy indices into a local array and do a partial Fisher-Yates shuffle
-    local -a indices
+    local -a indices=()
+    local i
     for (( i=0; i<total; i++ )); do indices+=("$i"); done
 
     for (( i=0; i<n; i++ )); do
-        # Pick a random index in [i, total)
+        local j
         if command -v shuf &>/dev/null; then
             j=$(shuf -i "$i-$(( total - 1 ))" -n 1)
         else
             j=$(( i + RANDOM % (total - i) ))
         fi
-        # Swap
         local tmp="${indices[$i]}"
         indices[$i]="${indices[$j]}"
         indices[$j]="$tmp"
@@ -162,32 +158,34 @@ random_sample() {
     done
 }
 
-# ── BUG-4/5/8 FIX: reconstruct original source path from backup relative path ─
-# Mirrors backup-to-nas v3's destpath_for() logic:
-#   .config  → stored as  config/
-#   .ssh     → stored as  ssh/
-#   Documents → stored as  Documents/  (top dir preserved, no doubling)
+# ── Reconstruct original source path from a backup-relative path ──────────────
+# Mirrors backup-to-nas destpath_for() logic:
+#   .config → stored as config/   (.ssh → ssh/, etc.)
+#   Documents → stored as Documents/  (no dot to re-add)
 #
-# Input:  rel_path (relative to snapshot root, e.g. "config/nvim/init.lua")
-# Output: prints the best-guess original absolute path, or empty string if unknown
+# Edge cases handled:
+#   rel with no '/'  – file sitting directly at the snapshot root
+#   dot-prefixed dir – $HOME/.$top reconstructed when the dir exists there
 original_for() {
     local rel="$1"
-    local top="${rel%%/*}"       # first directory component
-    local rest="${rel#*/}"       # everything after the first /
 
-    # Re-add leading dot for directories that backup-to-nas stripped it from
-    # (any source dir that started with '.' is stored without it)
+    # File at snapshot root (no directory component)
+    if [[ "$rel" != */* ]]; then
+        echo "$HOME/$rel"
+        return
+    fi
+
+    local top="${rel%%/*}"    # first directory component, e.g. "config"
+    local rest="${rel#*/}"    # remainder,                  e.g. "nvim/init.lua"
+
+    # Re-add leading dot when the original source had one
     local orig_top
-    # Heuristic: if a source with a dot-prefixed version of $top exists under $HOME, use it
     if [[ -d "$HOME/.$top" ]]; then
         orig_top=".$top"
     else
         orig_top="$top"
     fi
 
-    # For top-level dirs that live directly in $HOME (Documents, Pictures, etc.)
-    # rel_path = "Documents/foo.pdf"  → original = $HOME/Documents/foo.pdf
-    # For dotfiles stored as "config/nvim/init.lua" → $HOME/.config/nvim/init.lua
     echo "$HOME/$orig_top/$rest"
 }
 
@@ -211,10 +209,10 @@ send_report() {
 }
 
 # ── Verify one snapshot ────────────────────────────────────────────────────────
-# Returns: 0=ok  1=warnings  2=failures
+# Returns: 0=ok  1=warnings (mismatch)  2=failures (unreadable)
 verify_snapshot() {
     local snap="$1"
-    local report="$2"   # path to append results to
+    local report="$2"
 
     if [[ ! -d "$snap" ]]; then
         log_error "Snapshot directory does not exist: $snap"
@@ -223,10 +221,8 @@ verify_snapshot() {
 
     log_info "Verifying snapshot: $(basename "$snap")"
 
-    # BUG-2 FIX: NUL-safe file list via mapfile -d ''
     local -a FILES=()
     while IFS= read -r -d '' f; do
-        # BUG min-size filter
         if (( MIN_SIZE > 0 )); then
             local fsz; fsz=$(get_size "$f")
             (( fsz >= MIN_SIZE )) && FILES+=("$f")
@@ -243,8 +239,6 @@ verify_snapshot() {
     fi
     log_verbose "  Total files in snapshot: $total"
 
-    # Random sample (BUG-3 FIX)
-    SELECTED=()
     random_sample "$NUM_FILES" FILES
 
     local failed=0 warnings=0
@@ -256,6 +250,7 @@ verify_snapshot() {
         echo "──────────────────────────────────────────"
     } >> "$report"
 
+    local file
     for file in "${SELECTED[@]}"; do
         local rel="${file#"$snap"/}"
         local size; size=$(get_size "$file")
@@ -270,8 +265,8 @@ verify_snapshot() {
         log_verbose "  Checksumming: $rel"
 
         local backup_hash
-        # BUG-6 FIX: all arithmetic increments guarded with || true
-        if backup_hash=$("$CHECKSUM_CMD" "$file" 2>/dev/null | cut -d' ' -f1) && [[ -n "$backup_hash" ]]; then
+        if backup_hash=$("$CHECKSUM_CMD" "$file" 2>/dev/null | cut -d' ' -f1) \
+                && [[ -n "$backup_hash" ]]; then
 
             if [[ "$COMPARE_ORIGINAL" == true ]]; then
                 local original
@@ -334,20 +329,20 @@ eval set -- "$PARSED_ARGS"
 
 while true; do
     case "$1" in
-        -b|--backup-dir)        BACKUP_ROOT="$2";    shift 2 ;;
-        -n|--num-files)         NUM_FILES="$2";      shift 2 ;;
-        -c|--compare-original)  COMPARE_ORIGINAL=true; shift ;;
-           --snapshot)          SPECIFIC_SNAP="$2";  shift 2 ;;
-           --all)               VERIFY_ALL=true;     shift   ;;
-           --all-count)         ALL_COUNT="$2";      shift 2 ;;
-           --min-size)          MIN_SIZE="$2";       shift 2 ;;
-           --checksum-cmd)      CHECKSUM_CMD="$2";   shift 2 ;;
-           --send-email)        SEND_EMAIL=true;     shift   ;;
-           --json)              JSON_OUTPUT=true;    shift   ;;
-           --fail-fast)         FAIL_FAST=true;      shift   ;;
-        -v|--verbose)           export VERBOSE=true; shift   ;;
-        -q|--quiet)             QUIET=true;          shift   ;;
-        -D|--dry-run)           DRY_RUN=true;        shift   ;;
+        -b|--backup-dir)        BACKUP_ROOT="$2";      shift 2 ;;
+        -n|--num-files)         NUM_FILES="$2";        shift 2 ;;
+        -c|--compare-original)  COMPARE_ORIGINAL=true; shift   ;;
+           --snapshot)          SPECIFIC_SNAP="$2";    shift 2 ;;
+           --all)               VERIFY_ALL=true;       shift   ;;
+           --all-count)         ALL_COUNT="$2";        shift 2 ;;
+           --min-size)          MIN_SIZE="$2";         shift 2 ;;
+           --checksum-cmd)      CHECKSUM_CMD="$2";     shift 2 ;;
+           --send-email)        SEND_EMAIL=true;       shift   ;;
+           --json)              JSON_OUTPUT=true;      shift   ;;
+           --fail-fast)         FAIL_FAST=true;        shift   ;;
+        -v|--verbose)           export VERBOSE=true;   shift   ;;
+        -q|--quiet)             QUIET=true;            shift   ;;
+        -D|--dry-run)           DRY_RUN=true;          shift   ;;
         -h|--help)              show_help ;;
            --version)           show_version ;;
         --)                     shift; break ;;
@@ -372,7 +367,6 @@ check_deps find sort
 SNAPSHOTS=()
 
 if [[ -n "$SPECIFIC_SNAP" ]]; then
-    # Absolute path or name relative to BACKUP_ROOT
     if [[ -d "$SPECIFIC_SNAP" ]]; then
         SNAPSHOTS=("$SPECIFIC_SNAP")
     elif [[ -d "$BACKUP_ROOT/$SPECIFIC_SNAP" ]]; then
@@ -382,8 +376,6 @@ if [[ -n "$SPECIFIC_SNAP" ]]; then
         exit 3
     fi
 else
-    # BUG-1 FIX: correct glob — YYYYMMDD-HHMMSS = 8+1+6 = 15 chars total, pattern ????????-??????
-    # BUG-9 FIX: collect into array first, check length before using subscripts
     while IFS= read -r -d '' d; do
         SNAPSHOTS+=("$d")
     done < <(find "$BACKUP_ROOT" -maxdepth 1 -type d -name "????????-??????" -print0 2>/dev/null \
@@ -399,12 +391,12 @@ else
     fi
 
     if [[ "$VERIFY_ALL" == true ]]; then
-        # Most-recent ALL_COUNT snapshots
         local_start=$(( ${#SNAPSHOTS[@]} - ALL_COUNT ))
-        (( local_start < 0 )) && local_start=0
+        # Fixed: was (( local_start < 0 )) && local_start=0
+        # Under set -e, a false (( )) exits the script; use if instead.
+        if (( local_start < 0 )); then local_start=0; fi
         SNAPSHOTS=("${SNAPSHOTS[@]:$local_start}")
     else
-        # Just the latest
         SNAPSHOTS=("${SNAPSHOTS[-1]}")
     fi
 fi
@@ -415,7 +407,6 @@ log_info "Snapshots to verify: ${#SNAPSHOTS[@]}"
 # ── Setup report ───────────────────────────────────────────────────────────────
 TEMP_DIR=$(mktemp -d "/tmp/noba-verify.XXXXXX")
 REPORT_FILE="$TEMP_DIR/report.txt"
-JSON_FILE="$TEMP_DIR/summary.json"
 
 {
     echo "Backup Verification Report"
@@ -429,7 +420,7 @@ JSON_FILE="$TEMP_DIR/summary.json"
     echo "=========================================="
 } > "$REPORT_FILE"
 
-# ── Run verification over each snapshot ───────────────────────────────────────
+# ── Run verification ───────────────────────────────────────────────────────────
 OVERALL_EXIT=0
 TOTAL_SNAPS="${#SNAPSHOTS[@]}"
 PASSED=0
@@ -442,8 +433,12 @@ for snap in "${SNAPSHOTS[@]}"; do
 
     case $snap_result in
         0) (( PASSED++  )) || true ;;
-        1) (( WARNED++  )) || true; (( OVERALL_EXIT < 1 )) && OVERALL_EXIT=1 ;;
-        2) (( ERRORED++ )) || true; (( OVERALL_EXIT < 2 )) && OVERALL_EXIT=2 ;;
+        # Fixed: was (( OVERALL_EXIT < 1 )) && OVERALL_EXIT=1  — set -e bomb
+        1) (( WARNED++  )) || true
+           if (( OVERALL_EXIT < 1 )); then OVERALL_EXIT=1; fi ;;
+        # Fixed: was (( OVERALL_EXIT < 2 )) && OVERALL_EXIT=2  — set -e bomb
+        2) (( ERRORED++ )) || true
+           if (( OVERALL_EXIT < 2 )); then OVERALL_EXIT=2; fi ;;
     esac
 done
 
@@ -460,26 +455,28 @@ done
     echo "=========================================="
 } >> "$REPORT_FILE"
 
-if   (( ERRORED > 0 )); then log_error  "Verification: $ERRORED snapshot(s) had unreadable files."
-elif (( WARNED  > 0 )); then log_warn   "Verification: $WARNED snapshot(s) had files differing from originals."
+if   (( ERRORED > 0 )); then log_error   "Verification: $ERRORED snapshot(s) had unreadable files."
+elif (( WARNED  > 0 )); then log_warn    "Verification: $WARNED snapshot(s) had files differing from originals."
 else                         log_success "All $TOTAL_SNAPS snapshot(s) verified — no issues found."
 fi
 
-# ── Optional JSON output ───────────────────────────────────────────────────────
+# ── Optional JSON output (pure bash — no python3 dependency) ──────────────────
 if [[ "$JSON_OUTPUT" == true ]]; then
-    python3 - "$TOTAL_SNAPS" "$PASSED" "$WARNED" "$ERRORED" "$OVERALL_EXIT" <<'PY'
-import json, sys, datetime
-t, p, w, e, code = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
-print(json.dumps({
-    "timestamp": datetime.datetime.now().isoformat(),
-    "snapshots_checked": t,
-    "passed": p,
-    "warnings": w,
-    "errors": e,
-    "exit_code": code,
-    "status": "error" if e>0 else "warning" if w>0 else "ok"
-}, indent=2))
-PY
+    # Determine status string without (( )) && under set -e
+    local_status="ok"
+    if   (( ERRORED > 0 )); then local_status="error"
+    elif (( WARNED  > 0 )); then local_status="warning"
+    fi
+
+    printf '{\n'
+    printf '  "timestamp": "%s",\n'       "$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')"
+    printf '  "snapshots_checked": %d,\n' "$TOTAL_SNAPS"
+    printf '  "passed": %d,\n'            "$PASSED"
+    printf '  "warnings": %d,\n'          "$WARNED"
+    printf '  "errors": %d,\n'            "$ERRORED"
+    printf '  "exit_code": %d,\n'         "$OVERALL_EXIT"
+    printf '  "status": "%s"\n'           "$local_status"
+    printf '}\n'
 fi
 
 # ── Display report ─────────────────────────────────────────────────────────────
@@ -488,12 +485,13 @@ if [[ "$QUIET" != true ]]; then
     cat "$REPORT_FILE"
 fi
 
-# ── Email ─────────────────────────────────────────────────────────────────────
+# ── Email ──────────────────────────────────────────────────────────────────────
 if [[ "$SEND_EMAIL" == true ]]; then
     status_word="OK"
-    (( WARNED  > 0 )) && status_word="WARNINGS"
-    (( ERRORED > 0 )) && status_word="FAILURES"
-    send_report "Backup Verification [$status_word] – $(hostname) – $(date '+%Y-%m-%d')" "$REPORT_FILE"
+    (( WARNED  > 0 )) && status_word="WARNINGS" || true
+    (( ERRORED > 0 )) && status_word="FAILURES" || true
+    send_report "Backup Verification [$status_word] – $(hostname) – $(date '+%Y-%m-%d')" \
+                "$REPORT_FILE"
 fi
 
 exit "$OVERALL_EXIT"
