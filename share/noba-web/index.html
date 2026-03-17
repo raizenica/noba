@@ -76,13 +76,22 @@
             background-size: 28px 28px;
         }
 
-        /* Fixed padding to support the sticky header */
+        /* Subtle scanline overlay — pure atmosphere */
+        body::after {
+            content: '';
+            position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+            background: repeating-linear-gradient(
+                0deg, transparent, transparent 2px,
+                rgba(0,0,0,0.025) 2px, rgba(0,0,0,0.025) 4px
+            );
+        }
+
         .page { padding: 0 2rem 1.5rem 2rem; max-width: 1600px; margin: 0 auto; }
 
-        /* ── Header (Sticky + Glassmorphism Upgrade) ── */
+        /* ── Header ── */
         .header {
             position: sticky; top: 0; z-index: 40;
-            background: rgba(6, 10, 16, 0.85); /* Safe dark fallback for blur */
+            background: rgba(6, 10, 16, 0.85);
             backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
             margin: 0 -2rem 1.25rem -2rem; padding: 1.25rem 2rem 1rem 2rem;
             border-bottom: 1px solid var(--border);
@@ -94,18 +103,33 @@
             width: 42px; height: 42px; background: var(--accent-dim);
             border: 1px solid var(--accent); border-radius: 6px;
             display: flex; align-items: center; justify-content: center;
-            color: var(--accent); font-size: 1.15rem; box-shadow: 0 0 10px var(--accent-glow);
+            color: var(--accent); font-size: 1.15rem;
+            animation: logo-ring 4s ease-in-out infinite;
+        }
+        @keyframes logo-ring {
+            0%,100% { box-shadow: 0 0 8px var(--accent-glow); }
+            50%      { box-shadow: 0 0 18px var(--accent-glow), 0 0 0 4px rgba(0,200,255,.06); }
         }
         .logo-name { font-size: 1.3rem; font-weight: 700; letter-spacing: .18em; }
         .logo-slash { color: var(--accent); }
         .logo-tagline { font-size: .65rem; letter-spacing: .3em; color: var(--text-muted); margin-top: 1px; }
         .header-controls { display: flex; align-items: center; gap: .625rem; flex-wrap: wrap; }
+
+        .user-chip {
+            display: flex; align-items: center; gap: .4rem;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 4px; padding: .32rem .7rem;
+            font-family: var(--font-data); font-size: .72rem; color: var(--text-muted);
+        }
+        .user-chip .badge { font-size: .58rem; padding: .1rem .4rem; }
+
         .theme-select {
             background: var(--surface); color: var(--text); border: 1px solid var(--border);
             border-radius: 4px; padding: .4rem .6rem; font-family: var(--font-ui);
             font-size: .8rem; cursor: pointer; outline: none; transition: border-color .2s;
         }
         .theme-select:focus, .theme-select:hover { border-color: var(--accent); }
+
         .icon-btn {
             width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
             background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
@@ -113,7 +137,7 @@
         }
         .icon-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); transform: translateY(-1px); }
 
-        /* ── Live pill / connection status ── */
+        /* ── Live pill ── */
         .live-pill {
             display: flex; align-items: center; gap: .45rem;
             background: var(--surface); border: 1px solid var(--border);
@@ -121,15 +145,14 @@
             font-family: var(--font-data); font-size: .75rem; color: var(--text-muted);
             transition: border-color .3s;
         }
-        .live-pill.conn-sse    { border-color: rgba(0,230,118,.35); box-shadow: 0 0 8px rgba(0,230,118,.1); }
-        .live-pill.conn-polling{ border-color: rgba(255,179,0,.3); }
-        .live-pill.conn-offline{ border-color: rgba(255,23,68,.35); }
+        .live-pill.conn-sse     { border-color: rgba(0,230,118,.35); box-shadow: 0 0 8px rgba(0,230,118,.1); }
+        .live-pill.conn-polling { border-color: rgba(255,179,0,.3); }
+        .live-pill.conn-offline { border-color: rgba(255,23,68,.35); }
         .live-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; transition: background .3s; }
         .live-dot.sse     { background: var(--success); animation: blink 2.5s infinite; }
         .live-dot.polling { background: var(--warning); }
         .live-dot.syncing { background: var(--warning); }
         .live-dot.offline { background: var(--danger); }
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
         /* ── Alerts ── */
         .alerts { margin-bottom: 1.25rem; display: flex; flex-direction: column; gap: .4rem; }
@@ -147,23 +170,42 @@
         }
         .alert-dismiss:hover { opacity: 1; }
 
-        /* ── Grid (Masonry Upgrade) ── */
+        /* ── Grid (Masonry) ── */
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-            grid-auto-rows: 10px; /* Tiny rows for granular masonry packing */
-            column-gap: 1.125rem; /* Vertical gap is dynamically added via JS */
+            grid-auto-rows: 10px;
+            column-gap: 1.125rem;
             align-items: start;
         }
         .span-full { grid-column: 1 / -1; }
 
-        /* ── Card (Shadows upgraded, Masonry compatible) ── */
+        /* ── Card entrance animation ── */
+        @keyframes cardIn {
+            from { opacity: 0; transform: translateY(14px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .card { animation: cardIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .card:nth-child(1)  { animation-delay: .04s; }
+        .card:nth-child(2)  { animation-delay: .08s; }
+        .card:nth-child(3)  { animation-delay: .12s; }
+        .card:nth-child(4)  { animation-delay: .16s; }
+        .card:nth-child(5)  { animation-delay: .20s; }
+        .card:nth-child(6)  { animation-delay: .24s; }
+        .card:nth-child(7)  { animation-delay: .28s; }
+        .card:nth-child(8)  { animation-delay: .32s; }
+        .card:nth-child(9)  { animation-delay: .36s; }
+        .card:nth-child(10) { animation-delay: .40s; }
+        .card:nth-child(11) { animation-delay: .44s; }
+        .card:nth-child(12) { animation-delay: .48s; }
+
+        /* ── Card ── */
         .card {
             background: var(--surface); border: 1px solid var(--border);
             border-top: 2px solid var(--accent); border-radius: 6px;
             overflow: hidden; transition: box-shadow .2s;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            align-self: start; /* Prevents the card from stretching to fill the grid row span */
+            align-self: start;
         }
         .card:hover { box-shadow: 0 8px 30px rgba(0,0,0,0.4), 0 0 15px var(--accent-glow); }
         .card-hdr {
@@ -175,9 +217,20 @@
         .card-hdr:active { cursor: grabbing; }
         .card-icon { color: var(--accent); font-size: .85rem; flex-shrink: 0; text-shadow: 0 0 8px var(--accent-glow); }
         .card-title { font-size: .65rem; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--text-muted); flex: 1; }
+        .card-count { font-size: .65rem; color: var(--text-muted); margin-right: .5rem; }
         .drag-handle { color: var(--text-dim); font-size: .8rem; transition: color .15s; }
         .card:hover .drag-handle { color: var(--text-muted); }
         .card-body { padding: 1.125rem; }
+
+        /* Card Collapse & Copy Tools */
+        .collapse-btn { color: var(--text-dim); cursor: pointer; transition: transform 0.2s, color 0.2s; font-size: 0.85rem; padding: 0.2rem; }
+        .collapse-btn:hover { color: var(--text); }
+        .is-collapsed { transform: rotate(-90deg); }
+
+        .copy-hover { cursor: pointer; transition: color 0.2s; }
+        .copy-hover:hover { color: var(--accent); }
+        .copied { color: var(--success) !important; text-shadow: 0 0 8px var(--success-dim); }
+        .empty-msg { font-size: .8rem; color: var(--text-muted); font-style: italic; padding: .5rem 0; text-align: center; }
 
         /* ── Data rows ── */
         .row { display: flex; justify-content: space-between; align-items: center; padding: .42rem 0; border-bottom: 1px dashed var(--border); }
@@ -237,6 +290,7 @@
         .dot-down { background: var(--danger); box-shadow: 0 0 7px var(--danger); }
 
         /* ── Services ── */
+        .svc-filter-wrap { margin-bottom: 1rem; }
         .svc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px,1fr)); gap: .7rem; }
         .svc-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: .7rem .875rem; transition: border-color .2s; }
         .svc-card:hover { border-color: var(--accent); }
@@ -292,6 +346,9 @@
         .btn:disabled { opacity: .4; cursor: not-allowed; }
         .btn-primary { border-color: var(--accent); color: var(--accent); background: rgba(0,200,255,.08); box-shadow: inset 0 0 10px var(--accent-glow); }
         .btn-primary:hover:not(:disabled) { background: rgba(0,200,255,.2); box-shadow: 0 0 15px var(--accent-glow); }
+        .btn-danger  { border-color: var(--danger); color: var(--danger); background: var(--danger-dim); }
+        .btn-danger:hover:not(:disabled)  { background: rgba(255,23,68,.2); box-shadow: 0 0 12px rgba(255,23,68,.2); }
+        .btn-sm { width: auto; padding: .55rem 1.4rem; }
 
         /* ── Log viewer ── */
         .log-controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; gap: .5rem; flex-wrap: wrap; }
@@ -303,18 +360,20 @@
             scroll-behavior: smooth;
         }
 
-        /* ── Sortable ── */
-        .sortable-ghost { opacity: .25; border: 1px dashed var(--accent) !important; background: var(--accent-dim); }
-        .sortable-drag  { box-shadow: 0 20px 55px rgba(0,0,0,.8) !important; z-index: 100; }
+        /* ── Sortable (Bug Fix: Remove animation from drag states to prevent re-firing cardIn keyframes) ── */
+        .sortable-ghost { opacity: .25; border: 1px dashed var(--accent) !important; background: var(--accent-dim); animation: none !important; }
+        .sortable-drag  { box-shadow: 0 20px 55px rgba(0,0,0,.8) !important; z-index: 100; animation: none !important; opacity: 1 !important; transform: scale(1.02); }
 
-        /* ── Modal (Widened and wrapped) ── */
+        /* ── Modal ── */
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.82); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 50; }
         .modal-box {
             background: var(--surface); border: 1px solid var(--border);
             border-top: 3px solid var(--accent); border-radius: 8px;
-            width: 95%; max-width: 940px; padding: 1.75rem; /* Increased max-width */
+            width: 95%; max-width: 940px; padding: 1.75rem;
             max-height: 90vh; overflow-y: auto; box-shadow: 0 15px 50px rgba(0,0,0,0.5);
+            animation: modalIn .2s cubic-bezier(0.16, 1, 0.3, 1);
         }
+        @keyframes modalIn { from { opacity: 0; transform: scale(.96) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
         .modal-title { font-size: .9rem; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; margin-bottom: 1.125rem; display: flex; align-items: center; gap: .7rem; }
         .console-out {
             background: #05080c; color: var(--success); padding: 1rem; border-radius: 4px;
@@ -323,13 +382,22 @@
             border: 1px solid var(--border); box-shadow: inset 0 2px 10px rgba(0,0,0,0.8);
             scroll-behavior: smooth;
         }
-        .modal-footer { display: flex; justify-content: flex-end; margin-top: 1.25rem; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.25rem; }
 
         /* ── Settings ── */
+        .settings-tabs { display: flex; gap: .2rem; margin-bottom: 1.375rem; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+        .stab {
+            padding: .55rem 1rem; font-size: .72rem; font-weight: 700; letter-spacing: .1em;
+            text-transform: uppercase; cursor: pointer; border: none; background: none;
+            color: var(--text-muted); border-bottom: 2px solid transparent;
+            transition: all .15s; font-family: var(--font-ui); margin-bottom: -1px;
+        }
+        .stab:hover { color: var(--text); }
+        .stab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .stab i { margin-right: .4rem; }
+
         .s-section { margin-bottom: 1.375rem; }
         .s-label { display: block; font-size: .62rem; letter-spacing: .2em; text-transform: uppercase; color: var(--text-muted); margin-bottom: .7rem; padding-bottom: .38rem; border-bottom: 1px solid var(--border); font-weight: 600; }
-
-        /* ── Modern Toggle Switches Upgrade ── */
         .toggle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap: .85rem; }
         .toggle-item { display: flex; align-items: center; gap: .6rem; cursor: pointer; font-size: .8rem; color: var(--text-muted); transition: color 0.2s; }
         .toggle-item:hover { color: var(--text); }
@@ -352,50 +420,26 @@
             border: 1px solid var(--border); border-radius: 5px;
             padding: .48rem .7rem; font-family: var(--font-data); font-size: .8rem;
             outline: none; transition: border-color .15s, box-shadow .15s;
-            word-wrap: break-word; white-space: pre-wrap; /* Wrap long strings safely */
+            word-wrap: break-word; white-space: pre-wrap;
         }
         .field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
         .settings-footer { display: flex; justify-content: flex-end; gap: .7rem; margin-top: 1.5rem; }
-        .btn-sm { width: auto; padding: .55rem 1.4rem; }
 
-        /* ── Admin user management table ── */
-        .user-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1rem;
-            font-size: .8rem;
+        /* ── User management rows ── */
+        .user-row {
+            display: flex; align-items: center; gap: .75rem;
+            padding: .6rem .875rem; background: var(--surface-2);
+            border: 1px solid var(--border); border-radius: 4px;
+            transition: border-color .15s;
         }
-        .user-table th {
-            text-align: left;
-            padding: .5rem;
-            color: var(--text-muted);
-            font-weight: 600;
-            border-bottom: 1px solid var(--border);
-        }
-        .user-table td {
-            padding: .5rem;
-            border-bottom: 1px dashed var(--border);
-        }
-        .user-table tr:last-child td {
-            border-bottom: none;
-        }
-        .user-actions {
-            display: flex;
-            gap: .5rem;
-        }
-        .user-actions button {
-            background: none;
-            border: 1px solid var(--border);
-            color: var(--text-muted);
-            padding: .2rem .4rem;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: .7rem;
-        }
-        .user-actions button:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-            background: var(--accent-dim);
+        .user-row:hover { border-color: var(--border-hi); }
+        .user-row-name { font-family: var(--font-data); font-size: .82rem; flex: 1; }
+        .user-row-actions { display: flex; gap: .35rem; }
+        .user-row-actions .btn { width: auto; padding: .28rem .65rem; font-size: .72rem; }
+
+        .add-user-form {
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: 4px; padding: 1rem; margin-bottom: 1rem;
         }
 
         /* ── Kbd shortcuts ── */
@@ -420,6 +464,29 @@
         .toast.info    { background: var(--surface); border-color: var(--accent);  color: var(--accent); }
         @keyframes toast-in { from { transform: translateX(110%); opacity:0 } to { transform:translateX(0); opacity:1 } }
 
+        /* ── Login screen ── */
+        .login-box {
+            background: var(--surface); border: 1px solid var(--border);
+            border-top: 3px solid var(--accent); border-radius: 8px;
+            width: 95%; max-width: 400px; padding: 2rem;
+            box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 30px var(--accent-glow);
+            animation: modalIn .3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .login-logo {
+            display: flex; align-items: center; justify-content: center;
+            gap: .75rem; margin-bottom: 1.75rem;
+        }
+        .login-logo-mark {
+            width: 48px; height: 48px; background: var(--accent-dim);
+            border: 1px solid var(--accent); border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--accent); font-size: 1.3rem;
+            animation: logo-ring 4s ease-in-out infinite;
+        }
+        .login-title { font-size: 1.2rem; font-weight: 700; letter-spacing: .2em; }
+        .login-sub   { font-size: .62rem; letter-spacing: .3em; color: var(--text-muted); margin-top: 2px; }
+        .login-field { margin-bottom: 1rem; }
+
         /* ── Scrollbar ── */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: var(--surface); }
@@ -435,10 +502,15 @@
             <div class="logo-mark"><i class="fas fa-terminal"></i></div>
             <div>
                 <div class="logo-name">NOBA <span class="logo-slash">//</span> COMMAND</div>
-                <div class="logo-tagline">Nobara Automation Suite</div>
+                <div class="logo-tagline">Noba Automation Suite</div>
             </div>
         </div>
         <div class="header-controls">
+            <div class="user-chip" x-show="authenticated && username">
+                <i class="fas fa-user-circle" style="color:var(--accent);font-size:.8rem"></i>
+                <span x-text="username" style="color:var(--text)"></span>
+                <span class="badge" :class="userRole==='admin'?'ba':'bn'" x-text="userRole"></span>
+            </div>
             <select class="theme-select" x-model="theme" @change="saveSettings()">
                 <option value="default">Operator</option>
                 <option value="catppuccin">Catppuccin</option>
@@ -447,7 +519,8 @@
                 <option value="dracula">Dracula</option>
                 <option value="nord">Nord</option>
             </select>
-            <div class="icon-btn" @click="showSettings=true" title="Settings (s)"><i class="fas fa-sliders-h"></i></div>
+            <button class="icon-btn" @click="refreshStats()" title="Refresh (r)"><i class="fas fa-sync" :class="refreshing ? 'fa-spin' : ''"></i></button>
+            <div class="icon-btn" @click="showSettings=true; settingsTab='visibility'" title="Settings (s)"><i class="fas fa-sliders-h"></i></div>
             <div class="live-pill" :class="'conn-' + connStatus">
                 <div class="live-dot" :class="refreshing ? 'syncing' : connStatus"></div>
                 <span x-text="livePillText"></span>
@@ -471,12 +544,16 @@
     <div class="grid" id="sortable-grid">
 
         <div class="card" data-id="card-core" x-show="vis.core">
-            <div class="card-hdr"><i class="fas fa-microchip card-icon"></i><span class="card-title">Core System</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-microchip card-icon"></i><span class="card-title">Core System</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.core ? 'is-collapsed' : ''" @click="toggleCollapse('core')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.core">
                 <div class="row"><span class="row-label">OS</span><span class="row-val" x-text="osName"></span></div>
-                <div class="row"><span class="row-label">Kernel</span><span class="row-val" x-text="kernel"></span></div>
+                <div class="row"><span class="row-label">Kernel</span><span class="row-val copy-hover" @click="copyVal(kernel, $event)" x-text="kernel" title="Copy"></span></div>
                 <div class="row"><span class="row-label">Uptime</span><span class="row-val" x-text="uptime"></span></div>
-                <div class="row"><span class="row-label">Load Avg</span><span class="row-val" x-text="loadavg"></span></div>
+                <div class="row"><span class="row-label">Load Avg</span><span class="row-val copy-hover" @click="copyVal(loadavg, $event)" x-text="loadavg" title="Copy"></span></div>
                 <div class="row"><span class="row-label">CPU Temp</span><span class="badge" :class="cpuTempClass" x-text="cpuTemp"></span></div>
                 <div style="margin-top:.875rem">
                     <div style="font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.35rem">CPU UTILIZATION</div>
@@ -498,20 +575,28 @@
         </div>
 
         <div class="card" data-id="card-netio" x-show="vis.netio">
-            <div class="card-hdr"><i class="fas fa-network-wired card-icon"></i><span class="card-title">Network I/O</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-network-wired card-icon"></i><span class="card-title">Network I/O</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.netio ? 'is-collapsed' : ''" @click="toggleCollapse('netio')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.netio">
                 <div class="io-grid" style="margin-bottom:.875rem">
                     <div class="io-stat"><div class="io-val io-down" x-text="netRx || '0 B/s'"></div><div class="io-label"><i class="fas fa-arrow-down"></i> RX</div></div>
                     <div class="io-stat"><div class="io-val io-up" x-text="netTx || '0 B/s'"></div><div class="io-label"><i class="fas fa-arrow-up"></i> TX</div></div>
                 </div>
-                <div class="row"><span class="row-label">Hostname</span><span class="row-val" x-text="hostname || '--'"></span></div>
-                <div class="row"><span class="row-label">Default IP</span><span class="row-val" x-text="defaultIp || '--'"></span></div>
+                <div class="row"><span class="row-label">Hostname</span><span class="row-val copy-hover" @click="copyVal(hostname, $event)" x-text="hostname || '--'" title="Copy"></span></div>
+                <div class="row"><span class="row-label">Default IP</span><span class="row-val copy-hover" @click="copyVal(defaultIp, $event)" x-text="defaultIp || '--'" title="Copy"></span></div>
             </div>
         </div>
 
         <div class="card" data-id="card-hw" x-show="vis.hw">
-            <div class="card-hdr"><i class="fas fa-memory card-icon"></i><span class="card-title">Hardware</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-memory card-icon"></i><span class="card-title">Hardware</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.hw ? 'is-collapsed' : ''" @click="toggleCollapse('hw')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.hw">
                 <div class="row"><span class="row-label">CPU</span><span class="row-val" style="font-size:.78rem;max-width:210px" x-text="hwCpu"></span></div>
                 <div class="row"><span class="row-label">GPU</span><span class="row-val" style="font-size:.76rem;max-width:210px" x-html="hwGpu"></span></div>
                 <div class="row" x-show="gpuTemp && gpuTemp !== 'N/A'"><span class="row-label">GPU Temp</span><span class="badge" :class="gpuTempClass" x-text="gpuTemp"></span></div>
@@ -519,8 +604,12 @@
         </div>
 
         <div class="card" data-id="card-battery" x-show="vis.battery && battery && !battery.desktop">
-            <div class="card-hdr"><i class="fas fa-battery-half card-icon"></i><span class="card-title">Power State</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-battery-half card-icon"></i><span class="card-title">Power State</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.battery ? 'is-collapsed' : ''" @click="toggleCollapse('battery')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.battery">
                 <div class="row"><span class="row-label">Status</span><span class="badge" :class="battery.status==='Charging'||battery.status==='Full'?'bs':battery.status==='Discharging'?'bw':'bn'" x-text="battery.status"></span></div>
                 <div class="row" x-show="battery.timeRemaining"><span class="row-label">Remaining</span><span class="row-val" x-text="battery.timeRemaining"></span></div>
                 <div class="prog" style="margin-top:.75rem">
@@ -531,8 +620,12 @@
         </div>
 
         <div class="card" data-id="card-pihole" x-show="vis.pihole">
-            <div class="card-hdr"><i class="fas fa-shield-alt card-icon"></i><span class="card-title">Pi-hole DNS</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-shield-alt card-icon"></i><span class="card-title">Pi-hole DNS</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.pihole ? 'is-collapsed' : ''" @click="toggleCollapse('pihole')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.pihole">
                 <template x-if="pihole">
                     <div>
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.875rem">
@@ -549,13 +642,17 @@
                         </div>
                     </div>
                 </template>
-                <template x-if="!pihole"><div style="font-size:.8rem;color:var(--text-muted);font-style:italic">Pi-hole unreachable — configure URL and App Password in Settings.</div></template>
+                <template x-if="!pihole"><div class="empty-msg">Pi-hole unreachable — configure URL and App Password in Settings.</div></template>
             </div>
         </div>
 
         <div class="card" data-id="card-storage" x-show="vis.storage">
-            <div class="card-hdr"><i class="fas fa-hdd card-icon"></i><span class="card-title">Storage</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-hdd card-icon"></i><span class="card-title">Storage</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.storage ? 'is-collapsed' : ''" @click="toggleCollapse('storage')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.storage">
                 <template x-for="pool in zfs.pools" :key="pool.name">
                     <div class="row"><span class="row-label" x-text="'ZFS: ' + pool.name"></span><span class="badge" :class="pool.health==='ONLINE'?'bs':pool.health==='DEGRADED'?'bw':'bd'" x-text="pool.health"></span></div>
                 </template>
@@ -571,22 +668,31 @@
         </div>
 
         <div class="card" data-id="card-radar" x-show="vis.radar">
-            <div class="card-hdr"><i class="fas fa-satellite-dish card-icon"></i><span class="card-title">Network Radar</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-satellite-dish card-icon"></i><span class="card-title">Network Radar</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.radar ? 'is-collapsed' : ''" @click="toggleCollapse('radar')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.radar">
                 <template x-for="t in radar" :key="t.ip">
                     <div class="radar-row">
                         <div class="status-dot" :class="t.status==='Up'?'dot-up':'dot-down'"></div>
-                        <span class="radar-ip" x-text="t.ip"></span>
+                        <span class="radar-ip copy-hover" @click="copyVal(t.ip, $event)" x-text="t.ip" title="Copy"></span>
                         <span class="badge" :class="t.status==='Up'?'bs':'bd'" x-text="t.status"></span>
                         <span class="radar-ms" x-show="t.status==='Up'" x-text="t.ms + 'ms'"></span>
                     </div>
                 </template>
+                <div x-show="radar.length === 0" class="empty-msg">No radar IPs configured.</div>
             </div>
         </div>
 
         <div class="card" data-id="card-procs" x-show="vis.procs">
-            <div class="card-hdr"><i class="fas fa-chart-bar card-icon"></i><span class="card-title">Resource Hogs</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-chart-bar card-icon"></i><span class="card-title">Resource Hogs</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.procs ? 'is-collapsed' : ''" @click="toggleCollapse('procs')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.procs">
                 <div class="proc-grid">
                     <div>
                         <div class="proc-hdr">Top CPU</div>
@@ -600,10 +706,15 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-containers" x-show="vis.containers && containers && containers.length > 0">
-            <div class="card-hdr"><i class="fas fa-boxes card-icon"></i><span class="card-title">Containers</span><span style="font-size:.65rem;color:var(--text-muted);margin-left:auto;margin-right:.5rem" x-text="containers.length + ' total'"></span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
-                <div class="ct-list">
+        <div class="card" data-id="card-containers" x-show="vis.containers">
+            <div class="card-hdr">
+                <i class="fas fa-boxes card-icon"></i><span class="card-title">Containers</span>
+                <span class="card-count" x-show="containers && containers.length > 0" x-text="containers.length + ' total'"></span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.containers ? 'is-collapsed' : ''" @click="toggleCollapse('containers')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.containers">
+                <div class="ct-list" x-show="containers && containers.length > 0">
                     <template x-for="c in containers" :key="c.name">
                         <div class="ct-row">
                             <div class="status-dot" :class="c.state==='running'?'dot-up':'dot-down'"></div>
@@ -613,14 +724,23 @@
                         </div>
                     </template>
                 </div>
+                <div x-show="!containers || containers.length === 0" class="empty-msg">No containers running.</div>
             </div>
         </div>
 
         <div class="card span-full" data-id="card-services" x-show="vis.services">
-            <div class="card-hdr"><i class="fas fa-cogs card-icon"></i><span class="card-title">Services</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
-                <div class="svc-grid">
-                    <template x-for="s in services" :key="s.name">
+            <div class="card-hdr">
+                <i class="fas fa-cogs card-icon"></i><span class="card-title">Services</span>
+                <span class="card-count" x-show="services.length > 0" x-text="svcFilter ? (filteredServices.length + ' / ' + services.length) : (services.length + ' total')"></span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.services ? 'is-collapsed' : ''" @click="toggleCollapse('services')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.services">
+                <div x-show="services.length > 4" class="svc-filter-wrap">
+                    <input type="text" class="field-input" placeholder="Filter services..." x-model="svcFilter" style="padding: .4rem .6rem; font-size: .75rem;">
+                </div>
+                <div class="svc-grid" x-show="filteredServices.length > 0">
+                    <template x-for="s in filteredServices" :key="s.name">
                         <div class="svc-card">
                             <div class="svc-name" x-text="s.name.replace('.service','')"></div>
                             <div class="svc-footer">
@@ -634,12 +754,18 @@
                         </div>
                     </template>
                 </div>
+                <div x-show="services.length === 0" class="empty-msg">No services monitored.</div>
+                <div x-show="services.length > 0 && filteredServices.length === 0" class="empty-msg">No services match filter.</div>
             </div>
         </div>
 
         <div class="card span-full" data-id="card-logs" x-show="vis.logs">
-            <div class="card-hdr"><i class="fas fa-scroll card-icon"></i><span class="card-title">System Logs</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-scroll card-icon"></i><span class="card-title">System Logs</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.logs ? 'is-collapsed' : ''" @click="toggleCollapse('logs')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.logs">
                 <div class="log-controls">
                     <select class="theme-select" x-model="selectedLog" @change="fetchLog()">
                         <option value="syserr">System Errors (journalctl)</option>
@@ -653,19 +779,28 @@
         </div>
 
         <div class="card" data-id="card-actions" x-show="vis.actions">
-            <div class="card-hdr"><i class="fas fa-bolt card-icon"></i><span class="card-title">Quick Actions</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body action-list">
+            <div class="card-hdr">
+                <i class="fas fa-bolt card-icon"></i><span class="card-title">Quick Actions</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.actions ? 'is-collapsed' : ''" @click="toggleCollapse('actions')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body action-list" x-show="!collapsed.actions">
                 <button class="btn btn-primary" :disabled="runningScript" @click="runScript('backup')"><i class="fas fa-database"></i> Force NAS Backup</button>
                 <button class="btn" :disabled="runningScript" @click="runScript('verify')"><i class="fas fa-check-double"></i> Verify Backups</button>
                 <button class="btn" :disabled="runningScript" @click="runScript('organize')"><i class="fas fa-folder-open"></i> Organize Downloads</button>
                 <button class="btn" :disabled="runningScript" @click="runScript('diskcheck')"><i class="fas fa-broom"></i> Disk Cleanup</button>
+                <button class="btn" :disabled="runningScript" @click="runScript('check_updates')"><i class="fas fa-arrow-circle-up"></i> Check Updates</button>
                 <button class="btn" :disabled="runningScript" @click="runScript('speedtest')"><i class="fas fa-tachometer-alt"></i> Speed Test</button>
             </div>
         </div>
 
         <div class="card" data-id="card-bookmarks" x-show="vis.bookmarks">
-            <div class="card-hdr"><i class="fas fa-bookmark card-icon"></i><span class="card-title">Homelab Links</span><i class="fas fa-grip-lines drag-handle"></i></div>
-            <div class="card-body">
+            <div class="card-hdr">
+                <i class="fas fa-bookmark card-icon"></i><span class="card-title">Homelab Links</span>
+                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.bookmarks ? 'is-collapsed' : ''" @click="toggleCollapse('bookmarks')"></i>
+                <i class="fas fa-grip-lines drag-handle"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.bookmarks">
                 <div class="bm-grid">
                     <template x-for="b in parsedBookmarks" :key="b.name">
                         <a :href="b.url" target="_blank" class="bm-link"><i class="fas" :class="b.icon"></i><span x-text="b.name"></span></a>
@@ -674,120 +809,186 @@
             </div>
         </div>
 
-    </div></div><div x-show="showModal" class="modal-overlay" style="display:none" @click.self="showModal=false">
+    </div>
+</div>
+
+<div x-show="showModal" class="modal-overlay" style="display:none" @click.self="showModal=false">
     <div class="modal-box">
         <div class="modal-title"><i class="fas fa-terminal" style="color:var(--accent)"></i><span x-text="modalTitle"></span></div>
         <pre id="console-out" class="console-out" x-text="modalOutput"></pre>
-        <div class="modal-footer"><button class="btn btn-sm" @click="showModal=false" :disabled="runningScript" style="width:auto;padding:.55rem 1.4rem">Close</button></div>
+        <div class="modal-footer"><button class="btn btn-sm" @click="showModal=false" :disabled="runningScript">Close</button></div>
     </div>
 </div>
 
 <div x-show="showSettings" class="modal-overlay" style="display:none" @click.self="showSettings=false">
     <div class="modal-box">
         <div class="modal-title"><i class="fas fa-sliders-h" style="color:var(--accent)"></i> Settings</div>
-        <div class="s-section">
-            <span class="s-label">Module Visibility</span>
-            <div class="toggle-grid">
-                <label class="toggle-item"><input type="checkbox" x-model="vis.core"> Core System</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.netio"> Network I/O</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.hw"> Hardware</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.battery"> Power State</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.pihole"> Pi-hole DNS</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.storage"> Storage</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.radar"> Network Radar</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.procs"> Resource Hogs</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.containers"> Containers</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.services"> Services</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.logs"> System Logs</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.actions"> Quick Actions</label>
-                <label class="toggle-item"><input type="checkbox" x-model="vis.bookmarks"> Homelab Links</label>
-            </div>
+
+        <div class="settings-tabs">
+            <button class="stab" :class="settingsTab==='visibility'?'active':''" @click="settingsTab='visibility'"><i class="fas fa-eye"></i> Visibility</button>
+            <button class="stab" :class="settingsTab==='data'?'active':''" @click="settingsTab='data'"><i class="fas fa-database"></i> Data Sources</button>
+            <button class="stab" :class="settingsTab==='users'?'active':''" @click="settingsTab='users'; fetchUsers()" x-show="userRole==='admin'"><i class="fas fa-users"></i> Users</button>
+            <button class="stab" :class="settingsTab==='shortcuts'?'active':''" @click="settingsTab='shortcuts'"><i class="fas fa-keyboard"></i> Shortcuts</button>
         </div>
-        <div class="s-section">
-            <span class="s-label">Pi-hole</span>
-            <div class="field-2">
-                <div><label class="field-label">URL / IP</label><input class="field-input" type="text" x-model="piholeUrl" placeholder="dnsa01.example.org"></div>
-                <div><label class="field-label">App Password (v6)</label><input class="field-input" type="password" x-model="piholeToken"></div>
-            </div>
-        </div>
-        <div class="s-section">
-            <span class="s-label">Data Sources</span>
-            <div style="display:flex;flex-direction:column;gap:.7rem">
-                <div><label class="field-label">Services (comma-separated)</label><input class="field-input" type="text" x-model="monitoredServices"></div>
-                <div><label class="field-label">Radar IPs (comma-separated)</label><input class="field-input" type="text" x-model="radarIps"></div>
-                <div><label class="field-label">Bookmarks (Name | URL | fa-icon, comma-separated)</label><textarea class="field-input" x-model="bookmarksStr" style="height:72px;"></textarea></div>
+
+        <div x-show="settingsTab==='visibility'">
+            <div class="s-section">
+                <span class="s-label">Module Visibility</span>
+                <div class="toggle-grid">
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.core"> Core System</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.netio"> Network I/O</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.hw"> Hardware</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.battery"> Power State</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.pihole"> Pi-hole DNS</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.storage"> Storage</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.radar"> Network Radar</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.procs"> Resource Hogs</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.containers"> Containers</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.services"> Services</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.logs"> System Logs</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.actions"> Quick Actions</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.bookmarks"> Homelab Links</label>
+                </div>
             </div>
         </div>
 
-        <div class="s-section" x-show="userRole === 'admin'">
-            <span class="s-label">User Management</span>
-            <div style="margin-bottom: 1rem;">
-                <button class="btn btn-sm" @click="fetchUsers()" style="width:auto; margin-right: 0.5rem;"><i class="fas fa-sync"></i> Refresh</button>
-                <button class="btn btn-sm btn-primary" @click="showAddUserForm = true" style="width:auto;"><i class="fas fa-plus"></i> Add User</button>
-            </div>
-
-            <div x-show="showAddUserForm" style="margin-bottom: 1rem; padding: 1rem; background: var(--surface-2); border-radius: 4px;">
+        <div x-show="settingsTab==='data'">
+            <div class="s-section">
+                <span class="s-label">Pi-hole</span>
                 <div class="field-2">
-                    <div><label class="field-label">Username</label><input class="field-input" type="text" x-model="newUsername" placeholder="username"></div>
-                    <div><label class="field-label">Password</label><input class="field-input" type="password" x-model="newPassword" placeholder="password"></div>
-                </div>
-                <div style="display: flex; gap: 0.5rem; align-items: center;">
-                    <label class="field-label" style="margin:0;">Role:</label>
-                    <select x-model="newRole" class="theme-select" style="padding: .3rem;">
-                        <option value="admin">admin</option>
-                        <option value="user">user</option>
-                    </select>
-                    <button class="btn btn-sm" @click="addUser()" style="width:auto;"><i class="fas fa-check"></i> Save</button>
-                    <button class="btn btn-sm" @click="showAddUserForm = false; newUsername=''; newPassword=''; newRole='admin'" style="width:auto;">Cancel</button>
+                    <div><label class="field-label">URL / IP</label><input class="field-input" type="text" x-model="piholeUrl" placeholder="dnsa01.example.org"></div>
+                    <div><label class="field-label">App Password (v6)</label><input class="field-input" type="password" x-model="piholeToken"></div>
                 </div>
             </div>
+            <div class="s-section">
+                <span class="s-label">Data Sources</span>
+                <div style="display:flex;flex-direction:column;gap:.7rem">
+                    <div><label class="field-label">Services (comma-separated)</label><input class="field-input" type="text" x-model="monitoredServices"></div>
+                    <div><label class="field-label">Radar IPs (comma-separated)</label><input class="field-input" type="text" x-model="radarIps"></div>
+                    <div><label class="field-label">Bookmarks (Name | URL | fa-icon, comma-separated)</label><textarea class="field-input" x-model="bookmarksStr" style="height:72px;resize:vertical"></textarea></div>
+                </div>
+            </div>
+        </div>
 
-            <table class="user-table">
-                <thead>
-                    <tr><th>Username</th><th>Role</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
+        <div x-show="settingsTab==='users' && userRole==='admin'">
+            <div class="s-section">
+                <span class="s-label">User Management</span>
+
+                <div x-show="showAddUserForm" class="add-user-form">
+                    <div class="field-2">
+                        <div><label class="field-label">Username</label><input class="field-input" type="text" x-model="newUsername" placeholder="username" @keyup.enter="addUser()"></div>
+                        <div><label class="field-label">Password</label><input class="field-input" type="password" x-model="newPassword" placeholder="password" @keyup.enter="addUser()"></div>
+                    </div>
+                    <div style="display:flex;gap:.5rem;align-items:center;margin-top:.75rem">
+                        <div>
+                            <label class="field-label" style="margin-bottom:.28rem">Role</label>
+                            <select x-model="newRole" class="theme-select">
+                                <option value="viewer">viewer</option>
+                                <option value="admin">admin</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;gap:.4rem;margin-top:1.3rem">
+                            <button class="btn btn-sm btn-primary" @click="addUser()"><i class="fas fa-check"></i> Save</button>
+                            <button class="btn btn-sm" @click="showAddUserForm=false; newUsername=''; newPassword=''; newRole='viewer'">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:.45rem;margin-bottom:.75rem">
                     <template x-for="u in userList" :key="u.username">
-                        <tr>
-                            <td x-text="u.username"></td>
-                            <td><span class="badge" :class="u.role==='admin'?'ba':'bn'" x-text="u.role"></span></td>
-                            <td class="user-actions">
-                                <button @click="changeUserPassword(u.username)" title="Change password"><i class="fas fa-key"></i></button>
-                                <button @click="removeUser(u.username)" title="Remove user" x-show="u.username !== username"><i class="fas fa-trash"></i></button>
-                            </td>
-                        </tr>
+                        <div class="user-row">
+                            <i class="fas fa-user" style="color:var(--text-muted);font-size:.8rem;flex-shrink:0"></i>
+                            <span class="user-row-name" x-text="u.username"></span>
+                            <span class="badge" :class="u.role==='admin'?'ba':'bn'" x-text="u.role"></span>
+                            <div class="user-row-actions">
+                                <button class="btn" @click="openPassModal(u.username)" title="Change password"><i class="fas fa-key"></i></button>
+                                <button class="btn btn-danger" @click="confirmRemoveUser(u.username)" title="Remove user" x-show="u.username !== username"><i class="fas fa-trash"></i></button>
+                            </div>
+                        </div>
                     </template>
-                </tbody>
-            </table>
-        </div>
+                    <div x-show="userList.length===0" style="font-size:.8rem;color:var(--text-muted);padding:.5rem 0">No users loaded.</div>
+                </div>
 
-        <div class="s-section">
-            <span class="s-label">Keyboard Shortcuts</span>
-            <div class="kbd-grid">
-                <div class="kbd-item"><kbd>s</kbd> Settings</div>
-                <div class="kbd-item"><kbd>r</kbd> Refresh now</div>
-                <div class="kbd-item"><kbd>Esc</kbd> Close modal</div>
+                <div style="display:flex;gap:.5rem">
+                    <button class="btn btn-sm" @click="fetchUsers()"><i class="fas fa-sync" :class="usersLoading?'fa-spin':''"></i> Refresh</button>
+                    <button class="btn btn-sm btn-primary" @click="showAddUserForm=!showAddUserForm"><i class="fas fa-plus"></i> Add User</button>
+                </div>
             </div>
         </div>
+
+        <div x-show="settingsTab==='shortcuts'">
+            <div class="s-section">
+                <span class="s-label">Keyboard Shortcuts</span>
+                <div class="kbd-grid">
+                    <div class="kbd-item"><kbd>s</kbd> Settings</div>
+                    <div class="kbd-item"><kbd>r</kbd> Refresh now</div>
+                    <div class="kbd-item"><kbd>Esc</kbd> Close modal</div>
+                </div>
+            </div>
+        </div>
+
         <div class="settings-footer">
-            <button class="btn" @click="showSettings=false" style="width:auto;padding:.55rem 1.4rem">Cancel</button>
-            <button class="btn btn-primary" @click="applySettings()" style="width:auto;padding:.55rem 1.4rem"><i class="fas fa-check"></i> Save & Apply</button>
+            <button class="btn btn-sm" @click="showSettings=false">Cancel</button>
+            <button class="btn btn-sm btn-primary" @click="applySettings()">
+                <i class="fas fa-check"></i> Save & Apply
+            </button>
         </div>
     </div>
 </div>
 
 <div x-show="!authenticated" class="modal-overlay" style="display:none">
-    <div class="modal-box" style="max-width:400px">
-        <div class="modal-title"><i class="fas fa-lock" style="color:var(--accent)"></i> Login</div>
-        <div style="margin:1rem 0"><label class="field-label">Username</label><input class="field-input" type="text" x-model="loginUsername" @keyup.enter="doLogin" autofocus></div>
-        <div style="margin:1rem 0"><label class="field-label">Password</label><input class="field-input" type="password" x-model="loginPassword" @keyup.enter="doLogin"></div>
-        <div class="settings-footer">
-            <button class="btn btn-primary" @click="doLogin" :disabled="loginLoading">
-                <i class="fas fa-spinner fa-spin" x-show="loginLoading"></i>
-                <span x-show="!loginLoading">Login</span>
-            </button>
+    <div class="login-box">
+        <div class="login-logo">
+            <div class="login-logo-mark"><i class="fas fa-terminal"></i></div>
+            <div>
+                <div class="login-title">NOBA <span style="color:var(--accent)">//</span> CMD</div>
+                <div class="login-sub">Command Center</div>
+            </div>
         </div>
-        <p x-show="loginError" class="alert danger" style="margin-top:0.5rem" x-text="loginError"></p>
+        <div class="login-field">
+            <label class="field-label">Username</label>
+            <input class="field-input" type="text" x-model="loginUsername" @keyup.enter="doLogin" autofocus placeholder="user">
+        </div>
+        <div class="login-field">
+            <label class="field-label">Password</label>
+            <input class="field-input" type="password" x-model="loginPassword" @keyup.enter="doLogin" placeholder="••••••••">
+        </div>
+        <div x-show="loginError" class="alert danger" style="margin-bottom:1rem" x-text="loginError"></div>
+        <button class="btn btn-primary" @click="doLogin" :disabled="loginLoading" style="margin-top:.5rem">
+            <i class="fas fa-spinner fa-spin" x-show="loginLoading"></i>
+            <i class="fas fa-sign-in-alt" x-show="!loginLoading"></i>
+            <span x-text="loginLoading ? 'Authenticating…' : 'Login'"></span>
+        </button>
+    </div>
+</div>
+
+<div x-show="showPassModal" class="modal-overlay" style="display:none" @click.self="showPassModal=false">
+    <div class="modal-box" style="max-width:420px">
+        <div class="modal-title"><i class="fas fa-key" style="color:var(--accent)"></i> Change Password</div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:1rem">
+            Set a new password for <strong style="color:var(--text)" x-text="passModalUser"></strong>
+        </p>
+        <div>
+            <label class="field-label">New Password</label>
+            <input class="field-input" type="password" x-model="passModalValue" @keyup.enter="confirmChangePassword()" placeholder="Enter new password" x-ref="passInput">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showPassModal=false; passModalValue=''">Cancel</button>
+            <button class="btn btn-sm btn-primary" @click="confirmChangePassword()" :disabled="!passModalValue"><i class="fas fa-check"></i> Change</button>
+        </div>
+    </div>
+</div>
+
+<div x-show="showRemoveModal" class="modal-overlay" style="display:none" @click.self="showRemoveModal=false">
+    <div class="modal-box" style="max-width:380px">
+        <div class="modal-title"><i class="fas fa-exclamation-triangle" style="color:var(--danger)"></i> Remove User</div>
+        <p style="font-size:.84rem;margin-bottom:1.5rem">
+            Remove user <strong style="color:var(--danger)" x-text="removeModalUser"></strong>? This cannot be undone.
+        </p>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showRemoveModal=false">Cancel</button>
+            <button class="btn btn-sm btn-danger" @click="confirmRemove()"><i class="fas fa-trash"></i> Remove</button>
+        </div>
     </div>
 </div>
 
@@ -836,23 +1037,46 @@ function dashboard() {
         _countdownTimer: null,
         _dismissedAlerts: new Set(),
 
+        // Settings tabs
+        settingsTab: 'visibility',
+
         // User management
-        userRole: 'user',
-        username: '',               // current username
+        userRole: 'viewer',
+        username: '',
         userList: [],
+        usersLoading: false,
         showAddUserForm: false,
         newUsername: '',
         newPassword: '',
-        newRole: 'admin',
+        newRole: 'viewer',
+
+        // Password change modal
+        showPassModal: false,
+        passModalUser: '',
+        passModalValue: '',
+
+        // Remove user confirmation modal
+        showRemoveModal: false,
+        removeModalUser: '',
+
+        // UI toggles
+        collapsed: JSON.parse(localStorage.getItem('noba-collapsed') || '{}'),
+        svcFilter: '',
 
         get cpuTempClass() { const t=parseInt(this.cpuTemp)||0; return t>80?'bd':t>65?'bw':'bn'; },
         get gpuTempClass() { const t=parseInt(this.gpuTemp)||0; return t>85?'bd':t>70?'bw':'bn'; },
         get visibleAlerts() { return (this.alerts||[]).filter(a => !this._dismissedAlerts.has(a.msg)); },
         get livePillText() {
-            if (this.refreshing)               return 'Syncing…';
-            if (this.connStatus === 'sse')     return 'Live';
-            if (this.connStatus === 'polling') return this.countdown + 's';
-            return 'Offline';
+            let state = '';
+            if (this.refreshing)               state = 'Syncing…';
+            else if (this.connStatus === 'sse')     state = 'Live';
+            else if (this.connStatus === 'polling') state = this.countdown + 's';
+            else                               state = 'Offline';
+
+            if (this.timestamp && this.timestamp !== '--:--') {
+                return `${state} • ${this.timestamp}`;
+            }
+            return state;
         },
         get parsedBookmarks() {
             return (this.bookmarksStr||'').split(',').filter(b=>b.trim()).map(b => {
@@ -872,6 +1096,12 @@ function dashboard() {
             return `${pts} 120,38 0,38`;
         },
 
+        get filteredServices() {
+            if (!this.svcFilter) return this.services || [];
+            const q = this.svcFilter.toLowerCase();
+            return (this.services || []).filter(s => s.name.toLowerCase().includes(q));
+        },
+
         async init() {
             this.initSortable();
             this.initKeyboard();
@@ -883,12 +1113,10 @@ function dashboard() {
                 if (this.userRole === 'admin') await this.fetchUsers();
                 this.connectSSE();
                 setInterval(() => { if (this.vis.logs) this.fetchLog(); }, 12000);
-
                 setInterval(() => {
-                    // Watchdog: If SSE is "connected" but we haven't received a local pulse in 15s, force reconnect.
                     if (this.connStatus === 'sse' && this._lastHeartbeat) {
                         if (Date.now() - this._lastHeartbeat > 15000) {
-                            console.warn("SSE heartbeat lost. Reconnecting...");
+                            console.warn('SSE heartbeat lost. Reconnecting...');
                             this.connectSSE();
                         }
                     }
@@ -901,8 +1129,6 @@ function dashboard() {
                 for (let entry of entries) {
                     const card = entry.target;
                     if (card.style.display === 'none') continue;
-                    // Card has align-self: start, so its height is perfectly content-driven.
-                    // We add 18px to simulate the vertical gap, then divide by the 10px grid rows.
                     const height = card.getBoundingClientRect().height;
                     const rowSpan = Math.ceil((height + 18) / 10);
                     card.style.gridRowEnd = `span ${rowSpan}`;
@@ -911,6 +1137,21 @@ function dashboard() {
             this.$nextTick(() => {
                 document.querySelectorAll('.card').forEach(c => observer.observe(c));
             });
+        },
+
+        toggleCollapse(card) {
+            this.collapsed[card] = !this.collapsed[card];
+            localStorage.setItem('noba-collapsed', JSON.stringify(this.collapsed));
+        },
+
+        copyVal(val, e) {
+            if (!val || val === '--') return;
+            navigator.clipboard.writeText(val).catch(() => {});
+            if (e && e.target) {
+                const el = e.target;
+                el.classList.add('copied');
+                setTimeout(() => el.classList.remove('copied'), 1000);
+            }
         },
 
         async fetchUserInfo() {
@@ -930,7 +1171,10 @@ function dashboard() {
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
                 if (e.key === 's' && !this.showSettings && !this.showModal) { this.showSettings = true; }
                 else if (e.key === 'r' && !this.showSettings && !this.showModal && this.authenticated) { this.refreshStats(); }
-                else if (e.key === 'Escape') { this.showSettings = false; this.showModal = false; }
+                else if (e.key === 'Escape') {
+                    this.showSettings = false; this.showModal = false;
+                    this.showPassModal = false; this.showRemoveModal = false;
+                }
             });
         },
 
@@ -962,10 +1206,10 @@ function dashboard() {
             this._es.onmessage = (e) => {
                 try {
                     Object.assign(this, JSON.parse(e.data));
-                    this._lastHeartbeat = Date.now(); // Track locally instead of relying on Python timestamp string
+                    this._lastHeartbeat = Date.now();
                 } catch {}
             };
-            this._es.onerror   = () => {
+            this._es.onerror = () => {
                 this._es.close(); this._es = null;
                 this.connStatus = 'polling';
                 this._startCountdown(5);
@@ -1016,6 +1260,8 @@ function dashboard() {
             localStorage.setItem('noba-services',   this.monitoredServices);
             localStorage.setItem('noba-radar',      this.radarIps);
             localStorage.setItem('noba-vis',        JSON.stringify(this.vis));
+            localStorage.setItem('noba-collapsed',  JSON.stringify(this.collapsed));
+
             if (this.authenticated) {
                 const token = localStorage.getItem('noba-token');
                 try {
@@ -1050,13 +1296,11 @@ function dashboard() {
                 const res = await fetch('/api/log-viewer?type=' + this.selectedLog, { headers: { 'Authorization': 'Bearer ' + token } });
                 if (res.ok) {
                     this.logContent = await res.text();
-                    // Auto-scroll to bottom of the log viewer if it updates
                     this.$nextTick(() => {
                         const el = document.querySelector('.log-pre');
                         if (el) el.scrollTop = el.scrollHeight;
                     });
-                }
-                else if (res.status === 401) this.authenticated = false;
+                } else if (res.status === 401) this.authenticated = false;
             } catch { this.logContent = 'Failed to fetch log.'; }
             finally  { this.logLoading = false; }
         },
@@ -1154,8 +1398,9 @@ function dashboard() {
             setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 3500);
         },
 
-        // --- Admin user management methods ---
+        // ── User management ──────────────────────────────────────────────────
         async fetchUsers() {
+            this.usersLoading = true;
             const token = localStorage.getItem('noba-token');
             try {
                 const res = await fetch('/api/admin/users', {
@@ -1171,6 +1416,8 @@ function dashboard() {
             } catch (e) {
                 console.warn('fetchUsers error', e);
                 this.addToast('Error fetching users', 'error');
+            } finally {
+                this.usersLoading = false;
             }
         },
 
@@ -1184,18 +1431,11 @@ function dashboard() {
                 const res = await fetch('/api/admin/users', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                    body: JSON.stringify({
-                        action: 'add',
-                        username: this.newUsername,
-                        password: this.newPassword,
-                        role: this.newRole
-                    })
+                    body: JSON.stringify({ action: 'add', username: this.newUsername, password: this.newPassword, role: this.newRole })
                 });
                 if (res.ok) {
                     this.addToast(`User ${this.newUsername} added`, 'success');
-                    this.newUsername = '';
-                    this.newPassword = '';
-                    this.newRole = 'admin';
+                    this.newUsername = ''; this.newPassword = ''; this.newRole = 'viewer';
                     this.showAddUserForm = false;
                     await this.fetchUsers();
                 } else {
@@ -1208,8 +1448,46 @@ function dashboard() {
             }
         },
 
-        async removeUser(username) {
-            if (!confirm(`Remove user ${username}?`)) return;
+        openPassModal(username) {
+            this.passModalUser  = username;
+            this.passModalValue = '';
+            this.showPassModal  = true;
+            this.$nextTick(() => { if (this.$refs.passInput) this.$refs.passInput.focus(); });
+        },
+
+        async confirmChangePassword() {
+            if (!this.passModalValue) return;
+            const username = this.passModalUser;
+            const token = localStorage.getItem('noba-token');
+            try {
+                const res = await fetch('/api/admin/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ action: 'change_password', username, password: this.passModalValue })
+                });
+                if (res.ok) {
+                    this.addToast(`Password changed for ${username}`, 'success');
+                } else {
+                    const err = await res.json();
+                    this.addToast(err.error || 'Failed to change password', 'error');
+                }
+            } catch (e) {
+                console.warn('changePassword error', e);
+                this.addToast('Error changing password', 'error');
+            } finally {
+                this.showPassModal  = false;
+                this.passModalValue = '';
+            }
+        },
+
+        confirmRemoveUser(username) {
+            this.removeModalUser = username;
+            this.showRemoveModal = true;
+        },
+
+        async confirmRemove() {
+            const username = this.removeModalUser;
+            this.showRemoveModal = false;
             const token = localStorage.getItem('noba-token');
             try {
                 const res = await fetch('/api/admin/users', {
@@ -1227,28 +1505,6 @@ function dashboard() {
             } catch (e) {
                 console.warn('removeUser error', e);
                 this.addToast('Error removing user', 'error');
-            }
-        },
-
-        async changeUserPassword(username) {
-            const newPass = prompt(`Enter new password for ${username}:`);
-            if (!newPass) return;
-            const token = localStorage.getItem('noba-token');
-            try {
-                const res = await fetch('/api/admin/users', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                    body: JSON.stringify({ action: 'change_password', username, password: newPass })
-                });
-                if (res.ok) {
-                    this.addToast(`Password changed for ${username}`, 'success');
-                } else {
-                    const err = await res.json();
-                    this.addToast(err.error || 'Failed to change password', 'error');
-                }
-            } catch (e) {
-                console.warn('changePassword error', e);
-                this.addToast('Error changing password', 'error');
             }
         }
     };
