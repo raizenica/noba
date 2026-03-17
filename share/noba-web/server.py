@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nobara Command Center – Backend v1.3.1 (Hardened & Multi-user)"""
+"""Nobara Command Center – Backend v1.4.0 (Hardened, Multi-user, Optimized)"""
 
 import glob
 import hashlib
@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 # ── Config ────────────────────────────────────────────────────────────────────
-VERSION        = '1.3.1'
+VERSION        = '1.4.0'
 PORT           = int(os.environ.get('PORT', 8080))
 HOST           = os.environ.get('HOST', '0.0.0.0')
 SCRIPT_DIR     = os.environ.get('NOBA_SCRIPT_DIR', os.path.expanduser('~/.local/bin'))
@@ -99,7 +99,7 @@ def load_users():
     new_db = {}
     if os.path.exists(USER_DB):
         try:
-            with open(USER_DB, 'r') as f:
+            with open(USER_DB, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith('#'):
@@ -166,7 +166,7 @@ def load_old_user() -> tuple | None:
     if not os.path.exists(AUTH_CONFIG):
         return None
     try:
-        with open(AUTH_CONFIG) as f:
+        with open(AUTH_CONFIG, encoding='utf-8') as f:
             line = f.readline().strip()
         result = None
         if ':' in line:
@@ -377,8 +377,17 @@ def run(cmd: list, timeout: float = 3, cache_key: str | None = None,
         if hit is not None:
             return hit
     try:
-        r   = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        out = r.stdout.strip() if (r.returncode == 0 or ignore_rc) else ''
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False
+        )
+        if r.returncode != 0 and not ignore_rc:
+            return ""
+
+        out = r.stdout.strip()
         if cache_key and out:
             _cache.set(cache_key, out)
         return out
@@ -767,10 +776,10 @@ def collect_stats(qs: dict) -> dict:
 
 # ── Background collector ──────────────────────────────────────────────────────
 class BackgroundCollector:
-    def __init__(self, interval: int = STATS_INTERVAL) -> None:
-        self._lock     = threading.Lock()
-        self._latest:  dict = {}
-        self._qs:      dict = {}
+    def __init__(self, interval: int = STATS_INTERVAL):
+        self._latest = {}
+        self._qs = {}
+        self._lock = threading.Lock()
         self._interval = interval
 
     def update_qs(self, qs: dict) -> None:
@@ -778,8 +787,8 @@ class BackgroundCollector:
             self._qs = dict(qs)
 
     def get(self) -> dict:
-        with self._lock:
-            return dict(self._latest)
+        # OPTIMIZED: Lockless read for faster API response
+        return self._latest
 
     def start(self) -> None:
         threading.Thread(target=self._loop, daemon=True, name='stats-collector').start()
@@ -790,8 +799,7 @@ class BackgroundCollector:
                 with self._lock:
                     qs = dict(self._qs)
                 data = collect_stats(qs)
-                with self._lock:
-                    self._latest = data
+                self._latest = data # atomic swap
             except Exception as e:
                 logger.warning('Collector error: %s', e)
             _shutdown_flag.wait(self._interval)
@@ -804,6 +812,7 @@ _SECURITY_HEADERS = {
     'X-Frame-Options':         'SAMEORIGIN',
     'Referrer-Policy':         'same-origin',
     'Content-Security-Policy': "default-src 'self'",
+    'Permissions-Policy':      'geolocation=(), microphone=(), camera=()',
 }
 
 _active_job: dict | None = None
@@ -825,7 +834,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return self.client_address[0] if self.client_address else '0.0.0.0'
 
     def _json(self, data: object, status: int = 200) -> None:
-        body = json.dumps(data).encode()
+        # OPTIMIZED: Strip whitespace for smaller payload and faster parsing
+        body = json.dumps(data, separators=(',', ':'), ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -897,6 +907,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             last_heartbeat = time.time()
             try:
                 first = _bg.get() or collect_stats(qs)
+                # Use standard dumps here to match SSE formatting requirements
                 self.wfile.write(f'data: {json.dumps(first)}\n\n'.encode())
                 self.wfile.flush()
                 while not _shutdown_flag.is_set():
@@ -1048,7 +1059,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     'started': datetime.now().isoformat(),
                 }
 
-            # Run synchronously in the request thread to keep frontend await perfectly synced
+            # NOTE: Synchronous execution is REQUIRED here.
+            # ThreadingHTTPServer already allocates a background thread per request.
+            # If we return instantly, the frontend modal log-polling will prematurely close.
             status = 'error'
             p = None
             try:

@@ -1,48 +1,17 @@
-#!/bin/bash
-# Shared functions for Noba Web
+#!/usr/bin/env bash
+# Shared functions for Noba Web – optimized drop‑in replacement
 # Sourced by bin/noba-web — do NOT execute directly.
 
-# ── Logging ───────────────────────────────────────────────────────────────────
-# Emit coloured output only when stdout/stderr is an interactive terminal.
-# Piping to a log file or systemd journal produces clean plain text.
-
+# ── Logging (fast, compact) ───────────────────────────────────────────────────
 _has_color() { [[ -t 1 ]]; }
 _has_color_err() { [[ -t 2 ]]; }
 
-log_info() {
-    if _has_color; then
-        echo -e "\033[1;34m[INFO]\033[0m $*"
-    else
-        echo "[INFO] $*"
-    fi
-}
-
-log_success() {
-    if _has_color; then
-        echo -e "\033[1;32m[OK]\033[0m $*"
-    else
-        echo "[OK] $*"
-    fi
-}
-
-log_warn() {
-    if _has_color_err; then
-        echo -e "\033[1;33m[WARN]\033[0m $*" >&2
-    else
-        echo "[WARN] $*" >&2
-    fi
-}
-
-log_error() {
-    if _has_color_err; then
-        echo -e "\033[1;31m[ERROR]\033[0m $*" >&2
-    else
-        echo "[ERROR] $*" >&2
-    fi
-}
+log_info()    { _has_color     && echo -e "\033[1;34m[INFO]\033[0m $*" || echo "[INFO] $*"; }
+log_success() { _has_color     && echo -e "\033[1;32m[OK]\033[0m $*"   || echo "[OK] $*"; }
+log_warn()    { _has_color_err && echo -e "\033[1;33m[WARN]\033[0m $*" >&2 || echo "[WARN] $*" >&2; }
+log_error()   { _has_color_err && echo -e "\033[1;31m[ERROR]\033[0m $*" >&2 || echo "[ERROR] $*" >&2; }
 
 # ── Dependency check ──────────────────────────────────────────────────────────
-# Usage: check_deps python3 yq ip
 check_deps() {
     local missing=()
     for dep in "$@"; do
@@ -54,87 +23,61 @@ check_deps() {
     fi
 }
 
-# ── Network helpers ───────────────────────────────────────────────────────────
-# Print the primary outbound IPv4 address, falling back to 127.0.0.1.
+# ── Network helpers (faster, no grep -P) ─────────────────────────────────────
 local_ip() {
-    ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[\d.]+' || echo "127.0.0.1"
+    ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || echo "127.0.0.1"
 }
 
 # ── Process helpers ───────────────────────────────────────────────────────────
-# Returns 0 if PID is alive, 1 otherwise.
-_is_running() {
-    local pid="$1"
-    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
-}
+_is_running() { [[ -n "${1:-}" ]] && kill -0 "$1" 2>/dev/null; }
+_read_pid()   { [[ -s "$1" ]] && cat "$1"; }
 
-# Read PID from file; echo it on success, return 1 if file is missing or empty.
-_read_pid() {
-    local pid_file="$1"
-    local pid
-    pid=$(cat "$pid_file" 2>/dev/null || true)
-    [[ -n "$pid" ]] && echo "$pid" && return 0
-    return 1
-}
-
-# ── Kill server ───────────────────────────────────────────────────────────────
-# Usage: kill_server <pid_file> <url_file> <html_dir>
-#
-# html_dir is removed only after a strict safety check — it must be a
-# non-empty path that strictly resides in /tmp/ or /var/tmp/.
+# ── Kill server (strict safe removal) ─────────────────────────────────────────
 kill_server() {
     local pid_file="$1" url_file="$2" html_dir="$3"
+    local pid
 
-    if [[ -f "$pid_file" ]]; then
-        local pid
-        pid=$(_read_pid "$pid_file") || true
+    pid=$(_read_pid "$pid_file" || true)
 
-        if _is_running "$pid"; then
-            log_info "Stopping server (PID $pid)…"
-            kill -TERM "$pid" 2>/dev/null || true
+    if _is_running "$pid"; then
+        log_info "Stopping server (PID $pid)…"
+        kill -TERM "$pid" 2>/dev/null || true
 
-            # Wait up to 5 s for graceful exit before escalating to SIGKILL.
-            local i
-            for i in 1 2 3 4 5; do
-                _is_running "$pid" || break
-                sleep 1
-            done
+        for _ in {1..5}; do
+            _is_running "$pid" || break
+            sleep 1
+        done
 
-            if _is_running "$pid"; then
-                log_warn "Server did not stop gracefully — sending SIGKILL."
-                kill -KILL "$pid" 2>/dev/null || true
-            fi
-        fi
-
-        rm -f "$pid_file" "$url_file"
+        _is_running "$pid" && { log_warn "Force killing"; kill -KILL "$pid" 2>/dev/null || true; }
     fi
 
-    # Guard: only remove html_dir if it strictly looks like a safe temp path.
+    rm -f "$pid_file" "$url_file"
+
+    # Only remove html_dir if it's under /tmp/ or /var/tmp/ (strict safety)
     if [[ -n "$html_dir" && "$html_dir" != "/" ]] && \
        [[ "$html_dir" =~ ^(/tmp/|/var/tmp/) ]]; then
-        log_info "Cleaning up ephemeral sandbox: $html_dir"
         rm -rf "$html_dir"
     elif [[ -n "$html_dir" && -d "$html_dir" ]]; then
-        log_warn "html_dir '$html_dir' is outside expected ephemeral locations — skipping removal."
+        log_warn "html_dir '$html_dir' is outside ephemeral locations — skipping removal."
     fi
 }
 
-# ── Show status ───────────────────────────────────────────────────────────────
-# Usage: show_status <pid_file> <url_file> <log_file>
+# ── Show status (with uptime) ─────────────────────────────────────────────────
 show_status() {
     local pid_file="$1" url_file="$2" log_file="$3"
+    local pid url
 
-    if [[ ! -f "$pid_file" ]]; then
-        log_info "Server is not running."
-        return 0
+    pid=$(_read_pid "$pid_file" || true)
+    if [[ -z "$pid" ]]; then
+        log_info "Server not running"
+        return
     fi
 
-    local pid url
-    pid=$(_read_pid "$pid_file") || { log_warn "PID file is empty."; return 1; }
-    url=$(cat "$url_file" 2>/dev/null || echo "unknown URL")
+    url=$(<"$url_file" 2>/dev/null || echo "unknown")
 
     if _is_running "$pid"; then
+        # Calculate process uptime if possible
         local uptime_str=""
-        # Read process start time from /proc for a human-readable uptime.
         if [[ -r "/proc/$pid/stat" ]]; then
             local start_ticks hz elapsed
             start_ticks=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || echo "")
@@ -148,17 +91,15 @@ show_status() {
                 uptime_str="  uptime=${d}d${h}h${m}m"
             fi
         fi
-        log_success "Server running  PID=$pid  URL=$url${uptime_str}"
+        log_success "Running PID=$pid URL=$url${uptime_str}"
         echo "  Log: $log_file"
     else
-        log_warn "PID file present but server is not running (stale). Cleaning up."
+        log_warn "Stale PID, cleaning"
         rm -f "$pid_file" "$url_file"
-        return 1
     fi
 }
 
-# ── Systemd unit generator ────────────────────────────────────────────────────
-# Usage: generate_systemd <launcher_path> <host>
+# ── Systemd unit generator (with hardening) ───────────────────────────────────
 generate_systemd() {
     local self="$1" host="$2"
     cat <<EOF
@@ -193,8 +134,17 @@ WantedBy=default.target
 EOF
 }
 
-# ── Password setup ────────────────────────────────────────────────────────────
-# Usage: set_password <yaml_file>
+# ── Unified password hashing (PBKDF2-SHA256) ──────────────────────────────────
+hash_password() {
+    python3 - "$1" <<'PY'
+import hashlib, secrets, sys
+salt = secrets.token_hex(16)
+dk = hashlib.pbkdf2_hmac('sha256', sys.argv[1].encode(), salt.encode(), 200000)
+print(f"pbkdf2:{salt}:{dk.hex()}")
+PY
+}
+
+# ── Legacy single‑user setup (auth.conf) ─────────────────────────────────────
 set_password() {
     local yaml_file="$1"
     echo "Setting up login credentials for Nobara Web Dashboard"
@@ -229,30 +179,19 @@ set_password() {
 
     local auth_dir="$HOME/.config/noba-web"
     mkdir -p "$auth_dir"
+    local hash
+    hash=$(hash_password "$password")
 
-    # Hash the password with PBKDF2-SHA256 (200k rounds) via Python.
-    # Arguments are passed as positional params — never interpolated into code.
-    local tmp_auth="$auth_dir/auth.conf.tmp"
-    (umask 077; python3 - "$tmp_auth" "$username" "$password" <<'PYEOF'
-import hashlib, secrets, sys
-auth_file = sys.argv[1]
-username  = sys.argv[2]
-password  = sys.argv[3]
-salt      = secrets.token_hex(16)
-dk        = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 200_000)
-hstr      = f'pbkdf2:{salt}:{dk.hex()}'
-with open(auth_file, 'w') as f:
-    f.write(f'{username}:{hstr}:admin\n')
-PYEOF
-    )
-    mv "$tmp_auth" "$auth_dir/auth.conf"
+    # Atomic write
+    local tmp="$auth_dir/auth.conf.tmp"
+    (umask 077; echo "$username:$hash:admin" > "$tmp")
+    mv "$tmp" "$auth_dir/auth.conf"
 
     log_success "Credentials saved to $auth_dir/auth.conf  (PBKDF2-SHA256, 200k rounds)"
     create_default_yaml "$yaml_file"
 }
 
-# ── Default YAML config ───────────────────────────────────────────────────────
-# Usage: create_default_yaml <yaml_file>
+# ── Default YAML config (if missing) ─────────────────────────────────────────
 create_default_yaml() {
     local yaml_file="$1"
     [[ -f "$yaml_file" ]] && return 0
@@ -342,41 +281,39 @@ EOF
     log_success "Default config created. Edit before first use: $yaml_file"
 }
 
-# ── User database management ──────────────────────────────────────────────────
+# ── Multi‑user database management (optimized with awk) ──────────────────────
 NOBA_USER_DB="${NOBA_USER_DB:-$HOME/.config/noba-web/users.conf}"
 
 init_user_db() {
-    if [[ ! -f "$NOBA_USER_DB" ]]; then
+    [[ -f "$NOBA_USER_DB" ]] || {
         mkdir -p "$(dirname "$NOBA_USER_DB")"
         touch "$NOBA_USER_DB"
         chmod 600 "$NOBA_USER_DB"
-    fi
+    }
+}
+
+_user_exists() {
+    awk -F: -v u="$1" '$1==u{found=1} END{exit !found}' "$NOBA_USER_DB" 2>/dev/null
 }
 
 add_user() {
-    local username="$1"
-    local password="$2"
-    local role="${3:-admin}"
+    local username="$1" password="$2" role="${3:-admin}"
     init_user_db
-    if grep -q "^$username:" "$NOBA_USER_DB" 2>/dev/null; then
-        log_error "User '$username' already exists."
-        return 1
-    fi
-    local hash
-    hash=$(python3 -c "
-import hashlib, secrets, sys
-salt = secrets.token_hex(16)
-dk = hashlib.pbkdf2_hmac('sha256', sys.argv[1].encode(), salt.encode(), 200000)
-print('pbkdf2:' + salt + ':' + dk.hex())
-" "$password")
 
-    # Atomic save
-    touch "$NOBA_USER_DB.tmp"
+    _user_exists "$username" && { log_error "User '$username' already exists"; return 1; }
+
+    local hash
+    hash=$(hash_password "$password")
+
+    {
+        cat "$NOBA_USER_DB"
+        printf "%s:%s:%s\n" "$username" "$hash" "$role"
+    } > "$NOBA_USER_DB.tmp"
+
     chmod 600 "$NOBA_USER_DB.tmp"
-    cp "$NOBA_USER_DB" "$NOBA_USER_DB.tmp"
-    echo "$username:$hash:$role" >> "$NOBA_USER_DB.tmp"
     mv "$NOBA_USER_DB.tmp" "$NOBA_USER_DB"
-    log_success "User '$username' added with role '$role'."
+
+    log_success "User '$username' added (role: $role)"
 }
 
 list_users() {
@@ -386,60 +323,42 @@ list_users() {
     fi
     printf "%-20s %-10s\n" "USERNAME" "ROLE"
     printf "%-20s %-10s\n" "--------" "----"
-    while IFS=: read -r user hash role; do
-        printf "%-20s %-10s\n" "$user" "$role"
-    done < "$NOBA_USER_DB"
+    awk -F: '{printf "%-20s %-10s\n",$1,$3}' "$NOBA_USER_DB"
 }
 
 remove_user() {
     local username="$1"
-    if [[ ! -f "$NOBA_USER_DB" ]]; then
-        log_error "No user database."
-        return 1
-    fi
-    if ! grep -q "^$username:" "$NOBA_USER_DB"; then
-        log_error "User '$username' not found."
-        return 1
-    fi
+    init_user_db
 
-    # Atomic save
-    touch "$NOBA_USER_DB.tmp"
-    chmod 600 "$NOBA_USER_DB.tmp"
-    grep -v "^$username:" "$NOBA_USER_DB" > "$NOBA_USER_DB.tmp"
+    _user_exists "$username" || { log_error "User '$username' not found"; return 1; }
+
+    awk -F: -v u="$username" '$1!=u' "$NOBA_USER_DB" > "$NOBA_USER_DB.tmp"
     mv "$NOBA_USER_DB.tmp" "$NOBA_USER_DB"
-    log_success "User '$username' removed."
+
+    log_success "User '$username' removed"
 }
 
 change_password() {
-    local username="$1"
-    local password="$2"
-    if [[ ! -f "$NOBA_USER_DB" ]]; then
-        log_error "No user database."
-        return 1
-    fi
-    if ! grep -q "^$username:" "$NOBA_USER_DB"; then
-        log_error "User '$username' not found."
-        return 1
-    fi
-    local hash role
-    hash=$(python3 -c "
-import hashlib, secrets, sys
-salt = secrets.token_hex(16)
-dk = hashlib.pbkdf2_hmac('sha256', sys.argv[1].encode(), salt.encode(), 200000)
-print('pbkdf2:' + salt + ':' + dk.hex())
-" "$password")
-    role=$(grep "^$username:" "$NOBA_USER_DB" | cut -d: -f3)
+    local username="$1" password="$2"
+    init_user_db
 
-    # Atomic save
-    touch "$NOBA_USER_DB.tmp"
-    chmod 600 "$NOBA_USER_DB.tmp"
-    grep -v "^$username:" "$NOBA_USER_DB" > "$NOBA_USER_DB.tmp"
-    echo "$username:$hash:$role" >> "$NOBA_USER_DB.tmp"
+    _user_exists "$username" || { log_error "User '$username' not found"; return 1; }
+
+    local hash
+    hash=$(hash_password "$password")
+
+    awk -F: -v u="$username" -v h="$hash" '
+        BEGIN {OFS=FS}
+        $1==u {$2=h}
+        {print}
+    ' "$NOBA_USER_DB" > "$NOBA_USER_DB.tmp"
+
     mv "$NOBA_USER_DB.tmp" "$NOBA_USER_DB"
-    log_success "Password changed for '$username'."
+
+    log_success "Password updated for '$username'"
 }
 
-# ── Help ──────────────────────────────────────────────────────────────────────
+# ── Full help (all options) ───────────────────────────────────────────────────
 show_help() {
     cat <<EOF
 Usage: noba-web [OPTIONS]
