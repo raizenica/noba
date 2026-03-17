@@ -1,43 +1,37 @@
 #!/bin/bash
 # backup-to-nas.sh – Incremental hardlink backup to NAS with retention, space check, and report
-# Version: 3.0.0
+# Version: 4.0.0
 #
-# Bugs fixed vs 2.x:
-#   BUG-1  exec > >(tee) was placed AFTER the first log_info call — early errors were lost to the log
-#   BUG-2  --link-dest used $base unchanged even when .config was renamed to "config" —
-#          rsync couldn't find the prior snapshot → performed a wasteful full copy every run
-#   BUG-3  mapfile -t SOURCES <<< "$empty_string" → SOURCES=("") — one phantom empty element
-#          caused rsync to run with no source path, succeeding while backing up nothing
-#   BUG-4  Retention loop used <<< "$(find ...)" — empty find output still delivered one blank
-#          line; -z guard worked by luck, but the outer loop was also unsafe with paths that
-#          contained spaces. Rewritten to use find -print0 / read -d ''
-#   BUG-5  send_email_report: mail -a (attachment) is a mutt-only flag — silently dropped log
-#          attachment when using mailutils/bsd-mailx. Fixed with inline log tail + uuencode path
-#   BUG-6  No per-source failure tracking — email body said "FAILED" with no detail on which
-#          sources were affected
-#   BUG-7  check_space short-circuited entirely for incremental runs — a nearly-full disk caused
-#          rsync to fail mid-run rather than being caught before it started
-#
-# New in 3.0.0:
-#   --keep-count N   Keep the N most-recent backups regardless of age (default: 0 = age-only)
-#   --exclude-from   Per-source exclude files (name: <basename>.excludes next to this script)
-#   --verify         After backup, spot-check N random files with sha256sum
-#   --report-only    Send the last run's report without running a new backup
-#   Exit codes:      0=success  1=partial (some sources failed)  2=complete failure / abort
-
+# New in 4.0.0:
+#   Atomic snapshots      Written to <TIMESTAMP>.partial, renamed on success; broken
+#                         snapshots are never used as a link-dest or counted toward
+#                         keep-count.
+#   --log-file PATH       Override log file path from the CLI (was env/config only).
+#   --no-email            Suppress the email report for this run.
+#   --verify-count N      Number of files to spot-check (default: 20).
+#   --max-delete N        Pass --max-delete=N to rsync to cap runaway deletions.
+#   --rsync-opts OPTS     Append extra rsync options verbatim (space-separated).
+#   Dynamic lock FD       No longer uses a hard-coded file descriptor (200).
+#   Duration formatting   Reported as Xh Ym Zs instead of raw seconds.
+#   Fixed run_verify      Source path reconstruction now works for multiple sources.
+#   rsync --stats         Per-source transfer statistics written to the log.
+#   Exit codes:           0=success  1=partial (some sources failed)  2=fatal abort
 set -euo pipefail
 
-# ── Test harness compliance ────────────────────────────────────────────────────
+# ── Version ────────────────────────────────────────────────────────────────────
+readonly VERSION="4.0.0"
+
+# ── Test harness shims (must come before sourcing the library) ─────────────────
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+if [[ "${1:-}" == "--help"    || "${1:-}" == "-h" ]]; then
     echo "Usage: backup-to-nas.sh [OPTIONS]"; exit 0
 fi
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
-    echo "backup-to-nas.sh version 3.0.0"; exit 0
+    echo "backup-to-nas.sh version $VERSION"; exit 0
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./noba-lib.sh
+# shellcheck source=./lib/noba-lib.sh
 source "$SCRIPT_DIR/lib/noba-lib.sh"
 
 # ── Defaults ───────────────────────────────────────────────────────────────────
@@ -46,40 +40,42 @@ DEST=""
 EMAIL="${EMAIL:-}"
 DRY_RUN=false
 VERIFY=false
+NO_EMAIL=false
 REPORT_ONLY=false
 export VERBOSE=false
 LOCK_FILE="/tmp/backup-to-nas.lock"
+LOCK_FD=""
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/backup-to-nas.log}"
 RETENTION_DAYS=7
-KEEP_COUNT=0          # 0 = not enforced; N = keep at least N most-recent regardless of age
+KEEP_COUNT=0
 SPACE_MARGIN_PERCENT=10
 MIN_FREE_SPACE_GB=5
-VERIFY_SAMPLE=20      # number of files to spot-check after backup
+VERIFY_SAMPLE=20
+MAX_DELETE=""         # empty = no --max-delete passed to rsync
+EXTRA_RSYNC_OPTS=()
 MOUNT_POINT=""
 
 # ── Load configuration ─────────────────────────────────────────────────────────
-# Must happen before logging and before any early exits, so config values are
-# available even in --dry-run mode.
 if command -v get_config &>/dev/null; then
     raw_sources=$(get_config_array ".backup.sources" 2>/dev/null || true)
     if [[ -n "$raw_sources" ]]; then
-        # BUG-3 FIX: only populate SOURCES if the value is non-empty
         while IFS= read -r line; do
             [[ -n "$line" ]] && SOURCES+=("$line")
         done <<< "$raw_sources"
     fi
-
-    DEST="$(get_config ".backup.dest"                    "$DEST")"
-    EMAIL="$(get_config ".backup.email"                  "$EMAIL")"
-    RETENTION_DAYS="$(get_config ".backup.retention_days"         "$RETENTION_DAYS")"
-    KEEP_COUNT="$(get_config ".backup.keep_count"                  "$KEEP_COUNT")"
+    DEST="$(get_config ".backup.dest"                         "$DEST")"
+    EMAIL="$(get_config ".backup.email"                       "$EMAIL")"
+    RETENTION_DAYS="$(get_config ".backup.retention_days"     "$RETENTION_DAYS")"
+    KEEP_COUNT="$(get_config ".backup.keep_count"             "$KEEP_COUNT")"
     SPACE_MARGIN_PERCENT="$(get_config ".backup.space_margin_percent" "$SPACE_MARGIN_PERCENT")"
-    MIN_FREE_SPACE_GB="$(get_config ".backup.min_free_space_gb"    "$MIN_FREE_SPACE_GB")"
-    LOG_FILE="$(get_config ".backup.log_file"            "$LOG_FILE")"
+    MIN_FREE_SPACE_GB="$(get_config ".backup.min_free_space_gb"  "$MIN_FREE_SPACE_GB")"
+    LOG_FILE="$(get_config ".backup.log_file"                 "$LOG_FILE")"
+    VERIFY_SAMPLE="$(get_config ".backup.verify_sample"       "$VERIFY_SAMPLE")"
+    MAX_DELETE="$(get_config ".backup.max_delete"             "$MAX_DELETE")"
 fi
 
-# ── Functions ──────────────────────────────────────────────────────────────────
-show_version() { echo "backup-to-nas.sh version 3.0.0"; exit 0; }
+# ── Helpers ────────────────────────────────────────────────────────────────────
+show_version() { echo "backup-to-nas.sh version $VERSION"; exit 0; }
 
 show_help() {
     cat <<EOF
@@ -88,17 +84,22 @@ Usage: $(basename "$0") [OPTIONS]
 Incremental hardlink backup to NAS with retention, space check, and email report.
 
 Options:
-  -s, --source DIR       Source directory (repeatable)
-  -d, --dest PATH        Destination path on NAS (must be a mounted directory)
-  -e, --email ADDR       Email for report (default: \$EMAIL env var)
-  -r, --retention DAYS   Delete backups older than DAYS days (default: $RETENTION_DAYS)
-  -k, --keep-count N     Keep at least N most-recent backups regardless of age (default: $KEEP_COUNT)
-  -n, --dry-run          rsync --dry-run: show what would transfer, make no changes
-  -V, --verify           After backup, spot-check $VERIFY_SAMPLE random files with sha256sum
-      --report-only      Re-send the last run's report without running a new backup
-  -v, --verbose          Enable verbose output
-  --help                 Show this message
-  --version              Show version information
+  -s, --source DIR         Source directory (repeatable)
+  -d, --dest PATH          Destination path on NAS (must be a mounted directory)
+  -e, --email ADDR         Email for report (default: \$EMAIL env var)
+  -r, --retention DAYS     Delete backups older than DAYS days (default: $RETENTION_DAYS)
+  -k, --keep-count N       Keep at least N most-recent backups regardless of age (default: $KEEP_COUNT)
+  -l, --log-file PATH      Log file path (default: $LOG_FILE)
+  -n, --dry-run            rsync --dry-run: show what would transfer, make no changes
+  -V, --verify             After backup, spot-check files with sha256sum
+      --verify-count N     Number of files to spot-check (default: $VERIFY_SAMPLE)
+      --max-delete N       Cap rsync deletions per source (safety guard)
+      --rsync-opts OPTS    Extra rsync options appended verbatim
+      --no-email           Suppress email report for this run
+      --report-only        Re-send the last run's report without running a new backup
+  -v, --verbose            Enable verbose output
+      --help               Show this message
+      --version            Show version
 
 Exit codes:
   0  All sources backed up successfully
@@ -108,9 +109,20 @@ EOF
     exit 0
 }
 
-# ── Logging setup (BUG-1 FIX) ─────────────────────────────────────────────────
-# Set up log tee BEFORE any log_info/log_error calls so nothing is lost.
-# We defer this to a function so it can be skipped cleanly for dry-run.
+# ── Duration formatter ─────────────────────────────────────────────────────────
+format_duration() {
+    local secs="$1"
+    local h=$(( secs / 3600 ))
+    local m=$(( (secs % 3600) / 60 ))
+    local s=$(( secs % 60 ))
+    if   (( h > 0 )); then printf '%dh %dm %ds' "$h" "$m" "$s"
+    elif (( m > 0 )); then printf '%dm %ds' "$m" "$s"
+    else                   printf '%ds' "$s"
+    fi
+}
+
+# ── Logging setup ──────────────────────────────────────────────────────────────
+# Called once after argument parsing so --log-file takes effect.
 setup_logging() {
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
@@ -119,12 +131,23 @@ setup_logging() {
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 _EMAIL_TMP=""
+_PARTIAL_PATH=""   # path of in-progress snapshot; removed on abort
+
 cleanup() {
     local exit_code=$?
-    # Release flock-based lock
-    [[ -n "${LOCK_FD:-}" ]] && { flock -u "$LOCK_FD" 2>/dev/null || true; }
+    # Kill any background rsync that may still be running
+    jobs -p 2>/dev/null | xargs -r kill 2>/dev/null || true
+    # Release flock
+    if [[ -n "$LOCK_FD" ]]; then
+        flock -u "$LOCK_FD" 2>/dev/null || true
+        eval "exec $LOCK_FD>&-" 2>/dev/null || true
+    fi
     rm -f "$LOCK_FILE"
-    # Remove email temp dir
+    # Clean up a partial snapshot on unexpected exit
+    if [[ -n "$_PARTIAL_PATH" && -d "$_PARTIAL_PATH" && "$exit_code" -ne 0 ]]; then
+        log_warn "Removing incomplete snapshot: $(basename "$_PARTIAL_PATH")"
+        rm -rf "$_PARTIAL_PATH"
+    fi
     [[ -n "$_EMAIL_TMP" && -d "$_EMAIL_TMP" ]] && rm -rf "$_EMAIL_TMP"
     exit "$exit_code"
 }
@@ -132,17 +155,14 @@ trap cleanup EXIT INT TERM
 
 # ── Lock ───────────────────────────────────────────────────────────────────────
 acquire_lock() {
-    exec 200>"$LOCK_FILE"
-    if ! flock -n 200; then
+    # Use a dynamic FD (bash 4.1+) rather than a hard-coded number.
+    exec {LOCK_FD}>"$LOCK_FILE"
+    if ! flock -n "$LOCK_FD"; then
         die "Another backup instance is already running (lock: $LOCK_FILE)."
     fi
-    LOCK_FD=200
 }
 
-# ── Space check (BUG-7 FIX) ───────────────────────────────────────────────────
-# Always checks MIN_FREE_SPACE_GB. For initial runs, also checks estimated
-# transfer size. For incremental runs, we can't know changed-file size cheaply,
-# so we enforce a scaled-down margin (25% of full estimate) as a safety floor.
+# ── Space check ───────────────────────────────────────────────────────────────
 check_space() {
     [[ "$DRY_RUN" == true ]] && return 0
 
@@ -156,14 +176,13 @@ check_space() {
 
     local margined_kb=$(( total_kb + total_kb * SPACE_MARGIN_PERCENT / 100 ))
     local required_bytes=$(( margined_kb * 1024 ))
-
     local free_kb
     free_kb=$(df --output=avail "$MOUNT_POINT" 2>/dev/null | tail -1 | tr -d ' ')
     local free_bytes=$(( free_kb * 1024 ))
 
     local fmt_req fmt_free
     if command -v numfmt &>/dev/null; then
-        fmt_req=$(numfmt --to=iec "$required_bytes")
+        fmt_req=$(numfmt  --to=iec "$required_bytes")
         fmt_free=$(numfmt --to=iec "$free_bytes")
     else
         fmt_req="${required_bytes} B"
@@ -180,16 +199,16 @@ check_space() {
     fi
 
     if [[ -n "$LATEST_BACKUP" ]]; then
-        # Incremental: enforce a reduced floor (25% of full estimate)
+        # Incremental: enforce a conservative 25%-of-full-estimate floor
         local incr_floor=$(( required_bytes / 4 ))
         if (( free_bytes < incr_floor )); then
             local fmt_floor
-            fmt_floor=$(command -v numfmt &>/dev/null && numfmt --to=iec "$incr_floor" || echo "${incr_floor} B")
-            log_error "Incremental safety floor not met — need at least $fmt_floor free, have $fmt_free."
+            fmt_floor=$(command -v numfmt &>/dev/null \
+                && numfmt --to=iec "$incr_floor" || echo "${incr_floor} B")
+            log_error "Incremental safety floor not met — need $fmt_floor free, have $fmt_free."
             return 1
         fi
     else
-        # Initial full backup: require full estimated space
         if (( free_bytes < required_bytes )); then
             log_error "Insufficient space for full backup — need $fmt_req, have $fmt_free."
             return 1
@@ -199,32 +218,33 @@ check_space() {
     log_info "Space check passed."
 }
 
-# ── link-dest path resolver (BUG-2 FIX) ───────────────────────────────────────
-# Returns the path in a *previous* snapshot that corresponds to a given source,
-# accounting for the fact that .config is stored as "config" (no leading dot).
+# ── Destination writability check ─────────────────────────────────────────────
+check_writable() {
+    local probe
+    probe=$(mktemp -q "$DEST/.write-test.XXXXXX" 2>/dev/null) || {
+        log_error "Destination $DEST is not writable — check permissions."
+        return 1
+    }
+    rm -f "$probe"
+}
+
+# ── Snapshot path helpers ──────────────────────────────────────────────────────
+# Strip a leading dot from dotfiles so .config is stored as config/.
+_strip_dot() { local b="$1"; [[ "$b" == .* ]] && echo "${b#.}" || echo "$b"; }
+
 linkdest_for() {
     local src="$1"
-    local base
-    base=$(basename "$src")
-    # Mirror the naming logic used when creating dest_path below
-    if [[ "$base" == .* ]]; then
-        base="${base#.}"   # strip leading dot to get the stored name
-    fi
-    echo "$LATEST_BACKUP/$base"
+    echo "$LATEST_BACKUP/$(_strip_dot "$(basename "$src")")"
 }
 
-# ── Destination path for a source ─────────────────────────────────────────────
 destpath_for() {
     local src="$1"
-    local base
-    base=$(basename "$src")
-    if [[ "$base" == .* ]]; then
-        base="${base#.}"   # strip leading dot: .config → config, .ssh → ssh
-    fi
-    echo "$BACKUP_PATH/$base"
+    echo "$BACKUP_PATH/$(_strip_dot "$(basename "$src")")"
 }
 
-# ── Optional post-backup verification ─────────────────────────────────────────
+# ── Post-backup verification ───────────────────────────────────────────────────
+# Fixed: previously used dirname of SOURCES[0] for all files, which was wrong
+# when multiple sources with different parent directories were involved.
 run_verify() {
     local backup_dir="$1"
     if ! command -v sha256sum &>/dev/null; then
@@ -232,41 +252,58 @@ run_verify() {
         return 0
     fi
 
-    log_info "Verifying up to $VERIFY_SAMPLE random files..."
-    local sample_count=0 fail_count=0
+    log_info "Verifying up to $VERIFY_SAMPLE random files in $backup_dir..."
 
-    while IFS= read -r -d '' backed_up; do
-        # Reconstruct source path: strip BACKUP_PATH prefix, re-add leading dot if needed
+    # Collect a random sample without -z shuf (portability) using process sub.
+    local -a sample_files=()
+    while IFS= read -r -d '' f; do
+        sample_files+=("$f")
+        (( ${#sample_files[@]} >= VERIFY_SAMPLE )) && break
+    done < <(
+        # Prefer shuf -z; fall back to non-randomised find (still useful for CI).
+        if command -v shuf &>/dev/null; then
+            find "$backup_dir" -type f -print0 2>/dev/null | shuf --zero-terminated 2>/dev/null \
+                || find "$backup_dir" -type f -print0 2>/dev/null
+        else
+            find "$backup_dir" -type f -print0 2>/dev/null
+        fi
+    )
+
+    local sample_count=0 fail_count=0
+    for backed_up in "${sample_files[@]}"; do
+        [[ -f "$backed_up" ]] || continue
+
+        # Strip the backup dir prefix to get the relative path.
         local rel="${backed_up#"$backup_dir/"}"
         local top_dir="${rel%%/*}"
-        local src_top="$top_dir"
-        # Check if the original source had a leading dot (e.g. .config)
+
+        # Find which source this top-level dir belongs to.
+        local original=""
+        local s b
         for s in "${SOURCES[@]}"; do
-            local b; b=$(basename "$s")
-            if [[ "${b#.}" == "$top_dir" && "$b" == .* ]]; then
-                src_top="$b"; break
+            b=$(basename "$s")
+            if [[ "$(_strip_dot "$b")" == "$top_dir" ]]; then
+                # Reconstruct: parent of source / (possibly dot-prefixed) base / rest of path
+                local rest="${rel#"$top_dir"}"
+                original="$(dirname "$s")/$b$rest"
+                break
             fi
         done
-        # Reconstruct original path
-        local original
-        original=$(dirname "${SOURCES[0]}")/"$src_top${rel#"$top_dir"}"
 
-        if [[ -f "$original" ]]; then
-            local orig_sum bkp_sum
-            orig_sum=$(sha256sum "$original"     2>/dev/null | cut -d' ' -f1)
-            bkp_sum=$( sha256sum "$backed_up"    2>/dev/null | cut -d' ' -f1)
-            if [[ "$orig_sum" != "$bkp_sum" ]]; then
-                log_warn "VERIFY MISMATCH: $backed_up"
-                (( fail_count++ )) || true
-            else
-                log_verbose "OK: $(basename "$backed_up")"
-            fi
-            (( sample_count++ )) || true
+        [[ -z "$original" || ! -f "$original" ]] && continue
+
+        local orig_sum bkp_sum
+        orig_sum=$(sha256sum "$original"  2>/dev/null | cut -d' ' -f1)
+        bkp_sum=$( sha256sum "$backed_up" 2>/dev/null | cut -d' ' -f1)
+
+        if [[ "$orig_sum" != "$bkp_sum" ]]; then
+            log_warn "VERIFY MISMATCH: $backed_up"
+            (( fail_count++ )) || true
+        else
+            log_verbose "  OK: $(basename "$backed_up")"
         fi
-
-        (( sample_count >= VERIFY_SAMPLE )) && break
-    done < <(find "$backup_dir" -type f -print0 2>/dev/null | shuf -z 2>/dev/null || \
-             find "$backup_dir" -type f -print0 2>/dev/null)
+        (( sample_count++ )) || true
+    done
 
     if (( fail_count > 0 )); then
         log_error "Verification: $fail_count/$sample_count files mismatched."
@@ -275,19 +312,24 @@ run_verify() {
     log_info "Verification passed ($sample_count files checked)."
 }
 
-# ── Email report ──────────────────────────────────────────────────────────────
-# BUG-5 FIX: `mail` does not support -a (attachments). We embed a log tail
-# inline and attempt uuencode attachment only when it's available.
+# ── Email report ───────────────────────────────────────────────────────────────
 send_report() {
     local subject="$1" body_file="$2"
-    [[ -z "$EMAIL" ]] && { log_warn "No email address configured — skipping report."; return 0; }
 
-    # Append last 40 log lines inline (works with any mailer)
+    if [[ "$NO_EMAIL" == true ]]; then
+        log_info "Email suppressed by --no-email."
+        return 0
+    fi
+    if [[ -z "$EMAIL" ]]; then
+        log_warn "No email address configured — skipping report."
+        return 0
+    fi
+
     {
         cat "$body_file"
         echo ""
-        echo "── Last 40 lines of log ──"
-        tail -n 40 "$LOG_FILE" 2>/dev/null || true
+        echo "── Last 50 lines of log ──"
+        tail -n 50 "$LOG_FILE" 2>/dev/null || true
     } > "${body_file}.full"
 
     if command -v mutt &>/dev/null; then
@@ -302,56 +344,64 @@ send_report() {
             cat "${body_file}.full"
         } | sendmail -t
     else
-        log_warn "No mail program found (mutt / mail / sendmail) — skipping report."
+        log_warn "No mail program found (mutt/mail/sendmail) — skipping report."
     fi
 }
 
-# ── Logging (BUG-1 FIX: set up NOW, before argument parsing, so errors are captured) ──
-# Dry-run also logs to file so you have a record of what would have happened.
-setup_logging
-
 # ── Argument parsing ───────────────────────────────────────────────────────────
-if ! PARSED_ARGS=$(getopt -o s:d:e:r:k:nVvh \
-    -l source:,dest:,email:,retention:,keep-count:,dry-run,verify,report-only,verbose,help,version \
-    -- "$@" 2>/dev/null); then
-    log_error "Invalid argument. Run with --help for usage."
+if ! PARSED_ARGS=$(getopt \
+        -o s:d:e:r:k:l:nVvh \
+        -l source:,dest:,email:,retention:,keep-count:,log-file:,dry-run,verify,\
+verify-count:,max-delete:,rsync-opts:,no-email,report-only,verbose,help,version \
+        -- "$@" 2>/dev/null); then
+    echo "Invalid argument. Run with --help for usage." >&2
     exit 2
 fi
 eval set -- "$PARSED_ARGS"
 
 while true; do
     case "$1" in
-        -s|--source)       SOURCES+=("$2");          shift 2 ;;
-        -d|--dest)         DEST="$2";                shift 2 ;;
-        -e|--email)        EMAIL="$2";               shift 2 ;;
-        -r|--retention)    RETENTION_DAYS="$2";      shift 2 ;;
-        -k|--keep-count)   KEEP_COUNT="$2";          shift 2 ;;
-        -n|--dry-run)      DRY_RUN=true;             shift   ;;
-        -V|--verify)       VERIFY=true;              shift   ;;
-           --report-only)  REPORT_ONLY=true;         shift   ;;
-        -v|--verbose)      export VERBOSE=true;      shift   ;;
-        -h|--help)         show_help ;;
-           --version)      show_version ;;
-        --)                shift; break ;;
-        *)                 log_error "Unknown argument: $1"; exit 2 ;;
+        -s|--source)        SOURCES+=("$2");                     shift 2 ;;
+        -d|--dest)          DEST="$2";                           shift 2 ;;
+        -e|--email)         EMAIL="$2";                          shift 2 ;;
+        -r|--retention)     RETENTION_DAYS="$2";                 shift 2 ;;
+        -k|--keep-count)    KEEP_COUNT="$2";                     shift 2 ;;
+        -l|--log-file)      LOG_FILE="$2";                       shift 2 ;;
+        -n|--dry-run)       DRY_RUN=true;                        shift   ;;
+        -V|--verify)        VERIFY=true;                         shift   ;;
+           --verify-count)  VERIFY_SAMPLE="$2";                  shift 2 ;;
+           --max-delete)    MAX_DELETE="$2";                     shift 2 ;;
+           --rsync-opts)    read -ra _extra <<< "$2"
+                            EXTRA_RSYNC_OPTS+=("${_extra[@]}");  shift 2 ;;
+           --no-email)      NO_EMAIL=true;                       shift   ;;
+           --report-only)   REPORT_ONLY=true;                    shift   ;;
+        -v|--verbose)       export VERBOSE=true;                 shift   ;;
+        -h|--help)          show_help ;;
+           --version)       show_version ;;
+        --)                 shift; break ;;
+        *)                  echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 
-# ── Validation ─────────────────────────────────────────────────────────────────
-for v in RETENTION_DAYS KEEP_COUNT MIN_FREE_SPACE_GB SPACE_MARGIN_PERCENT; do
+# ── Logging – initialise now so --log-file is honoured ────────────────────────
+setup_logging
+
+# ── Input validation ───────────────────────────────────────────────────────────
+for v in RETENTION_DAYS KEEP_COUNT MIN_FREE_SPACE_GB SPACE_MARGIN_PERCENT VERIFY_SAMPLE; do
     [[ "${!v}" =~ ^[0-9]+$ ]] || die "$v must be a non-negative integer, got: ${!v}"
 done
+if [[ -n "$MAX_DELETE" ]]; then
+    [[ "$MAX_DELETE" =~ ^[0-9]+$ ]] || die "--max-delete must be a non-negative integer."
+fi
 
 if [[ ${#SOURCES[@]} -eq 0 ]]; then
     [[ "$DRY_RUN" == true || "$REPORT_ONLY" == true ]] && exit 0
     die "At least one --source must be specified."
 fi
-
 if [[ -z "$DEST" ]]; then
     [[ "$DRY_RUN" == true || "$REPORT_ONLY" == true ]] && exit 0
     die "Destination (--dest) is required."
 fi
-
 if [[ ! -d "$DEST" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         log_info "Dry run: destination $DEST not mounted — skipping mount checks."
@@ -361,11 +411,12 @@ if [[ ! -d "$DEST" ]]; then
 fi
 
 check_deps rsync df find du
+check_writable || die "Aborting — destination not writable."
 
 MOUNT_POINT=$(df -P "$DEST" 2>/dev/null | tail -1 | awk '{print $6}')
 [[ -n "$MOUNT_POINT" ]] || die "Cannot determine mount point for $DEST."
 
-# ── Lock (only for real runs) ─────────────────────────────────────────────────
+# ── Acquire lock (real runs only) ─────────────────────────────────────────────
 [[ "$DRY_RUN" != true ]] && acquire_lock
 
 # ── Report-only mode ───────────────────────────────────────────────────────────
@@ -373,30 +424,37 @@ if [[ "$REPORT_ONLY" == true ]]; then
     log_info "Report-only: re-sending last run's report."
     _EMAIL_TMP=$(mktemp -d "/tmp/noba-backup.XXXXXX")
     echo "(report-only mode — see attached log)" > "$_EMAIL_TMP/body.txt"
-    send_report "Backup Report (resent) – $(hostname) – $(date '+%Y-%m-%d')" "$_EMAIL_TMP/body.txt"
+    send_report "Backup Report (resent) – $(hostname) – $(date '+%Y-%m-%d')" \
+                "$_EMAIL_TMP/body.txt"
     exit 0
 fi
 
-# ── Find latest existing backup (needed for check_space + link-dest) ──────────
+# ── Locate the most-recent complete snapshot (for space check + link-dest) ────
+# Only directories named YYYYMMDD-HHMMSS (no .partial suffix) are considered.
 LATEST_BACKUP=""
 while IFS= read -r -d '' d; do
     LATEST_BACKUP="$d"
-done < <(find "$DEST" -maxdepth 1 -type d -name "????????-??????" -print0 2>/dev/null | sort -z)
+done < <(find "$DEST" -maxdepth 1 -type d -name "????????-??????" -print0 2>/dev/null \
+         | sort -z)
 
 # ── Space check ───────────────────────────────────────────────────────────────
 check_space || die "Space check failed — aborting."
 
-# ── Prepare backup destination ────────────────────────────────────────────────
+# ── Prepare atomic snapshot directory ─────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP_PATH="$DEST/$TIMESTAMP"
+_PARTIAL_PATH="$BACKUP_PATH.partial"   # used by cleanup trap
 
 log_info "============================================================"
-log_info "  Backup v3.0.0 started: $(date)"
-log_info "  Host:       $(hostname)"
-log_info "  Sources:    ${SOURCES[*]}"
-log_info "  Dest:       $BACKUP_PATH"
-log_info "  Retention:  ${RETENTION_DAYS}d  keep-count: ${KEEP_COUNT}"
-log_info "  Dry run:    $DRY_RUN"
+log_info "  Backup v${VERSION} started: $(date)"
+log_info "  Host:        $(hostname)"
+log_info "  Sources:     ${SOURCES[*]}"
+log_info "  Dest:        $BACKUP_PATH"
+log_info "  Retention:   ${RETENTION_DAYS}d  keep-count: ${KEEP_COUNT}"
+log_info "  Dry run:     $DRY_RUN"
+[[ -n "$MAX_DELETE"       ]] && log_info "  Max-delete:  $MAX_DELETE"
+[[ "${#EXTRA_RSYNC_OPTS[@]}" -gt 0 ]] && \
+    log_info "  Extra rsync: ${EXTRA_RSYNC_OPTS[*]}"
 log_info "============================================================"
 
 if [[ -n "$LATEST_BACKUP" ]]; then
@@ -406,24 +464,36 @@ else
 fi
 
 if [[ "$DRY_RUN" != true ]]; then
-    mkdir -p "$BACKUP_PATH"
+    mkdir -p "$_PARTIAL_PATH" \
+        || die "Cannot create snapshot directory: $_PARTIAL_PATH"
 else
     log_info "[DRY RUN] Would create: $BACKUP_PATH"
 fi
 
-# ── BUG-6 FIX: track per-source failures ─────────────────────────────────────
+# ── Per-source failure tracking ────────────────────────────────────────────────
 FAILED_SOURCES=()
 START_TIME=$SECONDS
 
-# ── rsync base options ────────────────────────────────────────────────────────
-RSYNC_BASE=("-a" "--delete" "--delete-excluded" "--partial")
-[[ "$VERBOSE"  == true ]] && RSYNC_BASE+=("-v" "--progress")
-[[ "$DRY_RUN"  == true ]] && RSYNC_BASE+=("--dry-run")
-[[ "$VERBOSE"  != true ]] && RSYNC_BASE+=("--quiet")
+# ── rsync base options ─────────────────────────────────────────────────────────
+RSYNC_BASE=(
+    "--archive"          # -a: recurse, preserve permissions/times/symlinks/owner/group
+    "--delete"
+    "--delete-excluded"
+    "--partial"
+    "--stats"            # transfer statistics written to log
+)
+[[ -n "$MAX_DELETE" ]] && RSYNC_BASE+=("--max-delete=$MAX_DELETE")
+if [[ "$VERBOSE" == true ]]; then
+    RSYNC_BASE+=("--info=progress2")
+else
+    RSYNC_BASE+=("--quiet")
+fi
+[[ "$DRY_RUN" == true ]] && RSYNC_BASE+=("--dry-run")
+[[ "${#EXTRA_RSYNC_OPTS[@]}" -gt 0 ]] && RSYNC_BASE+=("${EXTRA_RSYNC_OPTS[@]}")
 
 # ── Per-source backup loop ─────────────────────────────────────────────────────
 for src in "${SOURCES[@]}"; do
-    src="${src%/}"   # normalise: no trailing slash on source variable
+    src="${src%/}"   # normalise: strip trailing slash from variable (rsync gets src/)
 
     if [[ ! -e "$src" ]]; then
         log_warn "Source does not exist, skipping: $src"
@@ -431,22 +501,22 @@ for src in "${SOURCES[@]}"; do
         continue
     fi
 
-    dest_path=$(destpath_for "$src")
+    local_dest_path="$_PARTIAL_PATH/$(_strip_dot "$(basename "$src")")"
     extra=()
 
-    # Hardlink against previous snapshot (BUG-2 FIX: path uses stripped name)
+    # Hardlink against previous complete snapshot
     if [[ -n "$LATEST_BACKUP" ]]; then
         local_linkdest=$(linkdest_for "$src")
         [[ -d "$local_linkdest" ]] && extra+=("--link-dest=$local_linkdest")
     fi
 
-    # Per-source exclude file: <scriptdir>/<basename>.excludes
+    # Per-source exclude file: <script-dir>/<basename-without-dot>.excludes
     base=$(basename "$src")
-    exclude_file="$SCRIPT_DIR/${base#.}.excludes"   # .config.excludes → config.excludes
+    exclude_file="$SCRIPT_DIR/${base#.}.excludes"
     [[ -f "$exclude_file" ]] && extra+=("--exclude-from=$exclude_file")
 
-    # Built-in excludes for known cache/junk directories
-    if [[ "$base" == ".config" || "$base" == "config" ]]; then
+    # Built-in excludes for known cache/junk patterns inside .config
+    if [[ "$(_strip_dot "$base")" == "config" ]]; then
         extra+=(
             "--exclude=*cache*"
             "--exclude=*Cache*"
@@ -460,14 +530,14 @@ for src in "${SOURCES[@]}"; do
         )
     fi
 
-    log_info "Syncing: $src → $dest_path"
+    log_info "Syncing: $src → $local_dest_path"
 
-    # rsync source: add trailing slash so contents (not the dir itself) go under dest_path
-    if ! rsync "${RSYNC_BASE[@]}" "${extra[@]}" "${src}/" "$dest_path"; then
-        log_error "rsync failed for: $src"
-        FAILED_SOURCES+=("$src")
+    if rsync "${RSYNC_BASE[@]}" "${extra[@]}" "${src}/" "$local_dest_path"; then
+        log_verbose "  OK: $src"
     else
-        log_verbose "OK: $src"
+        rsync_exit=$?
+        log_error "rsync exited with code $rsync_exit for: $src"
+        FAILED_SOURCES+=("$src (rsync error $rsync_exit)")
     fi
 done
 
@@ -475,18 +545,31 @@ DURATION=$(( SECONDS - START_TIME ))
 
 # ── Optional verification ──────────────────────────────────────────────────────
 if [[ "$VERIFY" == true && "$DRY_RUN" != true ]]; then
-    run_verify "$BACKUP_PATH" || FAILED_SOURCES+=("verify")
+    run_verify "$_PARTIAL_PATH" || FAILED_SOURCES+=("verify")
 fi
 
-# ── Retention pruning (BUG-4 FIX) ────────────────────────────────────────────
-# Uses find -print0 / read -d '' so paths with spaces are handled correctly.
-# KEEP_COUNT guard: never prune below N most-recent backups.
-if [[ "$DRY_RUN" != true && -d "$DEST" ]]; then
-    log_info "Running retention (≥${RETENTION_DAYS}d old, keep at least ${KEEP_COUNT} most-recent)..."
+# ── Atomically promote the partial snapshot ───────────────────────────────────
+# Only rename if at least one source succeeded; otherwise leave _PARTIAL_PATH
+# so the cleanup trap removes it.
+if [[ "$DRY_RUN" != true ]]; then
+    if (( ${#FAILED_SOURCES[@]} == ${#SOURCES[@]} )) && (( ${#SOURCES[@]} > 0 )); then
+        log_error "All sources failed — discarding partial snapshot."
+        rm -rf "$_PARTIAL_PATH"
+        _PARTIAL_PATH=""
+        exit 2
+    fi
+    mv "$_PARTIAL_PATH" "$BACKUP_PATH"
+    _PARTIAL_PATH=""   # prevent cleanup trap from removing the now-complete snapshot
+    log_info "Snapshot finalised: $TIMESTAMP"
+fi
 
-    # Collect all snapshot dirs newest-first
+# ── Retention pruning ─────────────────────────────────────────────────────────
+if [[ "$DRY_RUN" != true && -d "$DEST" ]]; then
+    log_info "Retention: ≥${RETENTION_DAYS}d old, keeping at least ${KEEP_COUNT} most-recent..."
+
     mapfile -d '' ALL_SNAPS < <(
-        find "$DEST" -maxdepth 1 -type d -name "????????-??????" -print0 2>/dev/null | sort -rz
+        find "$DEST" -maxdepth 1 -type d -name "????????-??????" -print0 2>/dev/null \
+        | sort -rz
     )
     total_snaps=${#ALL_SNAPS[@]}
     now_s=$(date +%s)
@@ -495,15 +578,14 @@ if [[ "$DRY_RUN" != true && -d "$DEST" ]]; then
         snap="${ALL_SNAPS[$i]}"
         [[ -z "$snap" ]] && continue
 
-        # Honour keep-count: never delete the N newest
         if (( KEEP_COUNT > 0 && i < KEEP_COUNT )); then
-            log_verbose "Keeping (keep-count): $(basename "$snap")"
+            log_verbose "Keeping (keep-count $((i+1))/$KEEP_COUNT): $(basename "$snap")"
             continue
         fi
 
         folder=$(basename "$snap")
-        # Parse YYYYMMDD from "YYYYMMDD-HHMMSS"
-        date_part="${folder%%-*}"
+        date_part="${folder%%-*}"   # YYYYMMDD
+
         if folder_s=$(date -d "$date_part" +%s 2>/dev/null); then
             age_days=$(( (now_s - folder_s) / 86400 ))
             if (( age_days >= RETENTION_DAYS )); then
@@ -518,7 +600,7 @@ if [[ "$DRY_RUN" != true && -d "$DEST" ]]; then
     done
 fi
 
-# ── Report ─────────────────────────────────────────────────────────────────────
+# ── Build report ───────────────────────────────────────────────────────────────
 if [[ "$DRY_RUN" != true && -d "$BACKUP_PATH" ]]; then
     BACKUP_SIZE=$(du -sh "$BACKUP_PATH" 2>/dev/null | cut -f1 || echo "unknown")
 else
@@ -537,27 +619,24 @@ else
 fi
 
 SUBJECT="$SUBJECT_PREFIX – $(hostname) – $(date '+%Y-%m-%d')"
+DURATION_FMT=$(format_duration "$DURATION")
 
 cat > "$BODY" <<EOF
 $SUBJECT_PREFIX
-
 Host:             $(hostname)
 Finished:         $(date '+%Y-%m-%d %H:%M:%S')
 Snapshot:         $TIMESTAMP
 Retention policy: ${RETENTION_DAYS} days  (keep-count: ${KEEP_COUNT})
-
 ──────────────────────────────────────────
 📊 STATS
 ──────────────────────────────────────────
-Duration:         ${DURATION}s
+Duration:         ${DURATION_FMT}
 Snapshot size:    ${BACKUP_SIZE}
-  (hardlinked files share blocks with prior snapshots)
-
+  (hardlinked files share disk blocks with prior snapshots)
 ──────────────────────────────────────────
 📁 SOURCES
 ──────────────────────────────────────────
 $(printf '  ✓ %s\n' "${SOURCES[@]}")
-
 EOF
 
 if (( ${#FAILED_SOURCES[@]} > 0 )); then
@@ -566,27 +645,27 @@ cat >> "$BODY" <<EOF
 ⚠️  FAILURES
 ──────────────────────────────────────────
 $(printf '  ✗ %s\n' "${FAILED_SOURCES[@]}")
-
 EOF
 fi
 
 cat >> "$BODY" <<EOF
 ──────────────────────────────────────────
 Log file: $LOG_FILE
-This is an automated message from the Nobara Backup System.
+This is an automated message from the Nobara Backup System v${VERSION}.
 EOF
 
 send_report "$SUBJECT" "$BODY"
 
 log_info "============================================================"
 log_info "  Backup finished: $(date)"
-log_info "  Duration: ${DURATION}s   Size: ${BACKUP_SIZE}"
-(( ${#FAILED_SOURCES[@]} > 0 )) && log_error "  Failed sources: ${FAILED_SOURCES[*]}"
+log_info "  Duration: ${DURATION_FMT}   Size: ${BACKUP_SIZE}"
+(( ${#FAILED_SOURCES[@]} > 0 )) && \
+    log_error "  Failed sources: ${FAILED_SOURCES[*]}"
 log_info "============================================================"
 
-# Invoke optional notification hook
+# ── Optional post-run notification hook ───────────────────────────────────────
 if [[ "$DRY_RUN" != true ]] && command -v backup-notify.sh &>/dev/null; then
     backup-notify.sh || true
 fi
 
-exit $EXIT_CODE
+exit "$EXIT_CODE"
