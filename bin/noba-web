@@ -1,74 +1,80 @@
 #!/bin/bash
-# Noba Web Launcher (repo version)
+# Noba Web — launcher
+# Precedence (lowest → highest): built-in defaults → ~/.config/noba-web.conf → CLI flags
 
 set -euo pipefail
 
-# Adjust paths for deployed architecture (~/.local/bin -> ~/.local/libexec/noba)
+# ── Resolve paths ─────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="$(dirname "$SCRIPT_DIR")"
 LIBEXEC_DIR="$PREFIX/libexec/noba"
-
 LIB_DIR="$LIBEXEC_DIR/lib"
 WEB_DIR="$LIBEXEC_DIR/web"
 
-# Source the functions file
-source "$LIB_DIR/noba-web-functions.sh"
+# ── Load shared functions ─────────────────────────────────────────────────────
+FUNCTIONS_FILE="$LIB_DIR/noba-web-functions.sh"
+if [[ ! -f "$FUNCTIONS_FILE" ]]; then
+    echo "[ERROR] Cannot find functions library: $FUNCTIONS_FILE" >&2
+    exit 1
+fi
+# shellcheck source=../libexec/noba/lib/noba-web-functions.sh
+source "$FUNCTIONS_FILE"
 
-# Defaults
-PORT=8080
-HOST="0.0.0.0"
-HTML_DIR="${HTML_DIR:-$WEB_DIR}" # Point directly to persistent deployment
-
-# Source the functions file (we'll create it next)
-source "$LIB_DIR/noba-web-functions.sh"
-
-# Defaults
-PORT=8080
-HOST="0.0.0.0"
-HTML_DIR="${HTML_DIR:-/tmp/noba-web}"
+# ── Built-in defaults ─────────────────────────────────────────────────────────
+VERSION="1.1.0"
+PORT="${PORT:-8080}"
+HOST="${HOST:-0.0.0.0}"
+HTML_DIR="${HTML_DIR:-$WEB_DIR}"
 SERVER_PID_FILE="${SERVER_PID_FILE:-/tmp/noba-web-server.pid}"
 SERVER_URL_FILE="${SERVER_URL_FILE:-/tmp/noba-web-server.url}"
 LOG_FILE="${LOG_FILE:-/tmp/noba-web.log}"
+NOBA_YAML="${NOBA_CONFIG:-$HOME/.config/noba/config.yaml}"
+NOBA_SCRIPT_DIR="${NOBA_SCRIPT_DIR:-$HOME/.local/bin}"
+
+# ── Optional user config (may override defaults above) ───────────────────────
+# Intentionally sourced BEFORE arg parsing so CLI flags always win.
+CONFIG_FILE="$HOME/.config/noba-web.conf"
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+
+# ── Mode flags ────────────────────────────────────────────────────────────────
 KILL_ONLY=false
 RESTART=false
 VERBOSE=false
 SET_PASSWORD=false
 SHOW_STATUS=false
 GEN_SYSTEMD=false
-NOBA_YAML="${NOBA_CONFIG:-$HOME/.config/noba/config.yaml}"
+TAIL_PID=""   # initialised here so set -u never trips on it
 
-# Source optional config
-CONFIG_FILE="${HOME}/.config/noba-web.conf"
-[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
-
-# Parse arguments
-PARSED_ARGS=$(getopt -o kv -l host:,kill,verbose,help,version,set-password,restart,status,generate-systemd -- "$@" 2>/dev/null) || { log_error "Invalid argument. Run with --help for usage."; exit 1; }
+# ── Argument parsing ──────────────────────────────────────────────────────────
+PARSED_ARGS=$(getopt -o kv -l host:,kill,verbose,help,version,set-password,restart,status,generate-systemd -- "$@" 2>/dev/null) \
+    || { log_error "Invalid argument. Run with --help for usage."; exit 1; }
 eval set -- "$PARSED_ARGS"
 
 while true; do
     case "$1" in
-        --host)              HOST="$2";         shift 2 ;;
-        -k|--kill)           KILL_ONLY=true;    shift   ;;
-        -v|--verbose)        VERBOSE=true;      shift   ;;
-        --set-password)      SET_PASSWORD=true; shift   ;;
-        --restart)           KILL_ONLY=true; RESTART=true; shift ;;
-        --status)            SHOW_STATUS=true;  shift   ;;
-        --generate-systemd)  GEN_SYSTEMD=true;  shift   ;;
-        --help)              show_help; exit 0 ;;
-        --version)           echo "noba-web version 1.0.1"; exit 0 ;;
-        --)                  shift; break ;;
-        *)                   log_error "Unknown argument: $1"; exit 1 ;;
+        --host)             HOST="$2";          shift 2 ;;
+        -k|--kill)          KILL_ONLY=true;     shift   ;;
+        -v|--verbose)       VERBOSE=true;       shift   ;;
+        --set-password)     SET_PASSWORD=true;  shift   ;;
+        --restart)          RESTART=true;       shift   ;;
+        --status)           SHOW_STATUS=true;   shift   ;;
+        --generate-systemd) GEN_SYSTEMD=true;   shift   ;;
+        --help)             show_help; exit 0           ;;
+        --version)          echo "noba-web $VERSION"; exit 0 ;;
+        --)                 shift; break                ;;
+        *)                  log_error "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
-# Handle special commands
+# ── Dispatch non-launch commands ──────────────────────────────────────────────
 if [[ "$SHOW_STATUS" == true ]]; then
     show_status "$SERVER_PID_FILE" "$SERVER_URL_FILE" "$LOG_FILE"
     exit 0
 fi
 
 if [[ "$GEN_SYSTEMD" == true ]]; then
-    generate_systemd "$0" "$HOST"
+    # Use the fully-resolved launcher path so ExecStart is always absolute.
+    generate_systemd "$SCRIPT_DIR/$(basename "$0")" "$HOST"
     exit 0
 fi
 
@@ -77,49 +83,55 @@ if [[ "$SET_PASSWORD" == true ]]; then
     exit 0
 fi
 
-if [[ "$KILL_ONLY" == true ]]; then
+# --kill and --restart both stop the server first; only --kill then exits.
+if [[ "$KILL_ONLY" == true || "$RESTART" == true ]]; then
     kill_server "$SERVER_PID_FILE" "$SERVER_URL_FILE" "$HTML_DIR"
     [[ "$RESTART" != true ]] && exit 0
 fi
 
-# Check dependencies
+# ── Dependency checks ─────────────────────────────────────────────────────────
 check_deps python3 yq
 
-# Verify yq is the Go version
 if ! yq --version 2>/dev/null | grep -q "mikefarah"; then
-    log_error "'yq' must be the Go version (mikefarah/yq). Install from https://github.com/mikefarah/yq"
+    log_error "'yq' must be the Go version (mikefarah/yq). See https://github.com/mikefarah/yq"
     exit 1
 fi
 
-# Python version check
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
 if ! awk -v ver="$PYTHON_VERSION" 'BEGIN { split(ver,v,"."); exit !(v[1]>3||(v[1]==3&&v[2]>=7)); }'; then
     log_error "Python 3.7+ required (found $PYTHON_VERSION)."
     exit 1
 fi
 
-# Ensure YAML config exists
-create_default_yaml "$NOBA_YAML"
-
-# Kill any existing server (if restarting)
-if [[ "$RESTART" == true ]]; then
-    kill_server "$SERVER_PID_FILE" "$SERVER_URL_FILE" "$HTML_DIR"
+# ── Pre-flight checks ─────────────────────────────────────────────────────────
+if [[ ! -d "$HTML_DIR" ]]; then
+    log_error "Web directory not found: $HTML_DIR"
+    exit 1
 fi
 
-# Launch server
-export PORT HOST PID_FILE="$SERVER_PID_FILE" NOBA_SCRIPT_DIR="$HOME/.local/bin" NOBA_CONFIG="$NOBA_YAML"
-cd "$HTML_DIR"
-: > "$LOG_FILE"
+SERVER_SCRIPT="$HTML_DIR/server.py"
+if [[ ! -f "$SERVER_SCRIPT" ]]; then
+    log_error "server.py not found in $HTML_DIR"
+    exit 1
+fi
 
-nohup python3 server.py >> "$LOG_FILE" 2>&1 &
+create_default_yaml "$NOBA_YAML"
+
+# ── Launch ────────────────────────────────────────────────────────────────────
+export PORT HOST NOBA_SCRIPT_DIR NOBA_CONFIG="$NOBA_YAML" PID_FILE="$SERVER_PID_FILE"
+
+: > "$LOG_FILE"   # truncate log
+
+(cd "$HTML_DIR" && nohup python3 server.py >> "$LOG_FILE" 2>&1) &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$SERVER_PID_FILE"
 
 DISPLAY_IP=$(local_ip)
 echo "http://${DISPLAY_IP}:${PORT}" > "$SERVER_URL_FILE"
 
-# Wait for server to be healthy
-MAX_WAIT=10; WAITED=0
+# ── Health-check loop ─────────────────────────────────────────────────────────
+MAX_WAIT=10
+WAITED=0
 while true; do
     if command -v curl &>/dev/null; then
         CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/api/health" 2>/dev/null || true)
@@ -127,10 +139,21 @@ while true; do
         CODE=$(wget -qO- "http://127.0.0.1:${PORT}/api/health" 2>/dev/null \
                | python3 -c "import sys,json; print(200 if json.load(sys.stdin).get('status')=='ok' else 0)" 2>/dev/null || true)
     else
-        log_error "Neither curl nor wget found."; exit 1
+        log_error "Neither curl nor wget found — cannot verify server health."
+        exit 1
     fi
+
     [[ "$CODE" == "200" ]] && break
-    sleep 1; WAITED=$((WAITED+1))
+
+    # Check early if the process already died to give a useful error immediately.
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        log_error "Server process exited unexpectedly. Last 20 lines of log:"
+        tail -20 "$LOG_FILE" | sed 's/^/  /' >&2
+        exit 1
+    fi
+
+    sleep 1
+    WAITED=$((WAITED + 1))
     if [[ $WAITED -ge $MAX_WAIT ]]; then
         log_error "Server did not respond within ${MAX_WAIT}s. Last 20 lines of log:"
         tail -20 "$LOG_FILE" | sed 's/^/  /' >&2
@@ -141,12 +164,13 @@ done
 
 log_success "Dashboard live → http://${DISPLAY_IP}:${PORT}"
 
-# If verbose, tail log
+# ── Verbose tail ──────────────────────────────────────────────────────────────
+# In verbose mode: tail the log and stay in the foreground until the server exits.
+# In normal mode:  return immediately — the server runs detached via nohup.
 if [[ "$VERBOSE" == true ]]; then
-    log_info "Tailing log (Ctrl+C to stop)…"
+    log_info "Tailing log — Ctrl-C to stop following (server keeps running)."
     tail -f "$LOG_FILE" &
     TAIL_PID=$!
+    trap 'kill "$TAIL_PID" 2>/dev/null || true' EXIT INT TERM
+    wait "$SERVER_PID" || true
 fi
-
-wait "$SERVER_PID"
-[[ -n "$TAIL_PID" ]] && kill "$TAIL_PID" 2>/dev/null || true

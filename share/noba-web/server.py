@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nobara Command Center – Backend v1.1.0"""
+"""Nobara Command Center – Backend v1.1.1"""
 
 import glob
 import hashlib
@@ -20,14 +20,13 @@ import threading
 import time
 import urllib.error
 import urllib.request
-import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 # ── Config ────────────────────────────────────────────────────────────────────
-VERSION        = '1.1.0'
+VERSION        = '1.1.1'
 PORT           = int(os.environ.get('PORT', 8080))
 HOST           = os.environ.get('HOST', '0.0.0.0')
 SCRIPT_DIR     = os.environ.get('NOBA_SCRIPT_DIR', os.path.expanduser('~/.local/bin'))
@@ -66,15 +65,20 @@ logger = logging.getLogger('noba')
 
 ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
-
 def strip_ansi(s: str) -> str:
     return ANSI_RE.sub('', s)
 
+def _read_file(path: str, default: str = '') -> str:
+    """Safely read a file, ensuring descriptor closure."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except OSError:
+        return default
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 _tokens_lock = threading.Lock()
 _tokens: dict = {}  # token → expiry datetime
-
 
 def verify_password(stored: str, password: str) -> bool:
     if not stored:
@@ -92,13 +96,10 @@ def verify_password(stored: str, password: str) -> bool:
     actual = hashlib.sha256((salt + password).encode()).hexdigest()
     return secrets.compare_digest(expected, actual)
 
-
-# Cache load_user to avoid a file read on every login attempt
 _user_cache: tuple | None = None
 _user_cache_t: float = 0.0
 _user_cache_lock = threading.Lock()
 _USER_CACHE_TTL  = 30.0
-
 
 def load_user() -> tuple | None:
     global _user_cache, _user_cache_t
@@ -123,13 +124,11 @@ def load_user() -> tuple | None:
         logger.warning('Could not read auth config: %s', e)
     return None
 
-
 def generate_token() -> str:
-    token = secrets.token_urlsafe(32)  # more entropy than uuid4
+    token = secrets.token_urlsafe(32)
     with _tokens_lock:
         _tokens[token] = datetime.now() + timedelta(hours=TOKEN_TTL_H)
     return token
-
 
 def validate_token(token: str) -> bool:
     with _tokens_lock:
@@ -139,11 +138,9 @@ def validate_token(token: str) -> bool:
         _tokens.pop(token, None)
     return False
 
-
 def revoke_token(token: str) -> None:
     with _tokens_lock:
         _tokens.pop(token, None)
-
 
 def authenticate_request(headers, query=None) -> bool:
     auth = headers.get('Authorization', '')
@@ -152,7 +149,6 @@ def authenticate_request(headers, query=None) -> bool:
     if query and 'token' in query and validate_token(query['token'][0]):
         return True
     return False
-
 
 def _token_cleanup_loop() -> None:
     while not _shutdown_flag.wait(300):
@@ -164,7 +160,6 @@ def _token_cleanup_loop() -> None:
         if expired:
             logger.info('Cleaned up %d expired token(s)', len(expired))
 
-
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 class LoginRateLimiter:
     def __init__(self, max_attempts: int = 5, window_s: int = 60, lockout_s: int = 300):
@@ -173,7 +168,7 @@ class LoginRateLimiter:
         self._lockouts: dict = {}
         self.max_attempts = max_attempts
         self.window_s     = window_s
-        self.lockout_s    = lockout_s  # raised to 5 min for meaningful deterrence
+        self.lockout_s    = lockout_s
 
     def is_locked(self, ip: str) -> bool:
         with self._lock:
@@ -202,9 +197,7 @@ class LoginRateLimiter:
             self._attempts.pop(ip, None)
             self._lockouts.pop(ip, None)
 
-
 _rate_limiter = LoginRateLimiter()
-
 
 # ── YAML helpers ──────────────────────────────────────────────────────────────
 def read_yaml_settings() -> dict:
@@ -229,27 +222,18 @@ def read_yaml_settings() -> dict:
         logger.warning('Failed to read YAML settings: %s', e)
     return defaults
 
-
 def write_yaml_settings(settings: dict) -> bool:
-    """Merge *settings* into the .web section of NOBA_YAML.
-
-    A timestamped backup of the original file is written before any
-    modification takes place.
-    """
     tmp_path: str | None = None
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
             tmp.write('web:\n')
             for k, v in settings.items():
-                # Always JSON-quote strings: avoids null on empty values and
-                # misparse of colons/hashes in URLs.
                 if isinstance(v, str):
                     v = json.dumps(v)
                 tmp.write(f'  {k}: {v}\n')
             tmp_path = tmp.name
 
         if os.path.exists(NOBA_YAML):
-            # Back up before overwriting
             backup = f'{NOBA_YAML}.bak.{int(time.time())}'
             try:
                 shutil.copy2(NOBA_YAML, backup)
@@ -281,14 +265,11 @@ def write_yaml_settings(settings: dict) -> bool:
             except OSError:
                 pass
 
-
 # ── Validation ────────────────────────────────────────────────────────────────
 _SERVICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_.@-]+$')
 
-
 def validate_service_name(name: str) -> bool:
     return bool(_SERVICE_NAME_RE.match(name))
-
 
 def validate_ip(ip: str) -> bool:
     try:
@@ -296,7 +277,6 @@ def validate_ip(ip: str) -> bool:
         return True
     except ValueError:
         return False
-
 
 # ── TTL cache ─────────────────────────────────────────────────────────────────
 class TTLCache:
@@ -315,14 +295,12 @@ class TTLCache:
         with self._lock:
             self._store[key] = {'v': val, 't': time.time()}
 
-
 _cache      = TTLCache()
 _state_lock = threading.Lock()
 _cpu_history: deque = deque(maxlen=20)
 _cpu_prev    = None
 _net_prev    = None
 _net_prev_t  = None
-
 
 # ── Subprocess helper ─────────────────────────────────────────────────────────
 def run(cmd: list, timeout: float = 3, cache_key: str | None = None,
@@ -344,7 +322,6 @@ def run(cmd: list, timeout: float = 3, cache_key: str | None = None,
         logger.debug('Command failed %s: %s', cmd, e)
         return ''
 
-
 # ── Stat collectors ───────────────────────────────────────────────────────────
 def human_bps(bps: float) -> str:
     for unit in ('B/s', 'KB/s', 'MB/s', 'GB/s'):
@@ -353,12 +330,12 @@ def human_bps(bps: float) -> str:
         bps /= 1024
     return f'{bps:.1f} TB/s'
 
-
 def get_cpu_percent() -> float:
     global _cpu_prev
     with _state_lock:
         try:
-            fields = list(map(int, open('/proc/stat').readline().split()[1:]))
+            line = _read_file('/proc/stat', '')
+            fields = list(map(int, line.split('\n')[0].split()[1:]))
             idle   = fields[3] + fields[4]
             total  = sum(fields)
             if _cpu_prev is None:
@@ -373,12 +350,11 @@ def get_cpu_percent() -> float:
         except Exception:
             return 0.0
 
-
 def get_net_io() -> tuple:
     global _net_prev, _net_prev_t
     with _state_lock:
         try:
-            lines = open('/proc/net/dev').readlines()
+            lines = _read_file('/proc/net/dev').splitlines()
             rx = tx = 0
             for line in lines[2:]:
                 parts = line.split()
@@ -401,7 +377,6 @@ def get_net_io() -> tuple:
         except Exception:
             return 0.0, 0.0
 
-
 def ping_host(ip: str) -> tuple:
     ip = ip.strip()
     if not validate_ip(ip):
@@ -412,7 +387,6 @@ def ping_host(ip: str) -> tuple:
         return ip, r.returncode == 0, round((time.time() - t0) * 1000)
     except Exception:
         return ip, False, 0
-
 
 def get_service_status(svc: str) -> tuple:
     svc = svc.strip()
@@ -432,25 +406,24 @@ def get_service_status(svc: str) -> tuple:
             return state, is_user
     return 'not-found', False
 
-
 def get_battery() -> dict:
     bats = glob.glob('/sys/class/power_supply/BAT*')
     if not bats:
         return {'percent': 100, 'status': 'Desktop', 'desktop': True, 'timeRemaining': ''}
     try:
         bat      = bats[0]
-        pct      = int(open(f'{bat}/capacity').read().strip())
-        stat     = open(f'{bat}/status').read().strip()
+        pct      = int(_read_file(f'{bat}/capacity', '0'))
+        stat     = _read_file(f'{bat}/status', 'Unknown')
         time_rem = ''
         try:
-            current = int(open(f'{bat}/current_now').read().strip())
+            current = int(_read_file(f'{bat}/current_now', '0'))
             if current > 0:
                 if stat == 'Discharging':
-                    hrs      = int(open(f'{bat}/charge_now').read().strip()) / current
+                    hrs      = int(_read_file(f'{bat}/charge_now', '0')) / current
                     time_rem = f'{int(hrs)}h {int((hrs % 1) * 60)}m'
                 else:
-                    cfull    = int(open(f'{bat}/charge_full').read().strip())
-                    charge   = int(open(f'{bat}/charge_now').read().strip())
+                    cfull    = int(_read_file(f'{bat}/charge_full', '0'))
+                    charge   = int(_read_file(f'{bat}/charge_now', '0'))
                     hrs      = (cfull - charge) / current
                     time_rem = f'{int(hrs)}h {int((hrs % 1) * 60)}m to full'
         except Exception:
@@ -458,7 +431,6 @@ def get_battery() -> dict:
         return {'percent': pct, 'status': stat, 'desktop': False, 'timeRemaining': time_rem}
     except Exception:
         return {'percent': 0, 'status': 'Error', 'desktop': False, 'timeRemaining': ''}
-
 
 def get_containers() -> list:
     for cmd in (
@@ -487,7 +459,6 @@ def get_containers() -> list:
             continue
     return []
 
-
 def get_pihole(url: str, token: str) -> dict | None:
     if not url:
         return None
@@ -502,7 +473,6 @@ def get_pihole(url: str, token: str) -> dict | None:
         with urllib.request.urlopen(req, timeout=3) as r:
             return json.loads(r.read().decode())
 
-    # Pi-hole v6
     try:
         data = _get('/api/stats/summary', {'sid': token} if token else {})
         return {
@@ -515,7 +485,6 @@ def get_pihole(url: str, token: str) -> dict | None:
     except Exception:
         pass
 
-    # Pi-hole v5 fallback
     try:
         ep   = '/admin/api.php?summaryRaw' + (f'&auth={token}' if token else '')
         data = _get(ep)
@@ -529,13 +498,11 @@ def get_pihole(url: str, token: str) -> dict | None:
     except Exception:
         return None
 
-
-# ── Stats assembly (broken into focused helpers) ──────────────────────────────
+# ── Stats assembly ──────────────────────────────
 def _collect_system() -> dict:
-    """OS name, kernel, hostname, uptime, load average, memory."""
     s: dict = {}
     try:
-        for line in open('/etc/os-release'):
+        for line in _read_file('/etc/os-release').splitlines():
             if line.startswith('PRETTY_NAME='):
                 s['osName'] = line.split('=', 1)[1].strip().strip('"')
                 break
@@ -549,13 +516,13 @@ def _collect_system() -> dict:
         timeout=1,
     )
     try:
-        up_s = float(open('/proc/uptime').read().split()[0])
+        up_s = float(_read_file('/proc/uptime', '0 0').split()[0])
         d, rem = divmod(int(up_s), 86400)
         h, rem = divmod(rem, 3600)
         m = rem // 60
         s['uptime']  = (f'{d}d ' if d else '') + f'{h}h {m}m'
-        s['loadavg'] = ' '.join(open('/proc/loadavg').read().split()[:3])
-        mm    = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo') if ':' in l}
+        s['loadavg'] = ' '.join(_read_file('/proc/loadavg', '0 0 0').split()[:3])
+        mm    = {l.split(':')[0]: int(l.split()[1]) for l in _read_file('/proc/meminfo').splitlines() if ':' in l}
         tot   = mm.get('MemTotal', 0) // 1024
         avail = mm.get('MemAvailable', 0) // 1024
         used  = tot - avail
@@ -567,9 +534,7 @@ def _collect_system() -> dict:
         s.setdefault('memPercent', 0)
     return s
 
-
 def _collect_hardware() -> dict:
-    """CPU model, GPU model, temperatures, battery."""
     s: dict = {}
     s['hwCpu'] = run(
         ['bash', '-c', "lscpu | grep 'Model name' | head -1 | cut -d: -f2 | xargs"],
@@ -602,9 +567,7 @@ def _collect_hardware() -> dict:
     s['battery'] = get_battery()
     return s
 
-
 def _collect_storage() -> dict:
-    """Disk usage and ZFS pool health."""
     disks = []
     for line in run(['df', '-BM'], cache_key='df', cache_ttl=10).splitlines()[1:]:
         parts = line.split()
@@ -636,11 +599,8 @@ def _collect_storage() -> dict:
 
     return {'disks': disks, 'zfs': {'pools': pools}}
 
-
 def _collect_network() -> dict:
-    """Net I/O rates and top processes by CPU / memory."""
     rx_bps, tx_bps = get_net_io()
-
     def parse_ps(out: str) -> list:
         result = []
         for line in out.splitlines()[1:6]:
@@ -656,10 +616,8 @@ def _collect_network() -> dict:
         'topMem': parse_ps(run(['ps', 'ax', '--format', 'comm,%mem', '--sort', '-%mem'], timeout=2)),
     }
 
-
 def _build_alerts(stats: dict) -> list:
     alerts = []
-
     cpu = stats.get('cpuPercent', 0)
     if cpu > 90:
         alerts.append({'level': 'danger',  'msg': f'CPU critical: {cpu}%'})
@@ -687,32 +645,23 @@ def _build_alerts(stats: dict) -> list:
 
     return alerts
 
-
-# Persistent thread pool — reused across all collect_stats calls instead of
-# creating a new ThreadPoolExecutor on every request.
 _pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix='noba-worker')
-
 
 def collect_stats(qs: dict) -> dict:
     stats: dict = {'timestamp': datetime.now().strftime('%H:%M:%S')}
-
-    # Fast /proc reads — sequential, no subprocess overhead
     stats.update(_collect_system())
     stats.update(_collect_hardware())
     stats.update(_collect_storage())
-
     stats['cpuPercent'] = get_cpu_percent()
     with _state_lock:
         stats['cpuHistory'] = list(_cpu_history)
     stats.update(_collect_network())
 
-    # Per-request dynamic config from query string
     svc_list = [s.strip() for s in qs.get('services', [''])[0].split(',') if s.strip()]
     ip_list  = [ip.strip() for ip in qs.get('radar',    [''])[0].split(',') if ip.strip()]
     ph_url   = qs.get('pihole',    [''])[0]
     ph_tok   = qs.get('piholetok', [''])[0]
 
-    # Fan-out all I/O-bound checks concurrently
     svc_futs  = {_pool.submit(get_service_status, s): s for s in svc_list}
     ping_futs = {_pool.submit(ping_host, ip): ip for ip in ip_list}
     ph_fut    = _pool.submit(get_pihole, ph_url, ph_tok) if ph_url else None
@@ -749,7 +698,6 @@ def collect_stats(qs: dict) -> dict:
     stats['alerts'] = _build_alerts(stats)
     return stats
 
-
 # ── Background collector ──────────────────────────────────────────────────────
 class BackgroundCollector:
     def __init__(self, interval: int = STATS_INTERVAL) -> None:
@@ -781,62 +729,7 @@ class BackgroundCollector:
                 logger.warning('Collector error: %s', e)
             _shutdown_flag.wait(self._interval)
 
-
 _bg = BackgroundCollector()
-
-
-# ── Async script runner ───────────────────────────────────────────────────────
-_active_job: dict | None = None
-_job_lock = threading.Lock()
-
-
-def _run_script_background(script: str) -> None:
-    """Execute a script in a background thread, writing output to ACTION_LOG."""
-    global _active_job
-    status = 'error'
-    try:
-        ts = datetime.now().strftime('%H:%M:%S')
-        with open(ACTION_LOG, 'w') as f:
-            f.write(f'>> [{ts}] Initiating: {script}\n\n')
-
-        if script == 'speedtest':
-            with open(ACTION_LOG, 'a') as f:
-                p = subprocess.Popen(['speedtest-cli', '--simple'], stdout=f, stderr=subprocess.STDOUT)
-                p.wait(timeout=120)
-                status = 'done' if p.returncode == 0 else 'failed'
-
-        elif script in SCRIPT_MAP:
-            sfile = os.path.join(SCRIPT_DIR, SCRIPT_MAP[script])
-            if os.path.isfile(sfile):
-                with open(ACTION_LOG, 'a') as f:
-                    p = subprocess.Popen(
-                        [sfile, '--verbose'], stdout=f, stderr=subprocess.STDOUT, cwd=SCRIPT_DIR,
-                    )
-                    p.wait(timeout=300)
-                    status = 'done' if p.returncode == 0 else 'failed'
-            else:
-                with open(ACTION_LOG, 'a') as f:
-                    f.write(f'[ERROR] Script not found: {sfile}\n')
-                status = 'failed'
-        else:
-            with open(ACTION_LOG, 'a') as f:
-                f.write(f'[ERROR] Unknown script: {script}\n')
-            status = 'failed'
-
-    except subprocess.TimeoutExpired:
-        with open(ACTION_LOG, 'a') as f:
-            f.write('\n[ERROR] Script timed out.\n')
-        status = 'timeout'
-    except Exception as e:
-        logger.exception('Script runner error: %s', e)
-    finally:
-        with open(ACTION_LOG, 'a') as f:
-            f.write(f'\n>> [{datetime.now().strftime("%H:%M:%S")}] {status.upper()}\n')
-        with _job_lock:
-            if _active_job and _active_job.get('script') == script:
-                _active_job['status']  = status
-                _active_job['finished'] = datetime.now().isoformat()
-
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
 _SECURITY_HEADERS = {
@@ -845,13 +738,15 @@ _SECURITY_HEADERS = {
     'Referrer-Policy':        'same-origin',
 }
 
+_active_job: dict | None = None
+_job_lock = threading.Lock()
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory='.', **kwargs)
 
     def log_message(self, fmt, *args):
-        pass  # silence default access log; structured logging handles this
+        pass
 
     def _client_ip(self) -> str:
         return self.client_address[0] if self.client_address else '0.0.0.0'
@@ -867,7 +762,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read_body(self) -> dict | None:
-        """Read and JSON-parse the POST body; enforces MAX_BODY_BYTES."""
         try:
             length = int(self.headers.get('Content-Length', 0))
         except ValueError:
@@ -887,12 +781,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         qs     = parse_qs(parsed.query)
         path   = parsed.path
 
-        # Static assets – served by SimpleHTTPRequestHandler
         if path in ('/', '/index.html'):
             super().do_GET()
             return
 
-        # Public endpoint – no auth required
         if path == '/api/health':
             self._json({
                 'status':   'ok',
@@ -937,7 +829,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     if data:
                         self.wfile.write(f'data: {json.dumps(data)}\n\n'.encode())
                         self.wfile.flush()
-                    # SSE keepalive – prevents proxies/browsers from closing idle connections
                     if now - last_heartbeat >= 15:
                         self.wfile.write(b': ping\n\n')
                         self.wfile.flush()
@@ -952,15 +843,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if log_type == 'syserr':
                 text = run(['journalctl', '-p', '3', '-n', '25', '--no-pager'], timeout=4)
             elif log_type == 'action':
-                try:
-                    text = strip_ansi(open(ACTION_LOG).read())
-                except FileNotFoundError:
-                    text = 'No recent actions.'
+                text = strip_ansi(_read_file(ACTION_LOG, 'No recent actions.'))
             elif log_type == 'backup':
                 try:
-                    lines = open(os.path.join(LOG_DIR, 'backup-to-nas.log')).readlines()
-                    text  = strip_ansi(''.join(lines[-30:]))
-                except FileNotFoundError:
+                    lines = _read_file(os.path.join(LOG_DIR, 'backup-to-nas.log'), 'No backup log found.').splitlines()
+                    text  = strip_ansi('\n'.join(lines[-30:]))
+                except Exception:
                     text = 'No backup log found.'
             else:
                 text = 'Unknown log type.'
@@ -972,10 +860,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
         elif path == '/api/action-log':
-            try:
-                text = strip_ansi(open(ACTION_LOG).read())
-            except FileNotFoundError:
-                text = 'Waiting for output…'
+            text = strip_ansi(_read_file(ACTION_LOG, 'Waiting for output…'))
             body = text.encode()
             self.send_response(200)
             self.send_header('Content-Type', 'text/plain; charset=utf-8')
@@ -984,7 +869,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
         elif path == '/api/run-status':
-            # Returns the current job state: idle | running | done | failed | timeout | error
             with _job_lock:
                 self._json(dict(_active_job) if _active_job else {'status': 'idle'})
 
@@ -1048,22 +932,68 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if body is None:
                 return
             script = body.get('script', '')
+
             with _job_lock:
                 global _active_job
                 if _active_job and _active_job.get('status') == 'running':
-                    self._json({'error': 'A script is already running', 'queued': False}, 409)
+                    self._json({'success': False, 'error': 'A script is already running'})
                     return
                 _active_job = {
                     'script':  script,
                     'status':  'running',
                     'started': datetime.now().isoformat(),
                 }
-            threading.Thread(
-                target=_run_script_background, args=(script,),
-                daemon=True, name=f'script-{script}',
-            ).start()
-            # Return immediately — frontend polls /api/action-log and /api/run-status
-            self._json({'queued': True, 'script': script})
+
+            # Run synchronously in the request thread to keep frontend await perfectly synced
+            status = 'error'
+            p = None
+            try:
+                ts = datetime.now().strftime('%H:%M:%S')
+                with open(ACTION_LOG, 'w') as f:
+                    f.write(f'>> [{ts}] Initiating: {script}\n\n')
+
+                if script == 'speedtest':
+                    with open(ACTION_LOG, 'a') as f:
+                        p = subprocess.Popen(['speedtest-cli', '--simple'], stdout=f, stderr=subprocess.STDOUT)
+                elif script in SCRIPT_MAP:
+                    sfile = os.path.join(SCRIPT_DIR, SCRIPT_MAP[script])
+                    if os.path.isfile(sfile):
+                        with open(ACTION_LOG, 'a') as f:
+                            p = subprocess.Popen(
+                                [sfile, '--verbose'], stdout=f, stderr=subprocess.STDOUT, cwd=SCRIPT_DIR,
+                            )
+                    else:
+                        with open(ACTION_LOG, 'a') as f:
+                            f.write(f'[ERROR] Script not found: {sfile}\n')
+                        status = 'failed'
+                else:
+                    with open(ACTION_LOG, 'a') as f:
+                        f.write(f'[ERROR] Unknown script: {script}\n')
+                    status = 'failed'
+
+                if p:
+                    try:
+                        p.wait(timeout=300)
+                        status = 'done' if p.returncode == 0 else 'failed'
+                    except subprocess.TimeoutExpired:
+                        p.kill()  # Force process reap to prevent zombies
+                        p.wait()
+                        with open(ACTION_LOG, 'a') as f:
+                            f.write('\n[ERROR] Script timed out after 300s. Process killed.\n')
+                        status = 'timeout'
+
+            except Exception as e:
+                logger.exception('Script runner error: %s', e)
+            finally:
+                with open(ACTION_LOG, 'a') as f:
+                    f.write(f'\n>> [{datetime.now().strftime("%H:%M:%S")}] {status.upper()}\n')
+                with _job_lock:
+                    if _active_job and _active_job.get('script') == script:
+                        _active_job['status']  = status
+                        _active_job['finished'] = datetime.now().isoformat()
+
+            # Now we actually return the success key the frontend expects!
+            self._json({'success': status == 'done', 'status': status, 'script': script})
 
         elif path == '/api/service-control':
             body = self._read_body()
@@ -1098,9 +1028,7 @@ class ThreadingHTTPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads      = True
 
-
 _server = None
-
 
 def _sigterm_handler(signum, frame) -> None:
     logger.info('SIGTERM received, shutting down…')
@@ -1108,9 +1036,7 @@ def _sigterm_handler(signum, frame) -> None:
     if _server:
         threading.Thread(target=_server.shutdown, daemon=True).start()
 
-
 signal.signal(signal.SIGTERM, _sigterm_handler)
-
 
 if __name__ == '__main__':
     try:
