@@ -1,8 +1,8 @@
 #!/bin/bash
 # backup-to-nas.sh – Incremental hardlink backup to NAS with retention, space check, and report
-# Version: 4.0.0
+# Version: 1.0.0
 #
-# New in 4.0.0:
+# New in 1.0.0:
 #   Atomic snapshots      Written to <TIMESTAMP>.partial, renamed on success; broken
 #                         snapshots are never used as a link-dest or counted toward
 #                         keep-count.
@@ -16,10 +16,11 @@
 #   Fixed run_verify      Source path reconstruction now works for multiple sources.
 #   rsync --stats         Per-source transfer statistics written to the log.
 #   Exit codes:           0=success  1=partial (some sources failed)  2=fatal abort
+
 set -euo pipefail
 
 # ── Version ────────────────────────────────────────────────────────────────────
-readonly VERSION="4.0.0"
+readonly VERSION="1.0.0"
 
 # ── Test harness shims (must come before sourcing the library) ─────────────────
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
@@ -75,8 +76,6 @@ if command -v get_config &>/dev/null; then
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-show_version() { echo "backup-to-nas.sh version $VERSION"; exit 0; }
-
 show_help() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -133,6 +132,7 @@ setup_logging() {
 _EMAIL_TMP=""
 _PARTIAL_PATH=""   # path of in-progress snapshot; removed on abort
 
+# shellcheck disable=SC2329  # invoked via: trap cleanup EXIT INT TERM
 cleanup() {
     local exit_code=$?
     # Kill any background rsync that may still be running
@@ -235,11 +235,6 @@ _strip_dot() { local b="$1"; [[ "$b" == .* ]] && echo "${b#.}" || echo "$b"; }
 linkdest_for() {
     local src="$1"
     echo "$LATEST_BACKUP/$(_strip_dot "$(basename "$src")")"
-}
-
-destpath_for() {
-    local src="$1"
-    echo "$BACKUP_PATH/$(_strip_dot "$(basename "$src")")"
 }
 
 # ── Post-backup verification ───────────────────────────────────────────────────
@@ -377,7 +372,7 @@ while true; do
            --report-only)   REPORT_ONLY=true;                    shift   ;;
         -v|--verbose)       export VERBOSE=true;                 shift   ;;
         -h|--help)          show_help ;;
-           --version)       show_version ;;
+           --version)       echo "backup-to-nas.sh version $VERSION"; exit 0 ;;
         --)                 shift; break ;;
         *)                  echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -417,6 +412,7 @@ MOUNT_POINT=$(df -P "$DEST" 2>/dev/null | tail -1 | awk '{print $6}')
 [[ -n "$MOUNT_POINT" ]] || die "Cannot determine mount point for $DEST."
 
 # ── Acquire lock (real runs only) ─────────────────────────────────────────────
+# shellcheck disable=SC2119  # acquire_lock takes no positional params; die() inside it causes the false positive
 [[ "$DRY_RUN" != true ]] && acquire_lock
 
 # ── Report-only mode ───────────────────────────────────────────────────────────
