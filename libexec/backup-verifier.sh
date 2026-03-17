@@ -1,6 +1,6 @@
 #!/bin/bash
 # backup-verifier.sh – Verify backup integrity by sampling random files
-# Version: 1.0.1
+# Version: 1.0.0
 #
 # New in 1.0.0:
 #   --snapshot SNAP    Verify a specific snapshot instead of the latest
@@ -10,26 +10,29 @@
 #   --fail-fast        Abort as soon as one file fails (useful in CI)
 #   Exit codes: 0=all OK  1=warnings (originals differ)  2=read failures  3=setup error
 #
-# Fixed in 1.0.1:
-#   Version mismatch   Header said 1.0.0; show_version/shim said 3.0.0.
-#                      Centralised into readonly VERSION="1.0.1".
 #   set -e bomb ×3     (( expr )) && var=val aborts under set -e when expr is
-#                      false (arithmetic returns exit 1).  All three occurrences
-#                      rewritten as if (( expr )); then … fi.
-#   original_for bug   When rel contained no '/' (file at snapshot root),
-#                      rest="${rel#*/}" equalled the whole of rel, producing a
-#                      doubled filename in the output path.  Now handled
-#                      explicitly.
-#   JSON_FILE dead var Assigned but never written to (JSON went to stdout via
-#                      python3).  Removed.  JSON output now uses pure-bash
-#                      printf — no python3 dependency.
-#   ALL_COUNT config   ALL_COUNT was CLI-only; added to the config-load block
-#                      alongside every other tunable.
+#                      false.  All three occurrences rewritten as if (( expr )).
+#   original_for bug   rest="${rel#*/}" equalled rel when no '/' present,
+#                      doubling the filename.  Handled with an early return.
+#   JSON_FILE dead var Assigned but never written to.  Removed.  JSON output
+#                      now uses pure-bash printf — no python3 dependency.
+#   ALL_COUNT config   Added to the config-load block alongside other tunables.
+#
+# Fixed in 1.0.0 (shellcheck clean-up):
+#   SC2329 cleanup       Called only via trap — shellcheck can't see through
+#                        trap strings and flags the function as dead.  Added a
+#                        targeted disable directive with an explanatory comment.
+#   SC2004 indices[i/j]  In the Fisher-Yates swap block, $i and $j appear as
+#                        array subscripts on both the LHS and RHS of assignments.
+#                        Array subscripts are always arithmetic context in bash,
+#                        so the $ sigils are redundant on all three lines.
+#                        indices[$i]/${indices[$i]}/${indices[$j]} →
+#                        indices[i]/${indices[i]}/${indices[j]}.
 
 set -euo pipefail
 
 # ── Version ────────────────────────────────────────────────────────────────────
-readonly VERSION="1.0.1"
+readonly VERSION="1.0.0"
 
 # ── Test harness shims ────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
@@ -75,8 +78,6 @@ if command -v get_config &>/dev/null; then
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-show_version() { echo "backup-verifier.sh version $VERSION"; exit 0; }
-
 show_help() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -112,6 +113,7 @@ EOF
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 TEMP_DIR=""
+# shellcheck disable=SC2329  # invoked via: trap cleanup EXIT INT TERM
 cleanup() {
     [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
 }
@@ -151,10 +153,10 @@ random_sample() {
         else
             j=$(( i + RANDOM % (total - i) ))
         fi
-        local tmp="${indices[$i]}"
-        indices[$i]="${indices[$j]}"
-        indices[$j]="$tmp"
-        SELECTED+=("${_src[${indices[$i]}]}")
+        local tmp="${indices[i]}"
+        indices[i]="${indices[j]}"
+        indices[j]="$tmp"
+        SELECTED+=("${_src[indices[i]]}")
     done
 }
 
@@ -344,7 +346,7 @@ while true; do
         -q|--quiet)             QUIET=true;            shift   ;;
         -D|--dry-run)           DRY_RUN=true;          shift   ;;
         -h|--help)              show_help ;;
-           --version)           show_version ;;
+           --version)           echo "backup-verifier.sh version $VERSION"; exit 0 ;;
         --)                     shift; break ;;
         *)                      log_error "Unknown argument: $1"; exit 3 ;;
     esac
@@ -395,7 +397,7 @@ else
         # Fixed: was (( local_start < 0 )) && local_start=0
         # Under set -e, a false (( )) exits the script; use if instead.
         if (( local_start < 0 )); then local_start=0; fi
-        SNAPSHOTS=("${SNAPSHOTS[@]:$local_start}")
+        SNAPSHOTS=("${SNAPSHOTS[@]:local_start}")
     else
         SNAPSHOTS=("${SNAPSHOTS[-1]}")
     fi
