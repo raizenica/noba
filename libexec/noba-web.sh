@@ -1,11 +1,11 @@
 #!/bin/bash
-# noba-web.sh – Nobara Command Center v8.4.0
+# noba-web.sh – Noba Command Center v1.0.0
 #
-# Changes from v8.3.0:
 #   Shell   : --status flag (shows PID + URL of running server)
 #             --generate-systemd flag (prints ready-to-use .service unit)
 #             PBKDF2-SHA256 password hashing (200 k iterations) for --set-password
 #             SERVER_URL_FILE tracks the live URL for --status
+#
 #   Backend : BackgroundCollector thread — pre-computes stats every 5 s;
 #               SSE and /api/stats just read from its cache (no more per-request blocking)
 #             LoginRateLimiter — 5 failed attempts per IP → 30 s lockout
@@ -13,6 +13,7 @@
 #             secrets.compare_digest used everywhere (timing-safe)
 #             Token-cleanup daemon thread — evicts expired tokens every 5 min
 #             /api/health endpoint (public, no auth) — version + server uptime
+#
 #   Frontend: Auto-theme from prefers-color-scheme on first visit
 #             Dismissable alerts (× button, per-session memory)
 #             Connection status badge — Live / N s (polling) / Offline
