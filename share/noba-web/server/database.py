@@ -1,4 +1,3 @@
-# share/noba-web/server/database.py
 import sqlite3
 import threading
 import json
@@ -9,7 +8,7 @@ DB_PATH = Path(os.path.expanduser("~/.local/share/noba-history.db"))
 
 class Database:
     _instance = None
-    _lock = threading.Lock()
+    _lock = threading.RLock()  # <--- CHANGED TO RLock!
 
     def __new__(cls):
         with cls._lock:

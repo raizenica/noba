@@ -54,10 +54,13 @@ app.include_router(api.router, prefix="/api", tags=["System"])
 # -------------------------------------------------------------------
 # Static Frontend Mounting
 # -------------------------------------------------------------------
-# This allows FastAPI to serve your index.html, style.css, and app.js
-static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
-if os.path.exists(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+# This dynamically gets the absolute, unbreakable path to share/noba-web/
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+if BASE_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(BASE_DIR), html=True), name="web")
 else:
-    logger.warning(f"Static directory not found at {static_dir}. UI disabled.")
+    logger.error(f"FATAL: Could not find web directory at {BASE_DIR}")
