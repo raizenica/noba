@@ -1,16 +1,73 @@
 #!/bin/bash
-# install.sh – Smart installer for Nobara Automation Suite
-# Version: 3.2.0
+# install.sh – Smart installer for Noba Automation Suite
+# Version: 3.3.0
 
 set -euo pipefail
+
+# ── Safety ─────────────────────────────────────────────────────────────────────
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    echo "⚠ Running as root is not recommended. Use a regular user with sudo."
+fi
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+require_cmd() {
+    command -v "$1" &>/dev/null || {
+        echo "✗ Required command not found: $1" >&2
+        exit 1
+    }
+}
+
+install_file() {
+    local src="$1"
+    local dst="$2"
+    local mode="${3:-755}"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        printf '  [DRY RUN] install %s → %s (mode %s)\n' "$src" "$dst" "$mode"
+        return
+    fi
+
+    install -Dm"$mode" "$src" "$dst"
+    record_install "$dst"
+}
+
+say()      { printf '  %s\n' "$@"; }
+say_ok()   { printf '  \033[0;32m✓\033[0m %s\n' "$@"; }
+say_warn() { printf '  \033[0;33m⚠\033[0m %s\n' "$@"; }
+say_err()  { printf '  \033[0;31m✗\033[0m %s\n' "$@" >&2; }
+header()   { printf '\n\033[1m%s\033[0m\n' "$@"; }
+dry()      { [[ "$DRY_RUN" == true ]] && printf '  [DRY RUN] %s\n' "$@"; }
+
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Install the Noba Automation Suite.
+
+Options:
+  -d, --dir DIR          Bin directory for wrapper (default: $BIN_DIR)
+      --prefix DIR       Base installation prefix (default: $PREFIX)
+  -c, --config DIR       Configuration directory (default: $CONFIG_DIR)
+  -s, --systemd DIR      Systemd user unit directory (default: $SYSTEMD_USER_DIR)
+      --email ADDR       Pre-fill email address in generated config
+      --skip-deps        Skip dependency installation
+      --no-completion    Skip shell completion setup
+      --no-systemd       Skip systemd unit installation and reload
+  -u, --uninstall        Remove a previously installed suite (reads manifest)
+  -n, --dry-run          Show what would be done without making changes
+  -h, --help             Show this message
+  -v, --version          Show version information
+EOF
+    exit 0
+}
 
 # ── Test harness compliance ────────────────────────────────────────────────────
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    echo "Usage: install.sh [OPTIONS]"; exit 0
+    show_help
 fi
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
-    echo "install.sh version 3.2.0"; exit 0
+    echo "install.sh version 3.3.0"; exit 0
 fi
 
 # ── Defaults ───────────────────────────────────────────────────────────────────
@@ -31,7 +88,6 @@ USER_EMAIL="${EMAIL:-}"
 
 MANIFEST_FILE="${MANIFEST_FILE:-$HOME/.local/share/noba-install.manifest}"
 
-# ── Whitelist of suite scripts ─────────────────────────────────────────────────
 SUITE_SCRIPTS=(
     backup-to-nas.sh
     backup-verifier.sh
@@ -52,38 +108,7 @@ OPTIONAL_SCRIPTS=(
     noba-completion.sh
 )
 
-# ── Functions ──────────────────────────────────────────────────────────────────
-say()     { printf '  %s\n' "$@"; }
-say_ok()  { printf '  \033[0;32m✓\033[0m %s\n' "$@"; }
-say_warn(){ printf '  \033[0;33m⚠\033[0m %s\n' "$@"; }
-say_err() { printf '  \033[0;31m✗\033[0m %s\n' "$@" >&2; }
-header()  { printf '\n\033[1m%s\033[0m\n' "$@"; }
-dry()     { [[ "$DRY_RUN" == true ]] && printf '  [DRY RUN] %s\n' "$@"; }
-
-show_help() {
-    cat <<EOF
-Usage: $(basename "$0") [OPTIONS]
-
-Install the Nobara Automation Suite.
-
-Options:
-  -d, --dir DIR          Bin directory for wrapper (default: $BIN_DIR)
-      --prefix DIR       Base installation prefix (default: $PREFIX)
-  -c, --config DIR       Configuration directory (default: $CONFIG_DIR)
-  -s, --systemd DIR      Systemd user unit directory (default: $SYSTEMD_USER_DIR)
-      --email ADDR       Pre-fill email address in generated config
-      --skip-deps        Skip dependency installation
-      --no-completion    Skip shell completion setup
-      --no-systemd       Skip systemd unit installation and reload
-  -u, --uninstall        Remove a previously installed suite (reads manifest)
-  -n, --dry-run          Show what would be done without making changes
-  -h, --help             Show this message
-  -v, --version          Show version information
-EOF
-    exit 0
-}
-
-# ── Manifest-based install tracking and rollback ──────────────────────────────
+# ── Manifest & rollback ────────────────────────────────────────────────────────
 INSTALLED_FILES=()
 
 record_install() {
@@ -93,17 +118,31 @@ record_install() {
 
 write_manifest() {
     mkdir -p "$(dirname "$MANIFEST_FILE")"
-    printf '%s\n' "${INSTALLED_FILES[@]}" > "$MANIFEST_FILE"
+
+    local tmp
+    tmp=$(mktemp) || {
+        say_warn "mktemp failed — writing manifest directly"
+        printf '%s\n' "${INSTALLED_FILES[@]}" > "$MANIFEST_FILE"
+        say_ok "Manifest written: $MANIFEST_FILE"
+        return
+    }
+
+    printf '%s\n' "${INSTALLED_FILES[@]}" > "$tmp"
+    mv "$tmp" "$MANIFEST_FILE"
     say_ok "Manifest written: $MANIFEST_FILE"
 }
 
 rollback() {
     local exit_code=$?
-    if [[ "$exit_code" -ne 0 && "$DRY_RUN" == false && ${#INSTALLED_FILES[@]} -gt 0 ]]; then
-        say_warn "Install failed — rolling back ${#INSTALLED_FILES[@]} installed file(s)..."
-        for f in "${INSTALLED_FILES[@]}"; do
-            rm -f "$f" && say_warn "  Removed: $f" || true
-        done
+    if [[ "$exit_code" -ne 0 && "$DRY_RUN" == false ]]; then
+        if [[ ${#INSTALLED_FILES[@]} -gt 0 ]]; then
+            say_warn "Install failed — rolling back ${#INSTALLED_FILES[@]} installed file(s)..."
+            for f in "${INSTALLED_FILES[@]}"; do
+                rm -f "$f" && say_warn "  Removed: $f" || true
+            done
+        else
+            say_warn "Install failed — no manifest entries to rollback."
+        fi
     fi
 }
 trap rollback EXIT
@@ -113,7 +152,7 @@ do_uninstall() {
         say_err "No manifest found at $MANIFEST_FILE — cannot uninstall."
         exit 1
     fi
-    header "Uninstalling Nobara Automation Suite"
+    header "Uninstalling Noba Automation Suite"
     local count=0
     while IFS= read -r path; do
         [[ -z "$path" ]] && continue
@@ -141,6 +180,7 @@ do_uninstall() {
     exit 0
 }
 
+# ── OS & deps ──────────────────────────────────────────────────────────────────
 detect_os() {
     OS_ID=$(bash -c '. /etc/os-release 2>/dev/null && echo "$ID"' || echo "unknown")
     OS_NAME=$(bash -c '. /etc/os-release 2>/dev/null && echo "$NAME"' || echo "Unknown Linux")
@@ -153,10 +193,13 @@ install_deps() {
         return 0
     fi
 
+    require_cmd sudo
+    require_cmd curl
+
     local deps=()
     case "$OS_ID" in
         fedora|nobara|rhel|centos|rocky|almalinux)
-            deps=(rsync rclone msmtp ImageMagick yq jq dialog psmisc lm_sensors lsof)
+            deps=(rsync rclone msmtp ImageMagick yq jq dialog psmisc lm_sensors lsof python3)
             if [[ "$DRY_RUN" == true ]]; then
                 dry "Would run: sudo dnf install -y ${deps[*]}"
             else
@@ -165,7 +208,7 @@ install_deps() {
             fi
             ;;
         debian|ubuntu|linuxmint|pop|kali)
-            deps=(rsync msmtp imagemagick jq dialog psmisc lm-sensors lsof)
+            deps=(rsync msmtp imagemagick jq dialog psmisc lm-sensors lsof python3)
             if [[ "$DRY_RUN" == true ]]; then
                 dry "Would run: sudo apt install -y ${deps[*]}"
             else
@@ -173,9 +216,19 @@ install_deps() {
                 sudo apt-get update -qq
                 sudo apt-get install -y "${deps[@]}"
                 if ! command -v rclone &>/dev/null; then
-                    say "Installing rclone via official script..."
-                    curl -fsSL https://rclone.org/install.sh | sudo bash || \
-                        say_warn "rclone install failed — install manually from https://rclone.org"
+                    say_warn "Installing rclone via remote script (review recommended)."
+                    if [[ "$DRY_RUN" == true ]]; then
+                        dry "Would download and run rclone install script"
+                    else
+                        tmp_inst="/tmp/rclone-install-$$.sh"
+                        curl -fsSL https://rclone.org/install.sh -o "$tmp_inst" || {
+                            say_warn "Failed to download rclone installer; install rclone manually from https://rclone.org"
+                        }
+                        if [[ -f "$tmp_inst" ]]; then
+                            sudo bash "$tmp_inst" || say_warn "rclone install script failed; install manually"
+                            rm -f "$tmp_inst"
+                        fi
+                    fi
                 fi
                 if ! command -v yq &>/dev/null; then
                     if command -v snap &>/dev/null; then
@@ -187,7 +240,7 @@ install_deps() {
             fi
             ;;
         arch|manjaro|endeavouros|garuda)
-            deps=(rsync rclone msmtp imagemagick yq jq dialog psmisc lm_sensors lsof)
+            deps=(rsync rclone msmtp imagemagick yq jq dialog psmisc lm_sensors lsof python3)
             if [[ "$DRY_RUN" == true ]]; then
                 dry "Would run: sudo pacman -S --noconfirm ${deps[*]}"
             else
@@ -196,7 +249,7 @@ install_deps() {
             fi
             ;;
         opensuse*|sles)
-            deps=(rsync rclone msmtp ImageMagick yq jq dialog psmisc sensors lsof)
+            deps=(rsync rclone msmtp ImageMagick yq jq dialog psmisc sensors lsof python3)
             if [[ "$DRY_RUN" == true ]]; then
                 dry "Would run: sudo zypper install -y ${deps[*]}"
             else
@@ -206,11 +259,12 @@ install_deps() {
             ;;
         *)
             say_warn "Unknown OS '$OS_ID' — please install these manually:"
-            say_warn "  rsync rclone msmtp ImageMagick yq jq dialog psmisc lm_sensors lsof"
+            say_warn "  rsync rclone msmtp ImageMagick yq jq dialog psmisc lm_sensors lsof python3"
             ;;
     esac
 }
 
+# ── Shell completions ─────────────────────────────────────────────────────────
 setup_completion() {
     if [[ "$NO_COMPLETION" == true ]]; then return 0; fi
     if [[ ! -f "$LIBEXEC_DIR/noba-completion.sh" ]]; then return 0; fi
@@ -227,7 +281,7 @@ setup_completion() {
             elif [[ "$DRY_RUN" == true ]]; then
                 dry "Would append completion source to $rc_file"
             else
-                { echo ""; echo "# Nobara Automation Suite"; echo "$marker"; } >> "$rc_file"
+                { echo ""; echo "# Noba Automation Suite"; echo "$marker"; } >> "$rc_file"
                 say_ok "Bash completions added to $rc_file"
             fi
             ;;
@@ -239,7 +293,7 @@ setup_completion() {
             elif [[ "$DRY_RUN" == true ]]; then
                 dry "Would append completion source to $rc_file"
             else
-                { echo ""; echo "# Nobara Automation Suite"; echo "$marker"; } >> "$rc_file"
+                { echo ""; echo "# Noba Automation Suite"; echo "$marker"; } >> "$rc_file"
                 say_ok "Zsh completions added to $rc_file"
             fi
             ;;
@@ -251,7 +305,7 @@ setup_completion() {
                 dry "Would create $fish_conf"
             else
                 mkdir -p "$(dirname "$fish_conf")"
-                echo "# Nobara Automation Suite" > "$fish_conf"
+                echo "# Noba Automation Suite" > "$fish_conf"
                 echo "bass source $LIBEXEC_DIR/noba-completion.sh" >> "$fish_conf"
                 say_ok "Fish completions written to $fish_conf"
                 say_warn "Fish requires 'bass' plugin to source bash completions."
@@ -264,6 +318,7 @@ setup_completion() {
     esac
 }
 
+# ── Systemd reload ────────────────────────────────────────────────────────────
 reload_systemd() {
     if [[ "$NO_SYSTEMD" == true ]]; then return 0; fi
     if [[ "$DRY_RUN"  == true ]]; then
@@ -307,7 +362,7 @@ while [[ $# -gt 0 ]]; do
         -u|--uninstall)    UNINSTALL=true;           shift   ;;
         -n|--dry-run)      DRY_RUN=true;             shift   ;;
         -h|--help)         show_help ;;
-        -v|--version)      echo "install.sh version 3.2.0"; exit 0 ;;
+        -v|--version)      echo "install.sh version 3.3.0"; exit 0 ;;
         *) say_err "Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -317,7 +372,7 @@ if [[ "$UNINSTALL" == true ]]; then
 fi
 
 # ── Begin install ─────────────────────────────────────────────────────────────
-header "Nobara Automation Suite Installer v3.2.0"
+header "Noba Automation Suite Installer v3.3.0"
 
 detect_os
 say "OS: $OS_NAME ($OS_ID${OS_VERSION:+ $OS_VERSION})"
@@ -335,24 +390,23 @@ install_deps
 
 header "Creating directories"
 if [[ "$DRY_RUN" == true ]]; then
-    dry "mkdir -p $BIN_DIR $LIBEXEC_DIR/lib $CONFIG_DIR $SYSTEMD_USER_DIR $MAN_DIR"
+    dry "install -d $BIN_DIR $LIBEXEC_DIR/lib $CONFIG_DIR $SYSTEMD_USER_DIR $MAN_DIR $LIBEXEC_DIR/web $LIBEXEC_DIR/web/static"
 else
-    mkdir -p "$BIN_DIR" "$LIBEXEC_DIR/lib" "$CONFIG_DIR" "$SYSTEMD_USER_DIR" "$MAN_DIR"
+    install -d "$BIN_DIR" "$LIBEXEC_DIR/lib" "$CONFIG_DIR" "$SYSTEMD_USER_DIR" "$MAN_DIR" \
+               "$LIBEXEC_DIR/web" "$LIBEXEC_DIR/web/static"
     say_ok "Directories ready"
 fi
 
 header "Installing components"
 
-# 1. Install Library
+# 1. Library
 src="$SCRIPT_DIR/libexec/lib/noba-lib.sh"
 dst="$LIBEXEC_DIR/lib/noba-lib.sh"
 if [[ -f "$src" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
-        dry "cp lib/noba-lib.sh → $LIBEXEC_DIR/lib/"
+        dry "install $src → $dst"
     else
-        cp "$src" "$dst"
-        chmod +x "$dst"
-        record_install "$dst"
+        install_file "$src" "$dst" 755
         say_ok "Library installed"
     fi
 else
@@ -360,7 +414,7 @@ else
     exit 1
 fi
 
-# 2. Install Automation Scripts
+# 2. Automation scripts
 for name in "${SUITE_SCRIPTS[@]}"; do
     src="$SCRIPT_DIR/libexec/$name"
     dst="$LIBEXEC_DIR/$name"
@@ -369,11 +423,9 @@ for name in "${SUITE_SCRIPTS[@]}"; do
         continue
     fi
     if [[ "$DRY_RUN" == true ]]; then
-        dry "cp libexec/$name → $LIBEXEC_DIR/"
+        dry "install $src → $dst"
     else
-        cp "$src" "$dst"
-        chmod +x "$dst"
-        record_install "$dst"
+        install_file "$src" "$dst" 755
         say_ok "$name"
     fi
 done
@@ -385,113 +437,101 @@ for name in "${OPTIONAL_SCRIPTS[@]}"; do
         continue
     fi
     if [[ "$DRY_RUN" == true ]]; then
-        dry "cp libexec/$name → $LIBEXEC_DIR/ (optional)"
+        dry "install $src → $dst (optional)"
     else
-        cp "$src" "$dst"
-        chmod +x "$dst"
-        record_install "$dst"
+        install_file "$src" "$dst" 755
         say_ok "$name (optional)"
     fi
 done
 
-# 3. Install CLI Wrapper
+# 3. CLI wrapper
 if [[ -f "$SCRIPT_DIR/bin/noba" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
-        dry "cp bin/noba → $BIN_DIR/"
+        dry "install $SCRIPT_DIR/bin/noba → $BIN_DIR/noba"
     else
-        cp "$SCRIPT_DIR/bin/noba" "$BIN_DIR/noba"
-        chmod +x "$BIN_DIR/noba"
-        record_install "$BIN_DIR/noba"
+        install_file "$SCRIPT_DIR/bin/noba" "$BIN_DIR/noba" 755
         say_ok "noba (CLI wrapper)"
     fi
 fi
 
-# 4. Install Web Dashboard (MODULAR FIX)
+# 4. Web dashboard
 header "Installing Web Dashboard"
-mkdir -p "$LIBEXEC_DIR/web/static"
 
-# Install backend and frontend
-for f in server.py index.html; do
+for f in server.py index.html manifest.json service-worker.js; do
     src="$SCRIPT_DIR/share/noba-web/$f"
     dst="$LIBEXEC_DIR/web/$f"
     if [[ -f "$src" ]]; then
         if [[ "$DRY_RUN" == true ]]; then
-            dry "cp share/noba-web/$f → $LIBEXEC_DIR/web/"
+            dry "install $src → $dst"
         else
-            cp "$src" "$dst"
             if [[ "$f" == "server.py" ]]; then
-                chmod +x "$dst"
+                install_file "$src" "$dst" 755
+            else
+                install_file "$src" "$dst" 644
             fi
-            record_install "$dst"
             say_ok "Web component: $f"
         fi
     fi
 done
 
-# Install static assets (CSS/JS)
-for f in style.css app.js; do
+for f in style.css app.js favicon.ico icon-192.png icon-512.png; do
     src="$SCRIPT_DIR/share/noba-web/static/$f"
     dst="$LIBEXEC_DIR/web/static/$f"
     if [[ -f "$src" ]]; then
         if [[ "$DRY_RUN" == true ]]; then
-            dry "cp share/noba-web/static/$f → $LIBEXEC_DIR/web/static/"
+            dry "install $src → $dst"
         else
-            cp "$src" "$dst"
-            record_install "$dst"
+            install_file "$src" "$dst" 644
             say_ok "Web static asset: $f"
         fi
     fi
 done
 
-# Install web functions
 src="$SCRIPT_DIR/lib/noba-web-functions.sh"
 dst="$LIBEXEC_DIR/lib/noba-web-functions.sh"
 if [[ -f "$src" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
-        dry "cp lib/noba-web-functions.sh → $LIBEXEC_DIR/lib/"
+        dry "install $src → $dst"
     else
-        cp "$src" "$dst"
-        record_install "$dst"
+        install_file "$src" "$dst" 644
         say_ok "noba-web-functions.sh"
     fi
 fi
 
-# Install standalone launcher
 src="$SCRIPT_DIR/bin/noba-web"
 dst="$BIN_DIR/noba-web"
 if [[ -f "$src" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
-        dry "cp bin/noba-web → $BIN_DIR/"
+        dry "install $src → $dst"
     else
-        cp "$src" "$dst"
-        chmod +x "$dst"
-        record_install "$dst"
+        install_file "$src" "$dst" 755
         say_ok "noba-web (standalone launcher)"
     fi
 fi
 
-# 5. Install Man Page
+# 5. Man page
 if [[ -f "$SCRIPT_DIR/docs/noba.1" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
-        dry "cp docs/noba.1 → $MAN_DIR/"
+        dry "install $SCRIPT_DIR/docs/noba.1 → $MAN_DIR/noba.1"
     else
-        cp "$SCRIPT_DIR/docs/noba.1" "$MAN_DIR/noba.1"
-        record_install "$MAN_DIR/noba.1"
+        install_file "$SCRIPT_DIR/docs/noba.1" "$MAN_DIR/noba.1" 644
         say_ok "noba.1 (man page)"
     fi
 fi
 
+# ── Configuration ──────────────────────────────────────────────────────────────
 header "Configuration"
 if [[ -f "$CONFIG_DIR/config.yaml" ]]; then
     say_ok "Config already exists — skipping generation."
 elif [[ "$DRY_RUN" == true ]]; then
     dry "Would create default config at $CONFIG_DIR/config.yaml"
 else
-    cat > "$CONFIG_DIR/config.yaml" <<YAML
-# Nobara Automation Suite — Configuration
+    mkdir -p "$CONFIG_DIR"
+    cat > "$CONFIG_DIR/config.yaml" <<EOF
+# Noba Automation Suite — Configuration
 # Edit this file to match your environment.
 
-email: "${USER_EMAIL}"
+email: "you@example.com"
 
 logs:
   dir: "$HOME/.local/share/noba"
@@ -519,11 +559,44 @@ disk:
 
 web:
   port: 8080
+  wanTestIp: "8.8.8.8"
+  lanTestIp: "192.168.100.111"
+  customActions:
+    - id: "reboot-dns"
+      name: "Reboot DNS Stack"
+      icon: "fa-sync-alt"
+      command: "ssh admin@192.168.100.111 sudo reboot"
+  automations:
+    - id: "test-hook"
+      name: "Test Webhook"
+      icon: "fa-bolt"
+      url: "http://localhost:8080/api/health"
 
 backup_verifier:
   num_files: 5
   checksum_cmd: "sha256sum"
-YAML
+
+# Notifications (optional)
+notifications:
+  # email:
+  #   enabled: false
+  #   smtp_server: "smtp.gmail.com:587"
+  #   username: "you@gmail.com"
+  #   password: "your-app-password"
+  #   from: "you@gmail.com"
+  #   to: "admin@example.com"
+  #   starttls: true
+  # telegram:
+  #   enabled: false
+  #   bot_token: "123456:ABC-DEF1234"
+  #   chat_id: "123456789"
+  # discord:
+  #   enabled: false
+  #   webhook_url: "https://discord.com/api/webhooks/..."
+  # slack:
+  #   enabled: false
+  #   webhook_url: "https://hooks.slack.com/services/..."
+EOF
     record_install "$CONFIG_DIR/config.yaml"
     say_ok "Default config written: $CONFIG_DIR/config.yaml"
     if [[ -z "$USER_EMAIL" ]]; then
@@ -531,9 +604,11 @@ YAML
     fi
 fi
 
+# ── Shell completions ─────────────────────────────────────────────────────────
 header "Shell completions"
 setup_completion
 
+# ── Systemd units ─────────────────────────────────────────────────────────────
 header "Systemd user units"
 if [[ -d "$SCRIPT_DIR/systemd" ]]; then
     shopt -s nullglob
@@ -541,10 +616,9 @@ if [[ -d "$SCRIPT_DIR/systemd" ]]; then
     for unit in "$SCRIPT_DIR"/systemd/*.timer "$SCRIPT_DIR"/systemd/*.service; do
         name=$(basename "$unit")
         if [[ "$DRY_RUN" == true ]]; then
-            dry "cp systemd/$name → $SYSTEMD_USER_DIR/"
+            dry "install $unit → $SYSTEMD_USER_DIR/$name"
         else
-            cp "$unit" "$SYSTEMD_USER_DIR/$name"
-            record_install "$SYSTEMD_USER_DIR/$name"
+            install_file "$unit" "$SYSTEMD_USER_DIR/$name" 644
             say_ok "$name"
         fi
         (( unit_count++ )) || true
@@ -560,6 +634,7 @@ fi
 
 reload_systemd
 
+# ── Finalise ──────────────────────────────────────────────────────────────────
 if [[ "$DRY_RUN" == false && ${#INSTALLED_FILES[@]} -gt 0 ]]; then
     write_manifest
     trap - EXIT

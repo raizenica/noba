@@ -1,0 +1,53 @@
+const CACHE_NAME = 'noba-v1';
+
+// Only strict local assets here to ensure install success
+const localUrlsToCache = [
+    '/',
+    '/index.html',
+    '/static/style.css',
+    '/static/app.js',
+    '/static/favicon.ico',
+    '/manifest.json'
+];
+
+self.addEventListener('install', event => {
+    event.waitUntil(
+        caches.open(CACHE_NAME)
+            .then(cache => cache.addAll(localUrlsToCache))
+            .then(() => self.skipWaiting())
+    );
+});
+
+self.addEventListener('activate', event => {
+    event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('fetch', event => {
+    const url = new URL(event.request.url);
+
+    // CRITICAL: Completely bypass the SW for API calls and SSE streams
+    if (url.pathname.startsWith('/api/')) {
+        return;
+    }
+
+    // Bypass browser extensions
+    if (url.protocol === 'chrome-extension:') {
+        return;
+    }
+
+    event.respondWith(
+        caches.match(event.request).then(response => {
+            // Return cached version if found
+            if (response) return response;
+
+            // Otherwise fetch from network
+            return fetch(event.request).then(networkResponse => {
+                // Optionally cache external CDN requests dynamically here if desired,
+                // but for stability, simply returning the network response is safest.
+                return networkResponse;
+            }).catch(err => {
+                console.warn('Network fetch failed:', err);
+            });
+        })
+    );
+});

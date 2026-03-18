@@ -1,158 +1,298 @@
+/**
+ * dashboard() — Alpine.js component
+ *
+ * Improvements over original:
+ * [BUG]  SSE merge uses a safe allowlist instead of Object.assign(this, payload)
+ * [BUG]  _dismissedAlerts changed from Set → plain object so Alpine tracks it
+ * [BUG]  connectSSE() onerror clears previous _poll before creating a new one
+ * [BUG]  applySettings() awaits saveSettings() before showing "saved" toast
+ * [BUG]  fetchSettings() no longer calls saveSettings() (needless round-trip)
+ * [BUG]  loginPassword zeroed after successful login
+ * [BUG]  countdown timer stays at 0 instead of immediately resetting to interval
+ * [SEC]  Token centralised in _token() helper — one place to swap storage
+ * [SEC]  qbitPass storage flagged with a comment
+ * [QOL]  SETTINGS_KEYS array drives both fetchSettings and saveSettings
+ * [QOL]  init() parallel-fetches independent resources with Promise.all
+ * [QOL]  Toast IDs use a monotonic counter instead of Date.now()+random
+ * [QOL]  _buildQueryParams comment explains SSE-vs-REST auth difference
+ * [QOL]  initKeyboard listener stored so it can be removed if needed
+ * [QOL]  ResizeObserver disconnect available via _masonryObserver
+ * [QOL]  connectSSE() guarded against concurrent reconnect attempts
+ * [NEW]  History Modal state and fetch logic with Chart.js integration
+ * [NEW]  Audit Log fetch logic and admin-only state handling
+ */
+
 function dashboard() {
-    // ── 1. Defaults & State ──
+
+    // ── 0. Module-level constants ──────────────────────────────────────────────
+
+    /** All persisted settings keys (used by fetchSettings + saveSettings). */
+    const SETTINGS_KEYS = [
+        'piholeUrl', 'piholeToken', 'monitoredServices', 'radarIps',
+        'bookmarksStr', 'plexUrl', 'plexToken', 'kumaUrl', 'bmcMap',
+        'wanTestIp', 'lanTestIp',
+        'truenasUrl', 'truenasKey',
+        'radarrUrl',  'radarrKey',
+        'sonarrUrl',  'sonarrKey',
+        'qbitUrl',    'qbitUser',  'qbitPass',
+        'backupSources', 'backupDest', 'cloudRemote', 'downloadsDir',
+        'customActions', 'automations',
+    ];
+
+    /** Keys that live in localStorage as a local mirror (excludes complex objects
+     * that go to the server only).                                              */
+    const LS_SCALAR_KEYS = [
+        'piholeUrl', 'piholeToken', 'monitoredServices', 'radarIps',
+        'bookmarksStr', 'plexUrl', 'plexToken', 'kumaUrl', 'bmcMap',
+        'wanTestIp', 'lanTestIp',
+        'truenasUrl', 'truenasKey',
+        'radarrUrl',  'radarrKey',
+        'sonarrUrl',  'sonarrKey',
+        'qbitUrl',    'qbitUser',
+        // NOTE: qbitPass is intentionally written to localStorage below but
+        //       flagged here — consider moving to sessionStorage for better
+        //       security; it is included for parity with the original behaviour.
+        'qbitPass',
+    ];
+
+    /**
+     * Keys that the server is allowed to push via SSE / refreshStats.
+     * Prevents the server from overwriting internal state (_es, _poll, etc.).
+     */
+    const LIVE_DATA_KEYS = new Set([
+        'timestamp', 'uptime', 'loadavg', 'memory', 'hostname', 'defaultIp',
+        'memPercent', 'cpuPercent', 'cpuHistory', 'cpuTemp', 'gpuTemp',
+        'osName', 'kernel', 'hwCpu', 'hwGpu', 'netRx', 'netTx',
+        'battery', 'disks', 'services', 'zfs', 'radar', 'kuma', 'netHealth',
+        'topCpu', 'topMem', 'pihole', 'plex', 'containers', 'alerts',
+        'truenas', 'radarr', 'sonarr', 'qbit',
+    ]);
+
     const DEF_VIS = {
         core: true, netio: true, hw: true, battery: true, pihole: true,
         storage: true, radar: true, kuma: true, procs: true, containers: true,
         services: true, logs: true, actions: true, bookmarks: true, plex: true,
-        truenas: true, downloads: true, automations: true
+        truenas: true, downloads: true, automations: true,
     };
 
     const DEF_BOOKMARKS = 'Router|http://192.168.1.1|fa-network-wired, Pi-hole|http://pi.hole/admin|fa-shield-alt';
-    const savedTheme = localStorage.getItem('noba-theme');
-    const autoTheme  = savedTheme || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'nord' : 'default');
 
+    const savedTheme = localStorage.getItem('noba-theme');
+    const autoTheme  = savedTheme ||
+    (window.matchMedia('(prefers-color-scheme: light)').matches ? 'nord' : 'default');
+
+    // Monotonic counter for toast IDs (avoids Date.now()+random collisions).
+    let _toastSeq = 0;
+
+    // ── 1. Alpine component object ─────────────────────────────────────────────
     return {
-        // UI & Vis
+
+        // ── UI & Visibility ────────────────────────────────────────────────────
         theme: autoTheme,
         vis:   { ...DEF_VIS, ...JSON.parse(localStorage.getItem('noba-vis') || '{}') },
-        collapsed: JSON.parse(localStorage.getItem('noba-collapsed') || '{}'),
-        svcFilter: '',
+        collapsed:  JSON.parse(localStorage.getItem('noba-collapsed') || '{}'),
+        svcFilter:  '',
         settingsTab: 'visibility',
 
-        // Core Integrations
-        piholeUrl:         localStorage.getItem('noba-pihole')    || '',
-        piholeToken:       localStorage.getItem('noba-pihole-tok')|| '',
-        bookmarksStr:      localStorage.getItem('noba-bookmarks') || DEF_BOOKMARKS,
-        monitoredServices: localStorage.getItem('noba-services')  || 'sshd, docker, NetworkManager',
-        radarIps:          localStorage.getItem('noba-radar')     || '192.168.1.1, 1.1.1.1, 8.8.8.8',
-        plexUrl:           localStorage.getItem('noba-plex-url')  || '',
-        plexToken:         localStorage.getItem('noba-plex-tok')  || '',
-        kumaUrl:           localStorage.getItem('noba-kuma-url')  || '',
-        bmcMap:            localStorage.getItem('noba-bmc-map')   || '',
-        wanTestIp:         localStorage.getItem('noba-wan-ip')    || '8.8.8.8',
-        lanTestIp:         localStorage.getItem('noba-lan-ip')    || '',
+        // ── Core integration settings ──────────────────────────────────────────
+        piholeUrl:         localStorage.getItem('noba-pihole')       || '',
+        piholeToken:       localStorage.getItem('noba-pihole-tok')   || '',
+        bookmarksStr:      localStorage.getItem('noba-bookmarks')    || DEF_BOOKMARKS,
+        monitoredServices: localStorage.getItem('noba-services')     || 'sshd, docker, NetworkManager',
+        radarIps:          localStorage.getItem('noba-radar')        || '192.168.1.1, 1.1.1.1, 8.8.8.8',
+        plexUrl:           localStorage.getItem('noba-plex-url')     || '',
+        plexToken:         localStorage.getItem('noba-plex-tok')     || '',
+        kumaUrl:           localStorage.getItem('noba-kuma-url')     || '',
+        bmcMap:            localStorage.getItem('noba-bmc-map')      || '',
+        wanTestIp:         localStorage.getItem('noba-wan-ip')       || '8.8.8.8',
+        lanTestIp:         localStorage.getItem('noba-lan-ip')       || '',
 
-        // TrueNAS & Download Integrations
-        truenasUrl:        localStorage.getItem('noba-truenas-url') || '',
-        truenasKey:        localStorage.getItem('noba-truenas-key') || '',
-        radarrUrl:         localStorage.getItem('noba-radarr-url')  || '',
-        radarrKey:         localStorage.getItem('noba-radarr-key')  || '',
-        sonarrUrl:         localStorage.getItem('noba-sonarr-url')  || '',
-        sonarrKey:         localStorage.getItem('noba-sonarr-key')  || '',
-        qbitUrl:           localStorage.getItem('noba-qbit-url')    || '',
-        qbitUser:          localStorage.getItem('noba-qbit-user')   || '',
-        qbitPass:          localStorage.getItem('noba-qbit-pass')   || '',
+        // ── TrueNAS / Download integrations ───────────────────────────────────
+        truenasUrl: localStorage.getItem('noba-truenas-url') || '',
+        truenasKey: localStorage.getItem('noba-truenas-key') || '',
+        radarrUrl:  localStorage.getItem('noba-radarr-url')  || '',
+        radarrKey:  localStorage.getItem('noba-radarr-key')  || '',
+        sonarrUrl:  localStorage.getItem('noba-sonarr-url')  || '',
+        sonarrKey:  localStorage.getItem('noba-sonarr-key')  || '',
+        qbitUrl:    localStorage.getItem('noba-qbit-url')    || '',
+        qbitUser:   localStorage.getItem('noba-qbit-user')   || '',
+        qbitPass:   localStorage.getItem('noba-qbit-pass')   || '',
 
-        // Dynamic Features
-        customActions:     [],
-        automations:       [],
-
-        // Job Settings
+        // ── Dynamic / job settings ─────────────────────────────────────────────
+        customActions: [], automations: [],
         backupSources: [], backupDest: '', cloudRemote: '', downloadsDir: '',
         cloudRemotes: [], selectedCloudRemote: '', cloudRemotesLoading: false,
         rcloneAvailable: null, rcloneVersion: '', cloudTestResults: {},
 
-        // Live Data Objects
-        timestamp:'--:--', uptime:'--', loadavg:'--', memory:'--', hostname:'--', defaultIp:'--',
-        memPercent:0, cpuPercent:0, cpuHistory:[], cpuTemp:'N/A', gpuTemp:'N/A',
-        osName:'--', kernel:'--', hwCpu:'--', hwGpu:'--', netRx:'0 B/s', netTx:'0 B/s',
-        battery:{ percent:0, status:'Unknown', desktop:false },
-        disks:[], services:[], zfs:{pools:[]}, radar:[], kuma:[], netHealth: { wan: 'Down', lan: 'Down', configured: false },
-        topCpu:[], topMem:[], pihole:null, plex:null, containers:[], alerts:[],
-        truenas:null, radarr:null, sonarr:null, qbit:null,
+        // ── Live data ──────────────────────────────────────────────────────────
+        timestamp: '--:--', uptime: '--', loadavg: '--', memory: '--',
+        hostname: '--', defaultIp: '--',
+        memPercent: 0, cpuPercent: 0, cpuHistory: [], cpuTemp: 'N/A', gpuTemp: 'N/A',
+        osName: '--', kernel: '--', hwCpu: '--', hwGpu: '--',
+        netRx: '0 B/s', netTx: '0 B/s',
+        battery: { percent: 0, status: 'Unknown', desktop: false },
+        disks: [], services: [], zfs: { pools: [] }, radar: [], kuma: [],
+        netHealth: { wan: 'Down', lan: 'Down', configured: false },
+        topCpu: [], topMem: [], pihole: null, plex: null, containers: [],
+        alerts: [], truenas: null, radarr: null, sonarr: null, qbit: null,
 
-        // App States
-        selectedLog:'syserr', logContent:'Loading...', logLoading:false,
-        showModal:false, showSettings:false,
-        modalTitle:'', modalOutput:'', runningScript:false, refreshing:false,
-        toasts:[], _es:null, _poll:null, _lastHeartbeat: 0,
+        // ── App state ──────────────────────────────────────────────────────────
+        selectedLog: 'syserr', logContent: 'Loading...', logLoading: false,
+        showModal: false, showSettings: false,
+        modalTitle: '', modalOutput: '', runningScript: false, refreshing: false,
+        toasts: [],
+        notifTesting: false,
 
-        // Auth
+        // History and Audit State
+        showHistoryModal: false,
+        historyMetric: '',
+        historyData: [],
+        historyRange: 24,
+        historyResolution: 60,
+        historyChart: null,
+        showAuditModal: false,
+        auditLog: [],
+
+        // Internal — never overwritten by server payloads
+        _es: null, _poll: null, _lastHeartbeat: 0,
+        _countdownTimer: null, _reconnecting: false,
+        _masonryObserver: null, _keydownHandler: null,
+
+        // ── Auth ───────────────────────────────────────────────────────────────
         authenticated: !!localStorage.getItem('noba-token'),
         loginUsername: '', loginPassword: '', loginLoading: false, loginError: '',
-        connStatus: 'offline', countdown: 5, _countdownTimer: null,
-        _dismissedAlerts: new Set(),
+        connStatus: 'offline', countdown: 5,
 
-        // Admin
+        // FIXED: plain object instead of Set so Alpine reactivity works correctly
+        _dismissedAlerts: {},
+
+        // ── Admin ──────────────────────────────────────────────────────────────
         userRole: 'viewer', username: '', userList: [], usersLoading: false,
         showAddUserForm: false, newUsername: '', newPassword: '', newRole: 'viewer',
         showPassModal: false, passModalUser: '', passModalValue: '',
         showRemoveModal: false, removeModalUser: '',
 
-        // ── 2. Computed Properties ──
-        get cpuTempClass() { const t=parseInt(this.cpuTemp)||0; return t>80?'bd':t>65?'bw':'bn'; },
-        get gpuTempClass() { const t=parseInt(this.gpuTemp)||0; return t>85?'bd':t>70?'bw':'bn'; },
-        get visibleAlerts() { return (this.alerts||[]).filter(a => !this._dismissedAlerts.has(a.msg)); },
-        get livePillText() {
-            let state = '';
-            if (this.refreshing) state = 'Syncing…';
-            else if (this.connStatus === 'sse') state = 'Live';
-            else if (this.connStatus === 'polling') state = this.countdown + 's';
-            else state = 'Offline';
-            return (this.timestamp && this.timestamp !== '--:--') ? `${state} • ${this.timestamp}` : state;
+
+        // ── 2. Computed Properties ─────────────────────────────────────────────
+
+        get cpuTempClass() {
+            const t = parseInt(this.cpuTemp) || 0;
+            return t > 80 ? 'bd' : t > 65 ? 'bw' : 'bn';
         },
+        get gpuTempClass() {
+            const t = parseInt(this.gpuTemp) || 0;
+            return t > 85 ? 'bd' : t > 70 ? 'bw' : 'bn';
+        },
+
+        get visibleAlerts() {
+            return (this.alerts || []).filter(a => !this._dismissedAlerts[a.msg]);
+        },
+
+        get livePillText() {
+            let state;
+            if      (this.refreshing)             state = 'Syncing…';
+            else if (this.connStatus === 'sse')   state = 'Live';
+            else if (this.connStatus === 'polling') state = this.countdown + 's';
+            else                                  state = 'Offline';
+            return (this.timestamp && this.timestamp !== '--:--')
+            ? `${state} • ${this.timestamp}`
+            : state;
+        },
+
         get parsedBookmarks() {
-            return (this.bookmarksStr||'').split(',').filter(b=>b.trim()).map(b => {
+            return (this.bookmarksStr || '').split(',').filter(b => b.trim()).map(b => {
                 const p = b.split('|');
-                return { name:(p[0]||'Link').trim(), url:(p[1]||'#').trim(), icon:(p[2]||'fa-link').trim() };
+                return {
+                    name: (p[0] || 'Link').trim(),
+                                                                                  url:  (p[1] || '#').trim(),
+                                                                                  icon: (p[2] || 'fa-link').trim(),
+                };
             });
         },
+
         get cpuLine() {
             const h = this.cpuHistory;
             if (h.length < 2) return '0,36 120,36';
-            return h.map((v,i) => `${Math.round((i/(h.length-1))*120)},${Math.round(36-(v/100)*32)}`).join(' ');
+            return h.map((v, i) =>
+            `${Math.round((i / (h.length - 1)) * 120)},${Math.round(36 - (v / 100) * 32)}`
+            ).join(' ');
         },
+
         get cpuFill() {
             const h = this.cpuHistory;
             if (h.length < 2) return '0,38 120,38 120,38 0,38';
-            const pts = h.map((v,i) => `${Math.round((i/(h.length-1))*120)},${Math.round(36-(v/100)*32)}`).join(' ');
+            const pts = h.map((v, i) =>
+            `${Math.round((i / (h.length - 1)) * 120)},${Math.round(36 - (v / 100) * 32)}`
+            ).join(' ');
             return `${pts} 120,38 0,38`;
         },
+
         get filteredServices() {
             if (!this.svcFilter) return this.services || [];
             const q = this.svcFilter.toLowerCase();
             return (this.services || []).filter(s => s.name.toLowerCase().includes(q));
         },
 
-        // ── 3. Lifecycle ──
+
+        // ── 3. Lifecycle ───────────────────────────────────────────────────────
+
         async init() {
-            try { this.initSortable(); } catch (e) { console.warn("Sortable init skipped", e); }
-            try { this.initKeyboard(); } catch (e) { console.warn("Keyboard init skipped", e); }
-            try { this.initMasonry(); } catch (e) { console.warn("Masonry init skipped", e); }
+            try { this.initSortable();  } catch (e) { console.warn('Sortable init skipped', e); }
+            try { this.initKeyboard();  } catch (e) { console.warn('Keyboard init skipped', e); }
+            try { this.initMasonry();   } catch (e) { console.warn('Masonry init skipped', e); }
 
-            if (this.authenticated) {
-                await this.fetchUserInfo();
-                await this.fetchSettings();
-                await this.fetchCloudRemotes();
-                await this.fetchLog();
-                if (this.userRole === 'admin') await this.fetchUsers();
+            if (!this.authenticated) return;
 
-                this.connectSSE();
+            // Validate the stored token first. fetchUserInfo() sets authenticated=false
+            // on 401, so we bail before firing any other requests with a dead token.
+            await this.fetchUserInfo();
+            if (!this.authenticated) return;
 
-                setInterval(() => { if (this.vis.logs && this.showSettings === false) this.fetchLog(); }, 12000);
-                setInterval(() => { this.fetchCloudRemotes(); }, 300000);
+            // Token confirmed good — fetch remaining data in parallel
+            await Promise.all([
+                this.fetchSettings(),
+                              this.fetchCloudRemotes(),
+                              this.fetchLog(),
+            ]);
+
+            if (this.userRole === 'admin') await this.fetchUsers();
+
+            this.connectSSE();
+
+            setInterval(() => {
+                if (this.vis.logs && !this.showSettings) this.fetchLog();
+            }, 12000);
+
                 setInterval(() => {
-                    if (this.connStatus === 'sse' && this._lastHeartbeat) {
-                        if (Date.now() - this._lastHeartbeat > 15000) this.connectSSE();
-                    }
+                    this.fetchCloudRemotes();
+                }, 300_000);
+
+                // Heartbeat watchdog — reconnects SSE if server goes silent for >15 s
+                setInterval(() => {
+                    if (this.connStatus === 'sse' && this._lastHeartbeat &&
+                        Date.now() - this._lastHeartbeat > 15_000 &&
+                        !this._reconnecting) {
+                        this.connectSSE();
+                        }
                 }, 5000);
-            }
         },
 
-        // ── 4. Layout & UI Logic ──
+
+        // ── 4. Layout & UI Logic ───────────────────────────────────────────────
+
         initMasonry() {
-            const observer = new ResizeObserver(entries => {
-                for (let entry of entries) {
+            // Store observer reference so cards can be unobserved when hidden
+            this._masonryObserver = new ResizeObserver(entries => {
+                for (const entry of entries) {
                     const card = entry.target;
                     if (card.style.display === 'none') continue;
-                    const height = card.getBoundingClientRect().height;
-                    const rowSpan = Math.ceil((height + 18) / 10);
+                    const height   = card.getBoundingClientRect().height;
+                    const rowSpan  = Math.ceil((height + 18) / 10);
                     card.style.gridRowEnd = `span ${rowSpan}`;
                 }
             });
             this.$nextTick(() => {
-                const cards = document.querySelectorAll('.card');
-                if (cards.length) cards.forEach(c => observer.observe(c));
+                document.querySelectorAll('.card').forEach(c => this._masonryObserver.observe(c));
             });
         },
 
@@ -162,26 +302,38 @@ function dashboard() {
             if (!grid) return;
 
             Sortable.create(grid, {
-                animation: 200, handle: '.card-hdr', ghostClass: 'sortable-ghost',
-                dragClass: 'sortable-drag', forceFallback: true, fallbackOnBody: true,
-                group: 'noba-v9',
-                store: {
-                    get: s => (localStorage.getItem(s.options.group.name)||'').split('|'),
-                            set: s => localStorage.setItem(s.options.group.name, s.toArray().join('|'))
-                }
+                animation: 200,
+                handle: '.card-hdr',
+                ghostClass: 'sortable-ghost',
+                dragClass: 'sortable-drag',
+                forceFallback: true,
+                    fallbackOnBody: true,
+                    group: 'noba-v9',
+                    store: {
+                        get: s => (localStorage.getItem(s.options.group.name) || '').split('|'),
+                            set: s => localStorage.setItem(s.options.group.name, s.toArray().join('|')),
+                    },
             });
         },
 
         initKeyboard() {
-            document.addEventListener('keydown', (e) => {
+            // Store handler reference so it can be removed on destroy if needed
+            this._keydownHandler = (e) => {
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-                if (e.key === 's' && !this.showSettings && !this.showModal) this.showSettings = true;
-                else if (e.key === 'r' && !this.showSettings && !this.showModal && this.authenticated) this.refreshStats();
-                else if (e.key === 'Escape') {
-                    this.showSettings = false; this.showModal = false;
-                    this.showPassModal = false; this.showRemoveModal = false;
+                if (e.key === 's' && !this.showSettings && !this.showModal) {
+                    this.showSettings = true;
+                } else if (e.key === 'r' && !this.showSettings && !this.showModal && this.authenticated) {
+                    this.refreshStats();
+                } else if (e.key === 'Escape') {
+                    this.showSettings  = false;
+                    this.showModal     = false;
+                    this.showPassModal = false;
+                    this.showRemoveModal = false;
+                    this.showHistoryModal = false;
+                    this.showAuditModal = false;
                 }
-            });
+            };
+            document.addEventListener('keydown', this._keydownHandler);
         },
 
         toggleCollapse(card) {
@@ -192,21 +344,20 @@ function dashboard() {
         copyVal(val, e) {
             if (!val || val === '--') return;
             navigator.clipboard.writeText(val).catch(() => {});
-            if (e && e.target) {
-                const el = e.target;
+            const el = e?.target;
+            if (el) {
                 el.classList.add('copied');
                 setTimeout(() => el.classList.remove('copied'), 1000);
             }
         },
 
         dismissAlert(msg) {
-            this._dismissedAlerts.add(msg);
-            this._dismissedAlerts = new Set(this._dismissedAlerts);
+            this._dismissedAlerts = { ...this._dismissedAlerts, [msg]: true };
         },
 
-        addToast(msg, type='info') {
-            const id = Date.now() + Math.random();
-            this.toasts.push({id, msg, type});
+        addToast(msg, type = 'info') {
+            const id = ++_toastSeq;
+            this.toasts.push({ id, msg, type });
             setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 3500);
         },
 
@@ -226,13 +377,22 @@ function dashboard() {
             return v.toFixed(1) + ' ' + units[i];
         },
 
-        // ── 5. Server Communication ──
-        _startCountdown(interval=5) {
+
+        // ── 5. Server Communication ────────────────────────────────────────────
+
+        _token() {
+            return localStorage.getItem('noba-token') || '';
+        },
+
+        _startCountdown(interval = 5) {
             clearInterval(this._countdownTimer);
             this.countdown = interval;
             this._countdownTimer = setInterval(() => {
-                this.countdown = Math.max(0, this.countdown - 1);
-                if (this.countdown === 0) this.countdown = interval;
+                if (this.countdown > 0) {
+                    this.countdown--;
+                } else {
+                    this.countdown = interval;
+                }
             }, 1000);
         },
 
@@ -249,14 +409,24 @@ function dashboard() {
                 plexUrl:  this.plexUrl,
                 kumaUrl:  this.kumaUrl,
                 bmcMap:   this.bmcMap,
+                token:    this._token(),
             });
-            const token = localStorage.getItem('noba-token');
-            if (token) params.append('token', token);
             return params.toString();
+        },
+
+        _mergeLiveData(payload) {
+            for (const key of LIVE_DATA_KEYS) {
+                if (Object.prototype.hasOwnProperty.call(payload, key)) {
+                    this[key] = payload[key];
+                }
+            }
         },
 
         connectSSE() {
             if (!this.authenticated) return;
+            if (this._reconnecting) return;
+            this._reconnecting = true;
+
             if (this._es) { this._es.close(); this._es = null; }
             if (this._poll) { clearInterval(this._poll); this._poll = null; }
 
@@ -265,25 +435,32 @@ function dashboard() {
             this._es = new EventSource(`/api/stream?${this._buildQueryParams()}`);
 
             this._es.onopen = () => {
-                this.connStatus = 'sse';
-                this._stopCountdown();
+                this.connStatus     = 'sse';
+                this._reconnecting  = false;
                 this._lastHeartbeat = Date.now();
+                this._stopCountdown();
             };
 
             this._es.onmessage = (e) => {
                 try {
-                    Object.assign(this, JSON.parse(e.data));
+                    this._mergeLiveData(JSON.parse(e.data));
                     this._lastHeartbeat = Date.now();
-                } catch {}
+                } catch { /* malformed frame — ignore */ }
             };
 
             this._es.onerror = () => {
-                this._es.close(); this._es = null;
+                this._reconnecting = false;
+                this._es.close();
+                this._es = null;
                 this.connStatus = 'polling';
                 this._startCountdown(5);
+
                 setTimeout(() => {
                     this.refreshStats();
-                    this._poll = setInterval(() => { this.refreshStats(); this._startCountdown(5); }, 5000);
+                    this._poll = setInterval(() => {
+                        this.refreshStats();
+                        this._startCountdown(5);
+                    }, 5000);
                 }, 3000);
             };
         },
@@ -293,13 +470,14 @@ function dashboard() {
             this.refreshing = true;
             try {
                 const res = await fetch(`/api/stats?${this._buildQueryParams()}`, {
-                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') }
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
                 });
                 if (res.ok) {
-                    Object.assign(this, await res.json());
+                    this._mergeLiveData(await res.json());
                     if (this.connStatus === 'offline') this.connStatus = 'polling';
                 } else if (res.status === 401) {
-                    this.authenticated = false; this.connStatus = 'offline';
+                    this.authenticated = false;
+                    this.connStatus    = 'offline';
                 } else {
                     this.connStatus = 'offline';
                 }
@@ -311,129 +489,129 @@ function dashboard() {
         },
 
         async fetchSettings() {
-            const token = localStorage.getItem('noba-token');
             try {
-                const res = await fetch('/api/settings', { headers: { 'Authorization': 'Bearer ' + token } });
-                if (res.ok) {
-                    const s = await res.json();
-                    if (s.piholeUrl != null) this.piholeUrl = s.piholeUrl;
-                    if (s.piholeToken != null) this.piholeToken = s.piholeToken;
-                    if (s.monitoredServices != null) this.monitoredServices = s.monitoredServices;
-                    if (s.radarIps != null) this.radarIps = s.radarIps;
-                    if (s.bookmarksStr != null) this.bookmarksStr = s.bookmarksStr;
-                    if (s.plexUrl != null) this.plexUrl = s.plexUrl;
-                    if (s.plexToken != null) this.plexToken = s.plexToken;
-                    if (s.kumaUrl != null) this.kumaUrl = s.kumaUrl;
-                    if (s.bmcMap != null) this.bmcMap = s.bmcMap;
-                    if (s.wanTestIp != null) this.wanTestIp = s.wanTestIp;
-                    if (s.lanTestIp != null) this.lanTestIp = s.lanTestIp;
+                const res = await fetch('/api/settings', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.status === 401) return;
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const s = await res.json();
 
-                    if (s.truenasUrl != null) this.truenasUrl = s.truenasUrl;
-                    if (s.truenasKey != null) this.truenasKey = s.truenasKey;
-                    if (s.radarrUrl != null) this.radarrUrl = s.radarrUrl;
-                    if (s.radarrKey != null) this.radarrKey = s.radarrKey;
-                    if (s.sonarrUrl != null) this.sonarrUrl = s.sonarrUrl;
-                    if (s.sonarrKey != null) this.sonarrKey = s.sonarrKey;
-                    if (s.qbitUrl != null) this.qbitUrl = s.qbitUrl;
-                    if (s.qbitUser != null) this.qbitUser = s.qbitUser;
-                    if (s.qbitPass != null) this.qbitPass = s.qbitPass;
-
-                    if (s.backupSources != null) this.backupSources = s.backupSources;
-                    if (s.backupDest != null) this.backupDest = s.backupDest;
-                    if (s.cloudRemote != null) this.cloudRemote = s.cloudRemote;
-                    if (s.downloadsDir != null) this.downloadsDir = s.downloadsDir;
-
-                    if (s.customActions != null) this.customActions = s.customActions;
-                    if (s.automations != null) this.automations = s.automations;
-
-                    this.saveSettings();
+                for (const key of SETTINGS_KEYS) {
+                    if (s[key] != null) this[key] = s[key];
                 }
-            } catch (e) {}
+            } catch (e) {
+                this.addToast('Failed to load settings: ' + e.message, 'error');
+            }
         },
 
         async fetchCloudRemotes() {
             if (!this.authenticated) return;
             this.cloudRemotesLoading = true;
             try {
-                const res = await fetch('/api/cloud-remotes', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') } });
-                if (res.ok) {
-                    const d = await res.json();
-                    this.rcloneAvailable = d.available ?? true;
-                    this.rcloneVersion   = d.version  ?? '';
-                    this.cloudRemotes    = d.remotes  ?? (Array.isArray(d) ? d : []);
-                    if (this.cloudRemotes.length > 0 && !this.selectedCloudRemote) {
-                        const match = this.cloudRemotes.find(r => r.name === this.cloudRemote);
-                        this.selectedCloudRemote = match ? match.name : this.cloudRemotes[0].name;
-                    }
+                const res = await fetch('/api/cloud-remotes', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.status === 401) return;
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const d = await res.json();
+                this.rcloneAvailable = d.available ?? true;
+                this.rcloneVersion   = d.version   ?? '';
+                this.cloudRemotes    = d.remotes    ?? (Array.isArray(d) ? d : []);
+                if (this.cloudRemotes.length && !this.selectedCloudRemote) {
+                    const match = this.cloudRemotes.find(r => r.name === this.cloudRemote);
+                    this.selectedCloudRemote = match ? match.name : this.cloudRemotes[0].name;
                 }
-            } catch (e) {} finally { this.cloudRemotesLoading = false; }
-        },
-
-        async saveSettings() {
-            localStorage.setItem('noba-theme', this.theme);
-            localStorage.setItem('noba-pihole', this.piholeUrl);
-            localStorage.setItem('noba-pihole-tok', this.piholeToken);
-            localStorage.setItem('noba-bookmarks', this.bookmarksStr);
-            localStorage.setItem('noba-services', this.monitoredServices);
-            localStorage.setItem('noba-radar', this.radarIps);
-            localStorage.setItem('noba-plex-url', this.plexUrl);
-            localStorage.setItem('noba-plex-tok', this.plexToken);
-            localStorage.setItem('noba-kuma-url', this.kumaUrl);
-            localStorage.setItem('noba-bmc-map', this.bmcMap);
-            localStorage.setItem('noba-wan-ip', this.wanTestIp);
-            localStorage.setItem('noba-lan-ip', this.lanTestIp);
-
-            localStorage.setItem('noba-truenas-url', this.truenasUrl);
-            localStorage.setItem('noba-truenas-key', this.truenasKey);
-            localStorage.setItem('noba-radarr-url', this.radarrUrl);
-            localStorage.setItem('noba-radarr-key', this.radarrKey);
-            localStorage.setItem('noba-sonarr-url', this.sonarrUrl);
-            localStorage.setItem('noba-sonarr-key', this.sonarrKey);
-            localStorage.setItem('noba-qbit-url', this.qbitUrl);
-            localStorage.setItem('noba-qbit-user', this.qbitUser);
-            localStorage.setItem('noba-qbit-pass', this.qbitPass);
-            localStorage.setItem('noba-vis', JSON.stringify(this.vis));
-            localStorage.setItem('noba-collapsed', JSON.stringify(this.collapsed));
-
-            if (this.authenticated) {
-                try {
-                    await fetch('/api/settings', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') },
-                                body: JSON.stringify({
-                                    piholeUrl: this.piholeUrl, piholeToken: this.piholeToken,
-                                    monitoredServices: this.monitoredServices, radarIps: this.radarIps,
-                                    bookmarksStr: this.bookmarksStr, plexUrl: this.plexUrl,
-                                    plexToken: this.plexToken, kumaUrl: this.kumaUrl, bmcMap: this.bmcMap,
-                                    wanTestIp: this.wanTestIp, lanTestIp: this.lanTestIp,
-                                    truenasUrl: this.truenasUrl, truenasKey: this.truenasKey,
-                                    radarrUrl: this.radarrUrl, radarrKey: this.radarrKey,
-                                    sonarrUrl: this.sonarrUrl, sonarrKey: this.sonarrKey,
-                                    qbitUrl: this.qbitUrl, qbitUser: this.qbitUser, qbitPass: this.qbitPass
-                                })
-                    });
-                } catch (e) {}
+            } catch (e) {
+                this.addToast('Failed to fetch cloud remotes: ' + e.message, 'error');
+            } finally {
+                this.cloudRemotesLoading = false;
             }
         },
 
-        applySettings() {
-            this.saveSettings();
-            this.showSettings = false;
-            if (this.authenticated) this.connectSSE();
-            this.addToast('Settings saved', 'success');
+        async saveSettings() {
+            for (const key of LS_SCALAR_KEYS) {
+                localStorage.setItem(`noba-${key.replace(/([A-Z])/g, c => '-' + c.toLowerCase())}`, this[key] ?? '');
+            }
+            localStorage.setItem('noba-theme',     this.theme);
+            localStorage.setItem('noba-vis',        JSON.stringify(this.vis));
+            localStorage.setItem('noba-collapsed',  JSON.stringify(this.collapsed));
+
+            if (!this.authenticated) return;
+
+            const body = {};
+            for (const key of SETTINGS_KEYS) body[key] = this[key];
+
+            try {
+                const res = await fetch('/api/settings', {
+                    method:  'POST',
+                    headers: {
+                        'Content-Type':  'application/json',
+                        'Authorization': 'Bearer ' + this._token(),
+                    },
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            } catch (e) {
+                this.addToast('Failed to save settings: ' + e.message, 'error');
+                throw e;
+            }
         },
 
-        // ── 6. Actions & Controls ──
+        async applySettings() {
+            try {
+                await this.saveSettings();
+                this.showSettings = false;
+                if (this.authenticated) this.connectSSE();
+                this.addToast('Settings saved', 'success');
+            } catch {
+                // error toast already shown inside saveSettings()
+            }
+        },
+
+        async testNotifications() {
+            if (!this.authenticated || this.userRole !== 'admin') return;
+            this.notifTesting = true;
+            try {
+                const res  = await fetch('/api/notifications/test', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                const data = await res.json();
+                this.addToast(res.ok ? 'Test notification sent' : (data.error || 'Test failed'),
+                              res.ok ? 'success' : 'error');
+            } catch {
+                this.addToast('Network error', 'error');
+            } finally {
+                this.notifTesting = false;
+            }
+        },
+
+
+        // ── 6. Actions & Controls ──────────────────────────────────────────────
+
         async fetchLog() {
             if (!this.authenticated) return;
             this.logLoading = true;
             try {
-                const res = await fetch('/api/log-viewer?type=' + this.selectedLog, { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') } });
+                const res = await fetch('/api/log-viewer?type=' + this.selectedLog, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
                 if (res.ok) {
                     this.logContent = await res.text();
-                    this.$nextTick(() => { const el = document.querySelector('.log-pre'); if (el) el.scrollTop = el.scrollHeight; });
-                } else if (res.status === 401) this.authenticated = false;
-            } catch { this.logContent = 'Failed to fetch log.'; } finally { this.logLoading = false; }
+                    this.$nextTick(() => {
+                        const el = document.querySelector('.log-pre');
+                        if (el) el.scrollTop = el.scrollHeight;
+                    });
+                } else if (res.status === 401) {
+                    this.authenticated = false;
+                } else {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+            } catch (e) {
+                this.logContent = 'Failed to fetch log: ' + e.message;
+            } finally {
+                this.logLoading = false;
+            }
         },
 
         async svcAction(svc, action) {
@@ -441,151 +619,227 @@ function dashboard() {
             try {
                 const res = await fetch('/api/service-control', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') },
-                                        body: JSON.stringify({ service: svc.name, action, is_user: svc.is_user })
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                                        body: JSON.stringify({ service: svc.name, action, is_user: svc.is_user }),
                 });
                 const d = await res.json();
-                this.addToast(d.success ? `${action}: ${svc.name.replace('.service','')}` : `Failed: ${svc.name}`, d.success ? 'success' : 'error');
+                const label = svc.name.replace('.service', '');
+                this.addToast(
+                    d.success ? `${action}: ${label}` : `Failed: ${label}`,
+                    d.success ? 'success' : 'error'
+                );
                 setTimeout(() => this.refreshStats(), 1200);
-            } catch { this.addToast('Service control error', 'error'); }
+            } catch {
+                this.addToast('Service control error', 'error');
+            }
         },
 
-        // NEW: TrueNAS VM Control Wrapper
         async vmAction(vmId, vmName, action) {
             if (!this.authenticated) return;
             this.addToast(`Triggering ${action} on ${vmName}...`, 'info');
             try {
                 const res = await fetch('/api/truenas/vm', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') },
-                                        body: JSON.stringify({ id: vmId, action: action })
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                                        body: JSON.stringify({ id: vmId, action }),
                 });
                 const d = await res.json();
-                this.addToast(d.success ? `VM ${vmName}: ${action} successful` : `VM ${vmName}: ${action} failed`, d.success ? 'success' : 'error');
+                this.addToast(
+                    d.success ? `VM ${vmName}: ${action} successful` : `VM ${vmName}: ${action} failed`,
+                    d.success ? 'success' : 'error'
+                );
                 setTimeout(() => this.refreshStats(), 1500);
-            } catch { this.addToast('VM control error', 'error'); }
+            } catch {
+                this.addToast('VM control error', 'error');
+            }
         },
 
-        // NEW: Webhook Automation Wrapper
         async triggerWebhook(actId, actName) {
             if (!this.authenticated) return;
             this.addToast(`Firing Webhook: ${actName}...`, 'info');
             try {
                 const res = await fetch('/api/webhook', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') },
-                                        body: JSON.stringify({ id: actId })
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                                        body: JSON.stringify({ id: actId }),
                 });
                 const d = await res.json();
-                this.addToast(d.success ? `Webhook successful` : `Webhook failed`, d.success ? 'success' : 'error');
-            } catch { this.addToast('Webhook error', 'error'); }
+                this.addToast(d.success ? 'Webhook successful' : 'Webhook failed',
+                              d.success ? 'success' : 'error');
+            } catch {
+                this.addToast('Webhook error', 'error');
+            }
         },
 
         async runScript(script, argStr = '') {
             if (!this.authenticated || this.runningScript) return;
             this.runningScript = true;
-            this.modalTitle  = `Running: ${script}`;
-            this.modalOutput = `>> [${new Date().toLocaleTimeString()}] Starting action...\n`;
-            this.showModal   = true;
+            this.modalTitle    = `Running: ${script}`;
+            this.modalOutput   = `>> [${new Date().toLocaleTimeString()}] Starting action...\n`;
+            this.showModal     = true;
 
-            const token = localStorage.getItem('noba-token');
+            const token = this._token();
+
             const poll = setInterval(async () => {
                 try {
                     const r = await fetch('/api/action-log', { headers: { 'Authorization': 'Bearer ' + token } });
-                    if (r.ok) { this.modalOutput = await r.text(); const el = document.getElementById('console-out'); if (el) el.scrollTop = el.scrollHeight; }
-                } catch {}
+                    if (r.ok) {
+                        this.modalOutput = await r.text();
+                        const el = document.getElementById('console-out');
+                        if (el) el.scrollTop = el.scrollHeight;
+                    }
+                } catch { /* non-fatal */ }
             }, 800);
 
             try {
                 const res = await fetch('/api/run', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                    body: JSON.stringify({ script, args: argStr })
+                    body: JSON.stringify({ script, args: argStr }),
                 });
                 const result = await res.json();
                 this.modalTitle = result.success ? '✓ Completed' : '✗ Failed';
-            } catch { this.modalTitle = '✗ Connection Error'; } finally {
+                this.addToast(`${script} ${result.success ? 'completed' : 'failed'}`,
+                              result.success ? 'success' : 'error');
+            } catch {
+                this.modalTitle = '✗ Connection Error';
+                this.addToast('Connection error', 'error');
+            } finally {
                 clearInterval(poll);
                 try {
                     const r = await fetch('/api/action-log', { headers: { 'Authorization': 'Bearer ' + token } });
-                    if (r.ok) { this.modalOutput = await r.text(); const el = document.getElementById('console-out'); if (el) el.scrollTop = el.scrollHeight; }
-                } catch {}
-                this.runningScript = false; await this.refreshStats();
+                    if (r.ok) {
+                        this.modalOutput = await r.text();
+                        const el = document.getElementById('console-out');
+                        if (el) el.scrollTop = el.scrollHeight;
+                    }
+                } catch { /* non-fatal */ }
+                this.runningScript = false;
+                await this.refreshStats();
             }
         },
 
-        // ── 7. Auth & Users ──
+
+        // ── 7. Auth & Users ────────────────────────────────────────────────────
+
         async fetchUserInfo() {
-            const token = localStorage.getItem('noba-token');
             try {
-                const res = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } });
-                if (res.ok) {
-                    const data = await res.json();
-                    this.username = data.username;
-                    this.userRole = data.role;
+                const res  = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + this._token() } });
+                if (res.status === 401) {
+                    localStorage.removeItem('noba-token');
+                    this.authenticated = false;
+                    this.connStatus    = 'offline';
+                    return;
                 }
-            } catch (e) {}
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                this.username = data.username;
+                this.userRole = data.role;
+            } catch (e) {
+                this.addToast('Failed to fetch user info: ' + e.message, 'error');
+            }
         },
 
         async doLogin() {
-            this.loginLoading = true; this.loginError = '';
+            this.loginLoading = true;
+            this.loginError   = '';
             try {
-                const res = await fetch('/api/login', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username: this.loginUsername, password: this.loginPassword })
+                const res  = await fetch('/api/login', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ username: this.loginUsername, password: this.loginPassword }),
                 });
                 const data = await res.json();
                 if (res.ok && data.token) {
                     localStorage.setItem('noba-token', data.token);
                     this.authenticated = true;
-                    await this.fetchUserInfo();
-                    await this.fetchSettings();
-                    await this.fetchCloudRemotes();
+                    this.loginPassword = '';
+
+                    await Promise.all([
+                        this.fetchUserInfo(),
+                                      this.fetchSettings(),
+                                      this.fetchCloudRemotes(),
+                                      this.fetchLog(),
+                    ]);
                     if (this.userRole === 'admin') await this.fetchUsers();
                     this.connectSSE();
-                    await this.fetchLog();
-                } else { this.loginError = data.error || 'Login failed'; }
-            } catch { this.loginError = 'Network error'; } finally { this.loginLoading = false; }
+                } else {
+                    this.loginError = data.error || 'Login failed';
+                }
+            } catch {
+                this.loginError = 'Network error';
+            } finally {
+                this.loginLoading = false;
+            }
         },
 
         async logout() {
-            const token = localStorage.getItem('noba-token');
-            if (token) { try { await fetch('/api/logout?token=' + encodeURIComponent(token), { method: 'POST' }); } catch {} }
+            const token = this._token();
+            if (token) {
+                try {
+                    await fetch('/api/logout?token=' + encodeURIComponent(token), { method: 'POST' });
+                } catch { /* best-effort */ }
+            }
             localStorage.removeItem('noba-token');
-            this.authenticated = false; this.connStatus = 'offline';
+            this.authenticated = false;
+            this.connStatus    = 'offline';
             this._stopCountdown();
-            if (this._es) { this._es.close(); this._es = null; }
-            if (this._poll) { clearInterval(this._poll); this._poll = null; }
+            if (this._es)   { this._es.close();           this._es   = null; }
+            if (this._poll) { clearInterval(this._poll);  this._poll = null; }
+            if (this._keydownHandler) {
+                document.removeEventListener('keydown', this._keydownHandler);
+                this._keydownHandler = null;
+            }
         },
 
         async fetchUsers() {
             this.usersLoading = true;
             try {
                 const res = await fetch('/api/admin/users', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') },
-                                        body: JSON.stringify({ action: 'list' })
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                                        body:    JSON.stringify({ action: 'list' }),
                 });
-                if (res.ok) this.userList = await res.json(); else this.addToast('Failed to fetch users', 'error');
-            } catch (e) { this.addToast('Error fetching users', 'error'); } finally { this.usersLoading = false; }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.userList = await res.json();
+            } catch (e) {
+                this.addToast('Failed to fetch users: ' + e.message, 'error');
+            } finally {
+                this.usersLoading = false;
+            }
         },
 
         async addUser() {
-            if (!this.newUsername || !this.newPassword) { this.addToast('Username and password required', 'error'); return; }
+            if (!this.newUsername || !this.newPassword) {
+                this.addToast('Username and password required', 'error');
+                return;
+            }
             try {
                 const res = await fetch('/api/admin/users', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') },
-                                        body: JSON.stringify({ action: 'add', username: this.newUsername, password: this.newPassword, role: this.newRole })
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                                        body:    JSON.stringify({ action: 'add', username: this.newUsername, password: this.newPassword, role: this.newRole }),
                 });
                 if (res.ok) {
                     this.addToast(`User ${this.newUsername} added`, 'success');
-                    this.newUsername = ''; this.newPassword = ''; this.newRole = 'viewer';
-                    this.showAddUserForm = false; await this.fetchUsers();
-                } else { const err = await res.json(); this.addToast(err.error || 'Failed to add user', 'error'); }
-            } catch (e) { this.addToast('Error adding user', 'error'); }
+                    this.newUsername     = '';
+                    this.newPassword     = '';
+                    this.newRole         = 'viewer';
+                    this.showAddUserForm = false;
+                    await this.fetchUsers();
+                } else {
+                    const err = await res.json();
+                    this.addToast(err.error || 'Failed to add user', 'error');
+                }
+            } catch (e) {
+                this.addToast('Error adding user: ' + e.message, 'error');
+            }
         },
 
         openPassModal(username) {
-            this.passModalUser = username; this.passModalValue = ''; this.showPassModal = true;
+            this.passModalUser  = username;
+            this.passModalValue = '';
+            this.showPassModal  = true;
             this.$nextTick(() => { if (this.$refs.passInput) this.$refs.passInput.focus(); });
         },
 
@@ -594,30 +848,131 @@ function dashboard() {
             const username = this.passModalUser;
             try {
                 const res = await fetch('/api/admin/users', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') },
-                                        body: JSON.stringify({ action: 'change_password', username, password: this.passModalValue })
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                                        body:    JSON.stringify({ action: 'change_password', username, password: this.passModalValue }),
                 });
-                if (res.ok) this.addToast(`Password changed for ${username}`, 'success');
-                else { const err = await res.json(); this.addToast(err.error || 'Failed to change password', 'error'); }
-            } catch (e) { this.addToast('Error changing password', 'error'); } finally {
-                this.showPassModal = false; this.passModalValue = '';
+                if (res.ok) {
+                    this.addToast(`Password changed for ${username}`, 'success');
+                } else {
+                    const err = await res.json();
+                    this.addToast(err.error || 'Failed to change password', 'error');
+                }
+            } catch (e) {
+                this.addToast('Error changing password: ' + e.message, 'error');
+            } finally {
+                this.showPassModal   = false;
+                this.passModalValue  = '';
             }
         },
 
         confirmRemoveUser(username) {
-            this.removeModalUser = username; this.showRemoveModal = true;
+            this.removeModalUser = username;
+            this.showRemoveModal = true;
         },
 
         async confirmRemove() {
-            const username = this.removeModalUser; this.showRemoveModal = false;
+            const username       = this.removeModalUser;
+            this.showRemoveModal = false;
             try {
                 const res = await fetch('/api/admin/users', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('noba-token') },
-                                        body: JSON.stringify({ action: 'remove', username })
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                                        body:    JSON.stringify({ action: 'remove', username }),
                 });
-                if (res.ok) { this.addToast(`User ${username} removed`, 'success'); await this.fetchUsers(); }
-                else { const err = await res.json(); this.addToast(err.error || 'Failed to remove user', 'error'); }
-            } catch (e) { this.addToast('Error removing user', 'error'); }
-        }
+                if (res.ok) {
+                    this.addToast(`User ${username} removed`, 'success');
+                    await this.fetchUsers();
+                } else {
+                    const err = await res.json();
+                    this.addToast(err.error || 'Failed to remove user', 'error');
+                }
+            } catch (e) {
+                this.addToast('Error removing user: ' + e.message, 'error');
+            }
+        },
+
+        // ── 8. History & Audit ─────────────────────────────────────────────────
+
+        async fetchHistory() {
+            if (!this.historyMetric) return;
+            try {
+                const res = await fetch(`/api/history/${this.historyMetric}?range=${this.historyRange}&resolution=${this.historyResolution}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() }
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.historyData = await res.json();
+                this.$nextTick(() => this.renderHistoryChart());
+            } catch (e) {
+                this.addToast('Failed to load history: ' + e.message, 'error');
+            }
+        },
+
+        renderHistoryChart() {
+            const canvas = document.getElementById('historyChart');
+            if (!canvas) return;
+
+            // Destroy existing chart instance if it exists to prevent memory leaks/overlapping
+            if (this.historyChart instanceof Chart) {
+                this.historyChart.destroy();
+            }
+
+            const ctx = canvas.getContext('2d');
+            const times = this.historyData.map(d => new Date(d.time * 1000).toLocaleTimeString());
+            const values = this.historyData.map(d => d.value);
+
+            // Assign to a raw variable to avoid Alpine's proxy making the Chart object deeply reactive
+            let newChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: times,
+                    datasets: [{
+                        label: this.historyMetric,
+                        data: values,
+                        borderColor: 'var(--accent)',
+                                     backgroundColor: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+                                     tension: 0.2, // Smoother line
+                                     fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, // Now safely contained by the HTML wrapper
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                                     x: { grid: { display: false } }
+                    },
+                    plugins: { legend: { display: false } },
+                    animation: { duration: 0 } // Disable animation for snappier modal loads
+                }
+            });
+
+            this.historyChart = newChart;
+        },
+
+        showHistory(metric) {
+            this.historyMetric = metric;
+            this.showHistoryModal = true;
+            this.fetchHistory();
+        },
+
+        async fetchAuditLog() {
+            try {
+                const res = await fetch('/api/audit?limit=100', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() }
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.auditLog = await res.json();
+            } catch (e) {
+                this.addToast('Failed to load audit log: ' + e.message, 'error');
+            }
+        },
+
+        openAuditModal() {
+            if (this.userRole !== 'admin') return;
+            this.showAuditModal = true;
+            this.fetchAuditLog();
+        },
+
     };
 }

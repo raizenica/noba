@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared functions for Noba Web
+# Shared functions for Noba Web – v1.11.0-sandbox
 # Sourced by bin/noba-web — do NOT execute directly.
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ generate_systemd() {
 # Enable:  systemctl --user enable --now noba-web.service
 
 [Unit]
-Description=Nobara Command Center Web Dashboard
+Description=Noba Command Center Web Dashboard
 After=network-online.target
 Wants=network-online.target
 
@@ -209,7 +209,7 @@ PYEOF
 # ── Legacy single‑user setup (auth.conf) ─────────────────────────────────────
 set_password() {
     local yaml_file="$1"
-    echo "Setting up login credentials for Nobara Web Dashboard"
+    echo "Setting up login credentials for Noba Web Dashboard"
 
     local username
     while true; do
@@ -268,8 +268,8 @@ create_default_yaml() {
     log_info "Creating default config at $yaml_file"
     mkdir -p "$(dirname "$yaml_file")"
 
-    cat > "$yaml_file" <<EOF
-# Nobara Automation Suite — configuration
+    cat > "$yaml_file" <<'EOF'
+# Noba Automation Suite — configuration
 # Edit this file to match your environment.
 email: "you@example.com"
 
@@ -309,7 +309,7 @@ logs:
     days: 30
 
 update:
-  repo_dir: "$HOME/.local/bin"
+  repo_dir: "$HOME/.local/libexec/noba"
   remote: "origin"
   branch: "main"
 
@@ -345,6 +345,27 @@ web:
   piholeToken: ""
   # Bookmarks format: "Label|URL|fa-icon-name" separated by commas.
   bookmarksStr: ""
+
+# Notifications (optional)
+notifications:
+  # email:
+  #   enabled: false
+  #   smtp_server: "smtp.gmail.com:587"
+  #   username: "you@gmail.com"
+  #   password: "your-app-password"
+  #   from: "you@gmail.com"
+  #   to: "admin@example.com"
+  #   starttls: true
+  # telegram:
+  #   enabled: false
+  #   bot_token: "123456:ABC-DEF1234"
+  #   chat_id: "123456789"
+  # discord:
+  #   enabled: false
+  #   webhook_url: "https://discord.com/api/webhooks/..."
+  # slack:
+  #   enabled: false
+  #   webhook_url: "https://hooks.slack.com/services/..."
 EOF
 
     log_success "Default config created. Edit before first use: $yaml_file"
@@ -443,6 +464,45 @@ change_password() {
     log_success "Password updated for '$username'"
 }
 
+# ── Backup & Restore ──────────────────────────────────────────────────────────
+backup_config() {
+    local backup_dir="${1:-$HOME/.local/share/noba-backup}"
+    mkdir -p "$backup_dir"
+    local timestamp=$(date +%Y%m%d-%H%M%S)
+    local backup_file="$backup_dir/noba-config-$timestamp.tar.gz"
+
+    local targets=()
+    [[ -d "$HOME/.config/noba" ]] && targets+=("noba")
+    [[ -d "$HOME/.config/noba-web" ]] && targets+=("noba-web")
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        log_error "No configuration directories found to backup."
+        return 1
+    fi
+
+    if tar -czf "$backup_file" -C "$HOME/.config" "${targets[@]}"; then
+        log_success "Backup saved to $backup_file"
+        echo "$backup_file"
+    else
+        log_error "Backup creation failed."
+        return 1
+    fi
+}
+
+restore_config() {
+    local backup_file="$1"
+    if [[ ! -f "$backup_file" ]]; then
+        log_error "Backup file not found: $backup_file"
+        return 1
+    fi
+    if tar -xzf "$backup_file" -C "$HOME/.config"; then
+        log_success "Restored from $backup_file"
+    else
+        log_error "Failed to restore from $backup_file."
+        return 1
+    fi
+}
+
 # ── Full help (all options) ───────────────────────────────────────────────────
 show_help() {
     cat <<EOF
@@ -460,6 +520,8 @@ Options:
   --remove-user USER     Remove a user
   --change-password      Change a user's password (interactive)
   --generate-systemd     Print a systemd user-service unit and exit
+  --backup [DIR]         Backup configuration to directory (default ~/.local/share/noba-backup)
+  --restore FILE         Restore configuration from backup file
   -v, --verbose          Tail the server log after starting  (Ctrl-C to stop)
   --version              Print version information and exit
   --help                 Show this help message and exit

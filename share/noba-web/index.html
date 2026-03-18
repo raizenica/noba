@@ -3,23 +3,44 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="NOBA Command Center — Homelab automation dashboard">
+    <meta name="theme-color" content="#060a10">
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <title>NOBA // Command Center</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 
     <link rel="stylesheet" href="/static/style.css">
+
+    <style>
+        kbd {
+            display: inline-block;
+            padding: .15rem .45rem;
+            font-family: var(--font-data);
+            font-size: .72rem;
+            color: var(--text);
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            border-radius: 4px;
+            line-height: 1.4;
+        }
+    </style>
 </head>
 <body x-data="dashboard()" x-init="init()" :data-theme="theme">
 <div class="page">
 
     <header class="header">
         <div class="logo">
-            <div class="logo-mark"><i class="fas fa-terminal"></i></div>
+            <div class="logo-mark" aria-hidden="true"><i class="fas fa-terminal"></i></div>
             <div>
                 <div class="logo-name">NOBA <span class="logo-slash">//</span> COMMAND</div>
                 <div class="logo-tagline">Nobara Automation Suite</div>
@@ -27,20 +48,34 @@
         </div>
         <div class="header-controls">
 
-            <div class="user-chip" x-show="authenticated && netHealth.configured" x-cloak title="Network Health Watchdog" :style="netHealth.wan==='Down' && netHealth.lan==='Up' ? 'border-color:var(--warning);box-shadow:0 0 10px var(--warning-dim)' : ''">
-                <i class="fas" :class="netHealth.wan==='Up' ? 'fa-globe' : 'fa-globe-americas'" :style="netHealth.wan==='Up' ? 'color:var(--success)' : 'color:var(--danger)'"></i>
-                <span style="margin: 0 .2rem; color:var(--text-muted)">|</span>
-                <i class="fas" :class="netHealth.lan==='Up' ? 'fa-network-wired' : 'fa-network-wired'" :style="netHealth.lan==='Up' ? 'color:var(--success)' : 'color:var(--danger)'"></i>
-                <span x-show="netHealth.wan==='Down' && netHealth.lan==='Up'" style="color:var(--warning); font-family:var(--font-ui); font-size:.7rem; font-weight:700; margin-left:.3rem">LOCAL ONLY</span>
+            <div class="user-chip"
+                 x-show="authenticated && netHealth && netHealth.configured"
+                 x-cloak
+                 title="Network Health Watchdog"
+                 :style="netHealth.wan==='Down' && netHealth.lan==='Up'
+                     ? 'border-color:var(--warning);box-shadow:0 0 10px var(--warning-dim)' : ''">
+                <i class="fas"
+                   :class="netHealth.wan==='Up' ? 'fa-globe' : 'fa-globe-americas'"
+                   :style="netHealth.wan==='Up' ? 'color:var(--success)' : 'color:var(--danger)'"
+                   :aria-label="'WAN: ' + netHealth.wan"></i>
+                <span style="margin:0 .2rem; color:var(--text-muted)" aria-hidden="true">|</span>
+                <i class="fas fa-network-wired"
+                   :style="netHealth.lan==='Up' ? 'color:var(--success)' : 'color:var(--danger)'"
+                   :aria-label="'LAN: ' + netHealth.lan"></i>
+                <span x-show="netHealth.wan==='Down' && netHealth.lan==='Up'"
+                      style="color:var(--warning);font-family:var(--font-ui);font-size:.7rem;font-weight:700;margin-left:.3rem">
+                    LOCAL ONLY
+                </span>
             </div>
 
             <div class="user-chip" x-show="authenticated && username" x-cloak>
-                <i class="fas fa-user-circle" style="color:var(--accent);font-size:.8rem"></i>
+                <i class="fas fa-user-circle" style="color:var(--accent);font-size:.8rem" aria-hidden="true"></i>
                 <span x-text="username" style="color:var(--text)"></span>
                 <span class="badge" :class="userRole==='admin'?'ba':'bn'" x-text="userRole"></span>
             </div>
 
-            <select class="theme-select" x-model="theme" @change="saveSettings()">
+            <label for="theme-selector" class="sr-only">Theme</label>
+            <select id="theme-selector" class="theme-select" x-model="theme" @change="saveSettings()">
                 <option value="default">Operator</option>
                 <option value="catppuccin">Catppuccin</option>
                 <option value="tokyo">Tokyo Night</option>
@@ -49,52 +84,66 @@
                 <option value="nord">Nord</option>
             </select>
 
-            <button class="icon-btn" @click="refreshStats()" title="Refresh (r)">
-                <i class="fas fa-sync" :class="refreshing ? 'fa-spin' : ''"></i>
+            <button class="icon-btn" @click="refreshStats()" title="Refresh (r)" aria-label="Refresh stats">
+                <i class="fas fa-sync" :class="refreshing ? 'fa-spin' : ''" aria-hidden="true"></i>
             </button>
 
-            <div class="icon-btn" @click="showSettings=true; settingsTab='visibility'" title="Settings (s)">
-                <i class="fas fa-sliders-h"></i>
-            </div>
+            <button class="icon-btn"
+                    @click="showSettings=true; settingsTab='visibility'"
+                    title="Settings (s)"
+                    aria-label="Open settings"
+                    aria-haspopup="dialog">
+                <i class="fas fa-sliders-h" aria-hidden="true"></i>
+            </button>
 
-            <div class="live-pill" :class="'conn-' + connStatus">
-                <div class="live-dot" :class="refreshing ? 'syncing' : connStatus"></div>
+            <div class="live-pill" :class="'conn-' + connStatus" aria-live="polite" aria-label="Connection status">
+                <div class="live-dot" :class="refreshing ? 'syncing' : connStatus" aria-hidden="true"></div>
                 <span x-text="livePillText"></span>
             </div>
 
-            <button class="icon-btn" @click="logout" title="Logout" x-show="authenticated" x-cloak>
-                <i class="fas fa-sign-out-alt"></i>
+            <button class="icon-btn" @click="logout()" title="Logout" aria-label="Log out"
+                    x-show="authenticated" x-cloak>
+                <i class="fas fa-sign-out-alt" aria-hidden="true"></i>
             </button>
         </div>
     </header>
 
-    <div class="alerts" x-show="visibleAlerts && visibleAlerts.length > 0" x-cloak>
+    <div class="alerts" role="alert" x-show="visibleAlerts && visibleAlerts.length > 0" x-cloak>
         <template x-for="a in visibleAlerts" :key="a.msg">
             <div class="alert" :class="a.level">
-                <i class="fas" :class="a.level==='danger' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'"></i>
+                <i class="fas" :class="a.level==='danger' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'" aria-hidden="true"></i>
                 <span x-text="a.msg" style="flex:1"></span>
-                <button class="alert-dismiss" @click="dismissAlert(a.msg)" title="Dismiss">×</button>
+                <button class="alert-dismiss" @click="dismissAlert(a.msg)" :aria-label="'Dismiss: ' + a.msg">×</button>
             </div>
         </template>
     </div>
 
+    <main>
     <div class="grid" id="sortable-grid" x-cloak>
 
         <div class="card" data-id="card-core" x-show="vis.core">
             <div class="card-hdr">
-                <i class="fas fa-microchip card-icon"></i>
-                <span class="card-title">Core System</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.core ? 'is-collapsed' : ''" @click="toggleCollapse('core')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <i class="fas fa-microchip card-icon" aria-hidden="true"></i>
+                <span class="card-title" id="hdr-core">Core System</span>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.core ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('core')"
+                        :aria-expanded="!collapsed.core"
+                        aria-controls="body-core"
+                        aria-label="Toggle Core System"></button>
+                <button class="icon-btn" style="width:auto; padding:0 .3rem; margin-right:.3rem;" @click="showHistory('cpu_percent')" title="View CPU history" aria-label="View CPU history">
+                    <i class="fas fa-chart-line"></i>
+                </button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true" aria-roledescription="drag handle"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.core">
+            <div class="card-body" id="body-core" x-show="!collapsed.core">
                 <div class="row">
                     <span class="row-label">OS</span>
                     <span class="row-val" x-text="osName"></span>
                 </div>
                 <div class="row">
                     <span class="row-label">Kernel</span>
-                    <span class="row-val copy-hover" @click="copyVal(kernel, $event)" x-text="kernel" title="Copy"></span>
+                    <span class="row-val copy-hover" @click="copyVal(kernel, $event)" x-text="kernel" title="Copy kernel version" role="button" tabindex="0" @keyup.enter="copyVal(kernel, $event)"></span>
                 </div>
                 <div class="row">
                     <span class="row-label">Uptime</span>
@@ -102,26 +151,26 @@
                 </div>
                 <div class="row">
                     <span class="row-label">Load Avg</span>
-                    <span class="row-val copy-hover" @click="copyVal(loadavg, $event)" x-text="loadavg" title="Copy"></span>
+                    <span class="row-val copy-hover" @click="copyVal(loadavg, $event)" x-text="loadavg" title="Copy load average" role="button" tabindex="0" @keyup.enter="copyVal(loadavg, $event)"></span>
                 </div>
                 <div class="row">
                     <span class="row-label">CPU Temp</span>
                     <span class="badge" :class="cpuTempClass" x-text="cpuTemp"></span>
                 </div>
                 <div style="margin-top:.875rem">
-                    <div style="font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.35rem">CPU UTILIZATION</div>
-                    <div class="spark-wrap">
-                        <svg class="spark-svg" viewBox="0 0 120 40" preserveAspectRatio="none">
+                    <div style="font-size:.62rem;letter-spacing:.15em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.35rem" aria-hidden="true">CPU UTILIZATION</div>
+                    <div class="spark-wrap" role="img" :aria-label="'CPU utilization: ' + cpuPercent + '%'">
+                        <svg class="spark-svg" viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true">
                             <defs>
-                                <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+                                <linearGradient id="cpu-spark-grad" x1="0" y1="0" x2="0" y2="1">
                                     <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.3"/>
                                     <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.0"/>
                                 </linearGradient>
                             </defs>
-                            <polygon :points="cpuFill" fill="url(#sg)" stroke="none"/>
+                            <polygon :points="cpuFill" fill="url(#cpu-spark-grad)" stroke="none"/>
                             <polyline :points="cpuLine" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
                         </svg>
-                        <div class="spark-val" x-text="cpuPercent + '%'"></div>
+                        <div class="spark-val" x-text="cpuPercent + '%'" aria-hidden="true"></div>
                     </div>
                 </div>
                 <div class="prog" style="margin-top:.65rem">
@@ -129,7 +178,7 @@
                         <span>MEMORY</span>
                         <span x-text="memPercent + '%'"></span>
                     </div>
-                    <div class="prog-track">
+                    <div class="prog-track" role="progressbar" :aria-valuenow="memPercent" aria-valuemin="0" aria-valuemax="100" :aria-label="'Memory usage ' + memPercent + '%'">
                         <div class="prog-fill" :class="memPercent>90?'f-danger':memPercent>75?'f-warning':'f-accent'" :style="'width:'+memPercent+'%'"></div>
                     </div>
                     <div style="font-family:var(--font-data);font-size:.72rem;color:var(--text-muted);margin-top:.2rem" x-text="memory"></div>
@@ -139,48 +188,58 @@
 
         <div class="card" data-id="card-netio" x-show="vis.netio">
             <div class="card-hdr">
-                <i class="fas fa-network-wired card-icon"></i>
+                <i class="fas fa-network-wired card-icon" aria-hidden="true"></i>
                 <span class="card-title">Network I/O</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.netio ? 'is-collapsed' : ''" @click="toggleCollapse('netio')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.netio ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('netio')"
+                        :aria-expanded="!collapsed.netio"
+                        aria-controls="body-netio"
+                        aria-label="Toggle Network I/O"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.netio">
+            <div class="card-body" id="body-netio" x-show="!collapsed.netio">
                 <div class="io-grid" style="margin-bottom:.875rem">
                     <div class="io-stat">
                         <div class="io-val io-down" x-text="netRx || '0 B/s'"></div>
-                        <div class="io-label"><i class="fas fa-arrow-down"></i> RX</div>
+                        <div class="io-label"><i class="fas fa-arrow-down" aria-hidden="true"></i> RX</div>
                     </div>
                     <div class="io-stat">
                         <div class="io-val io-up" x-text="netTx || '0 B/s'"></div>
-                        <div class="io-label"><i class="fas fa-arrow-up"></i> TX</div>
+                        <div class="io-label"><i class="fas fa-arrow-up" aria-hidden="true"></i> TX</div>
                     </div>
                 </div>
                 <div class="row">
                     <span class="row-label">Hostname</span>
-                    <span class="row-val copy-hover" @click="copyVal(hostname, $event)" x-text="hostname || '--'" title="Copy"></span>
+                    <span class="row-val copy-hover" @click="copyVal(hostname, $event)" x-text="hostname || '--'" title="Copy hostname" role="button" tabindex="0" @keyup.enter="copyVal(hostname, $event)"></span>
                 </div>
                 <div class="row">
                     <span class="row-label">Default IP</span>
-                    <span class="row-val copy-hover" @click="copyVal(defaultIp, $event)" x-text="defaultIp || '--'" title="Copy"></span>
+                    <span class="row-val copy-hover" @click="copyVal(defaultIp, $event)" x-text="defaultIp || '--'" title="Copy IP" role="button" tabindex="0" @keyup.enter="copyVal(defaultIp, $event)"></span>
                 </div>
             </div>
         </div>
 
         <div class="card" data-id="card-hw" x-show="vis.hw">
             <div class="card-hdr">
-                <i class="fas fa-memory card-icon"></i>
+                <i class="fas fa-memory card-icon" aria-hidden="true"></i>
                 <span class="card-title">Hardware</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.hw ? 'is-collapsed' : ''" @click="toggleCollapse('hw')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.hw ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('hw')"
+                        :aria-expanded="!collapsed.hw"
+                        aria-controls="body-hw"
+                        aria-label="Toggle Hardware"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.hw">
+            <div class="card-body" id="body-hw" x-show="!collapsed.hw">
                 <div class="row">
                     <span class="row-label">CPU</span>
                     <span class="row-val" style="font-size:.78rem;max-width:210px" x-text="hwCpu"></span>
                 </div>
                 <div class="row">
                     <span class="row-label">GPU</span>
-                    <span class="row-val" style="font-size:.76rem;max-width:210px" x-html="hwGpu"></span>
+                    <span class="row-val" style="font-size:.76rem;max-width:210px" x-text="hwGpu"></span>
                 </div>
                 <div class="row" x-show="gpuTemp && gpuTemp !== 'N/A'">
                     <span class="row-label">GPU Temp</span>
@@ -191,12 +250,17 @@
 
         <div class="card" data-id="card-truenas" x-show="vis.truenas && truenasUrl">
             <div class="card-hdr">
-                <i class="fas fa-server card-icon"></i>
+                <i class="fas fa-server card-icon" aria-hidden="true"></i>
                 <span class="card-title">TrueNAS Integration</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.truenas ? 'is-collapsed' : ''" @click="toggleCollapse('truenas')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.truenas ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('truenas')"
+                        :aria-expanded="!collapsed.truenas"
+                        aria-controls="body-truenas"
+                        aria-label="Toggle TrueNAS Integration"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.truenas">
+            <div class="card-body" id="body-truenas" x-show="!collapsed.truenas">
                 <template x-if="truenas && truenas.status === 'online'">
                     <div>
                         <div class="row">
@@ -212,22 +276,22 @@
                             <span class="badge bd" x-text="truenas.alerts.length"></span>
                         </div>
 
-                        <div x-show="truenas.vms && truenas.vms.length > 0" style="margin-top:.8rem; padding-top:.6rem; border-top:1px dashed var(--border)">
-                            <span class="s-label" style="border:none; margin-bottom:.3rem">Virtual Machines</span>
+                        <div x-show="truenas.vms && truenas.vms.length > 0" style="margin-top:.8rem;padding-top:.6rem;border-top:1px dashed var(--border)">
+                            <span class="s-label" style="border:none;margin-bottom:.3rem">Virtual Machines</span>
                             <div class="ct-list">
                                 <template x-for="vm in truenas.vms" :key="vm.id">
-                                    <div class="ct-row" style="padding: .4rem .6rem">
-                                        <div class="status-dot" :class="vm.state==='RUNNING'?'dot-up':'dot-down'"></div>
+                                    <div class="ct-row" style="padding:.4rem .6rem">
+                                        <div class="status-dot" :class="vm.state==='RUNNING'?'dot-up':'dot-down'" :aria-label="vm.state"></div>
                                         <span class="ct-name" x-text="vm.name"></span>
-                                        <div class="svc-btns">
-                                            <button class="svc-btn" title="Start" :disabled="vm.state==='RUNNING'" @click="vmAction(vm.id, vm.name, 'start')">
-                                                <i class="fas fa-play"></i>
+                                        <div class="svc-btns" role="group" :aria-label="vm.name + ' controls'">
+                                            <button class="svc-btn" title="Start" aria-label="Start VM" :disabled="vm.state==='RUNNING'" @click="vmAction(vm.id, vm.name, 'start')">
+                                                <i class="fas fa-play" aria-hidden="true"></i>
                                             </button>
-                                            <button class="svc-btn" title="Stop" :disabled="vm.state!=='RUNNING'" @click="vmAction(vm.id, vm.name, 'stop')">
-                                                <i class="fas fa-stop"></i>
+                                            <button class="svc-btn" title="Stop" aria-label="Stop VM" :disabled="vm.state!=='RUNNING'" @click="vmAction(vm.id, vm.name, 'stop')">
+                                                <i class="fas fa-stop" aria-hidden="true"></i>
                                             </button>
-                                            <button class="svc-btn" title="Power Off (Force)" :disabled="vm.state!=='RUNNING'" @click="vmAction(vm.id, vm.name, 'poweroff')">
-                                                <i class="fas fa-power-off"></i>
+                                            <button class="svc-btn" title="Power Off (Force)" aria-label="Force power off VM" :disabled="vm.state!=='RUNNING'" @click="vmAction(vm.id, vm.name, 'poweroff')">
+                                                <i class="fas fa-power-off" aria-hidden="true"></i>
                                             </button>
                                         </div>
                                     </div>
@@ -244,19 +308,24 @@
 
         <div class="card" data-id="card-plex" x-show="vis.plex && plexUrl">
             <div class="card-hdr">
-                <i class="fas fa-film card-icon"></i>
+                <i class="fas fa-film card-icon" aria-hidden="true"></i>
                 <span class="card-title">Media Stack</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.plex ? 'is-collapsed' : ''" @click="toggleCollapse('plex')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.plex ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('plex')"
+                        :aria-expanded="!collapsed.plex"
+                        aria-controls="body-plex"
+                        aria-label="Toggle Media Stack"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.plex">
+            <div class="card-body" id="body-plex" x-show="!collapsed.plex">
                 <template x-if="plex">
                     <div>
                         <div class="row">
                             <span class="row-label">Server Status</span>
                             <span class="badge" :class="plex.status==='online'?'bs':'bd'" x-text="plex.status"></span>
                         </div>
-                        <div class="ph-stats" style="margin-top: .875rem;">
+                        <div class="ph-stats" style="margin-top:.875rem">
                             <div class="ph-stat">
                                 <div class="ph-val" style="color:var(--accent)" x-text="plex.sessions"></div>
                                 <div class="ph-label">Active Streams</div>
@@ -277,29 +346,34 @@
 
         <div class="card" data-id="card-downloads" x-show="vis.downloads && (qbitUrl || radarrUrl || sonarrUrl)">
             <div class="card-hdr">
-                <i class="fas fa-download card-icon"></i>
+                <i class="fas fa-download card-icon" aria-hidden="true"></i>
                 <span class="card-title">Download Stack</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.downloads ? 'is-collapsed' : ''" @click="toggleCollapse('downloads')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.downloads ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('downloads')"
+                        :aria-expanded="!collapsed.downloads"
+                        aria-controls="body-downloads"
+                        aria-label="Toggle Download Stack"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.downloads">
-                <div x-show="qbitUrl" style="margin-bottom: 1rem;">
-                    <div class="row" style="border-bottom: none; padding-bottom: 0;">
+            <div class="card-body" id="body-downloads" x-show="!collapsed.downloads">
+                <div x-show="qbitUrl" style="margin-bottom:1rem">
+                    <div class="row" style="border-bottom:none;padding-bottom:0">
                         <span class="row-label" style="color:var(--text)">qBittorrent</span>
                         <span class="badge" :class="qbit && qbit.status === 'online' ? 'bs' : 'bn'" x-text="qbit ? qbit.status.toUpperCase() : 'OFFLINE'"></span>
                     </div>
-                    <div class="io-grid" style="margin-top: .5rem;" x-show="qbit && qbit.status === 'online'">
+                    <div class="io-grid" style="margin-top:.5rem" x-show="qbit && qbit.status === 'online'">
                         <div class="io-stat">
                             <div class="io-val io-down" x-text="humanBps(qbit.dl_speed)"></div>
-                            <div class="io-label"><i class="fas fa-arrow-down"></i> DL</div>
+                            <div class="io-label"><i class="fas fa-arrow-down" aria-hidden="true"></i> DL</div>
                         </div>
                         <div class="io-stat">
                             <div class="io-val io-up" x-text="humanBps(qbit.up_speed)"></div>
-                            <div class="io-label"><i class="fas fa-arrow-up"></i> UP</div>
+                            <div class="io-label"><i class="fas fa-arrow-up" aria-hidden="true"></i> UP</div>
                         </div>
                     </div>
                     <div class="row" x-show="qbit && qbit.status === 'online'">
-                        <span class="row-label" style="font-size: .65rem;">Active Torrents</span>
+                        <span class="row-label" style="font-size:.65rem">Active Torrents</span>
                         <span class="row-val" x-text="qbit.active_torrents"></span>
                     </div>
                 </div>
@@ -316,12 +390,17 @@
 
         <div class="card" data-id="card-battery" x-show="vis.battery && battery && !battery.desktop">
             <div class="card-hdr">
-                <i class="fas fa-battery-half card-icon"></i>
+                <i class="fas fa-battery-half card-icon" aria-hidden="true"></i>
                 <span class="card-title">Power State</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.battery ? 'is-collapsed' : ''" @click="toggleCollapse('battery')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.battery ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('battery')"
+                        :aria-expanded="!collapsed.battery"
+                        aria-controls="body-battery"
+                        aria-label="Toggle Power State"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.battery">
+            <div class="card-body" id="body-battery" x-show="!collapsed.battery">
                 <div class="row">
                     <span class="row-label">Status</span>
                     <span class="badge" :class="battery.status==='Charging'||battery.status==='Full'?'bs':battery.status==='Discharging'?'bw':'bn'" x-text="battery.status"></span>
@@ -335,7 +414,7 @@
                         <span>CHARGE</span>
                         <span x-text="battery.percent + '%'"></span>
                     </div>
-                    <div class="prog-track">
+                    <div class="prog-track" role="progressbar" :aria-valuenow="battery.percent" aria-valuemin="0" aria-valuemax="100" :aria-label="'Battery charge ' + battery.percent + '%'">
                         <div class="prog-fill" :class="battery.percent>20?'f-success':'f-danger'" :style="'width:'+battery.percent+'%'"></div>
                     </div>
                 </div>
@@ -344,12 +423,17 @@
 
         <div class="card" data-id="card-pihole" x-show="vis.pihole && piholeUrl">
             <div class="card-hdr">
-                <i class="fas fa-shield-alt card-icon"></i>
+                <i class="fas fa-shield-alt card-icon" aria-hidden="true"></i>
                 <span class="card-title">Pi-hole DNS</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.pihole ? 'is-collapsed' : ''" @click="toggleCollapse('pihole')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.pihole ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('pihole')"
+                        :aria-expanded="!collapsed.pihole"
+                        aria-controls="body-pihole"
+                        aria-label="Toggle Pi-hole DNS"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.pihole">
+            <div class="card-body" id="body-pihole" x-show="!collapsed.pihole">
                 <template x-if="pihole">
                     <div>
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.875rem">
@@ -371,7 +455,7 @@
                                 <span>BLOCK RATE</span>
                                 <span x-text="pihole.percent + '%'"></span>
                             </div>
-                            <div class="prog-track">
+                            <div class="prog-track" role="progressbar" :aria-valuenow="pihole.percent" aria-valuemin="0" aria-valuemax="100" :aria-label="'Block rate ' + pihole.percent + '%'">
                                 <div class="prog-fill f-accent" :style="'width:' + pihole.percent + '%'"></div>
                             </div>
                         </div>
@@ -385,12 +469,17 @@
 
         <div class="card" data-id="card-storage" x-show="vis.storage">
             <div class="card-hdr">
-                <i class="fas fa-hdd card-icon"></i>
+                <i class="fas fa-hdd card-icon" aria-hidden="true"></i>
                 <span class="card-title">Storage</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.storage ? 'is-collapsed' : ''" @click="toggleCollapse('storage')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.storage ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('storage')"
+                        :aria-expanded="!collapsed.storage"
+                        aria-controls="body-storage"
+                        aria-label="Toggle Storage"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.storage">
+            <div class="card-body" id="body-storage" x-show="!collapsed.storage">
                 <template x-for="pool in zfs.pools" :key="pool.name">
                     <div class="row">
                         <span class="row-label" x-text="'ZFS: ' + pool.name"></span>
@@ -404,7 +493,7 @@
                                 <span x-text="d.mount"></span>
                                 <span x-text="d.used + ' / ' + d.size"></span>
                             </div>
-                            <div class="prog-track">
+                            <div class="prog-track" role="progressbar" :aria-valuenow="d.percent" aria-valuemin="0" aria-valuemax="100" :aria-label="d.mount + ' ' + d.percent + '% full'">
                                 <div class="prog-fill" :class="'f-'+d.barClass" :style="'width:'+d.percent+'%'"></div>
                             </div>
                         </div>
@@ -415,16 +504,21 @@
 
         <div class="card" data-id="card-radar" x-show="vis.radar">
             <div class="card-hdr">
-                <i class="fas fa-satellite-dish card-icon"></i>
+                <i class="fas fa-satellite-dish card-icon" aria-hidden="true"></i>
                 <span class="card-title">Network Radar</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.radar ? 'is-collapsed' : ''" @click="toggleCollapse('radar')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.radar ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('radar')"
+                        :aria-expanded="!collapsed.radar"
+                        aria-controls="body-radar"
+                        aria-label="Toggle Network Radar"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.radar">
+            <div class="card-body" id="body-radar" x-show="!collapsed.radar">
                 <template x-for="t in radar" :key="t.ip">
                     <div class="radar-row">
-                        <div class="status-dot" :class="t.status==='Up'?'dot-up':t.status==='Pending'?'dot-pending':'dot-down'"></div>
-                        <span class="radar-ip copy-hover" @click="copyVal(t.ip, $event)" x-text="t.ip" title="Copy"></span>
+                        <div class="status-dot" :class="t.status==='Up'?'dot-up':t.status==='Pending'?'dot-pending':'dot-down'" :aria-label="t.status"></div>
+                        <span class="radar-ip copy-hover" @click="copyVal(t.ip, $event)" x-text="t.ip" title="Copy IP" role="button" tabindex="0" @keyup.enter="copyVal(t.ip, $event)"></span>
                         <span class="badge" :class="t.status==='Up'?'bs':t.status==='Pending'?'bw':'bd'" x-text="t.status"></span>
                         <span class="radar-ms" x-show="t.status==='Up'" x-text="t.ms > 0 ? t.ms + 'ms' : ''"></span>
                     </div>
@@ -435,17 +529,22 @@
 
         <div class="card" data-id="card-kuma" x-show="vis.kuma && kumaUrl">
             <div class="card-hdr">
-                <i class="fas fa-heartbeat card-icon"></i>
+                <i class="fas fa-heartbeat card-icon" aria-hidden="true"></i>
                 <span class="card-title">Uptime Kuma</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.kuma ? 'is-collapsed' : ''" @click="toggleCollapse('kuma')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.kuma ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('kuma')"
+                        :aria-expanded="!collapsed.kuma"
+                        aria-controls="body-kuma"
+                        aria-label="Toggle Uptime Kuma"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.kuma">
+            <div class="card-body" id="body-kuma" x-show="!collapsed.kuma">
                 <div class="ct-list" x-show="kuma && kuma.length > 0">
                     <template x-for="m in kuma" :key="m.name">
                         <div class="radar-row">
-                            <div class="status-dot" :class="m.status==='Up'?'dot-up':m.status==='Pending'?'dot-pending':'dot-down'"></div>
-                            <span class="radar-ip copy-hover" @click="copyVal(m.name, $event)" x-text="m.name" title="Copy"></span>
+                            <div class="status-dot" :class="m.status==='Up'?'dot-up':m.status==='Pending'?'dot-pending':'dot-down'" :aria-label="m.status"></div>
+                            <span class="radar-ip copy-hover" @click="copyVal(m.name, $event)" x-text="m.name" title="Copy monitor name" role="button" tabindex="0" @keyup.enter="copyVal(m.name, $event)"></span>
                             <span class="badge" :class="m.status==='Up'?'bs':m.status==='Pending'?'bw':'bd'" x-text="m.status"></span>
                         </div>
                     </template>
@@ -456,12 +555,17 @@
 
         <div class="card" data-id="card-procs" x-show="vis.procs">
             <div class="card-hdr">
-                <i class="fas fa-chart-bar card-icon"></i>
+                <i class="fas fa-chart-bar card-icon" aria-hidden="true"></i>
                 <span class="card-title">Resource Hogs</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.procs ? 'is-collapsed' : ''" @click="toggleCollapse('procs')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.procs ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('procs')"
+                        :aria-expanded="!collapsed.procs"
+                        aria-controls="body-procs"
+                        aria-label="Toggle Resource Hogs"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.procs">
+            <div class="card-body" id="body-procs" x-show="!collapsed.procs">
                 <div class="proc-grid">
                     <div>
                         <div class="proc-hdr">Top CPU</div>
@@ -487,17 +591,22 @@
 
         <div class="card" data-id="card-containers" x-show="vis.containers">
             <div class="card-hdr">
-                <i class="fas fa-boxes card-icon"></i>
+                <i class="fas fa-boxes card-icon" aria-hidden="true"></i>
                 <span class="card-title">Containers</span>
                 <span class="card-count" x-show="containers && containers.length > 0" x-text="containers.length + ' total'"></span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.containers ? 'is-collapsed' : ''" @click="toggleCollapse('containers')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.containers ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('containers')"
+                        :aria-expanded="!collapsed.containers"
+                        aria-controls="body-containers"
+                        aria-label="Toggle Containers"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.containers">
+            <div class="card-body" id="body-containers" x-show="!collapsed.containers">
                 <div class="ct-list" x-show="containers && containers.length > 0">
                     <template x-for="c in containers" :key="c.name">
                         <div class="ct-row">
-                            <div class="status-dot" :class="c.state==='running'?'dot-up':'dot-down'"></div>
+                            <div class="status-dot" :class="c.state==='running'?'dot-up':'dot-down'" :aria-label="c.state"></div>
                             <span class="ct-name" x-text="c.name"></span>
                             <span class="ct-img" x-text="c.image"></span>
                             <span class="badge" :class="c.state==='running'?'bs':c.state==='exited'?'bw':'bn'" x-text="c.state"></span>
@@ -510,31 +619,41 @@
 
         <div class="card span-full" data-id="card-services" x-show="vis.services">
             <div class="card-hdr">
-                <i class="fas fa-cogs card-icon"></i>
+                <i class="fas fa-cogs card-icon" aria-hidden="true"></i>
                 <span class="card-title">Services</span>
-                <span class="card-count" x-show="services && services.length > 0" x-text="svcFilter ? (filteredServices.length + ' / ' + services.length) : (services.length + ' total')"></span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.services ? 'is-collapsed' : ''" @click="toggleCollapse('services')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <span class="card-count"
+                      x-show="services && services.length > 0"
+                      x-text="svcFilter ? (filteredServices.length + ' / ' + services.length) : (services.length + ' total')"></span>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.services ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('services')"
+                        :aria-expanded="!collapsed.services"
+                        aria-controls="body-services"
+                        aria-label="Toggle Services"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.services">
+            <div class="card-body" id="body-services" x-show="!collapsed.services">
                 <div x-show="services && services.length > 4" class="svc-filter-wrap">
-                    <input type="text" class="field-input" placeholder="Filter services..." x-model="svcFilter" style="padding: .4rem .6rem; font-size: .75rem;">
+                    <label for="svc-filter" class="sr-only">Filter services</label>
+                    <input id="svc-filter" type="search" class="field-input" placeholder="Filter services…" x-model="svcFilter" style="padding:.4rem .6rem;font-size:.75rem">
                 </div>
                 <div class="svc-grid" x-show="filteredServices && filteredServices.length > 0">
                     <template x-for="s in filteredServices" :key="s.name">
                         <div class="svc-card">
                             <div class="svc-name" x-text="s.name.replace('.service','')"></div>
                             <div class="svc-footer">
-                                <span class="badge" :class="{'bs':s.status==='active'||s.status==='timer-active','bw':s.status==='inactive','bd':s.status==='failed'||s.status==='not-found'}" x-text="s.status==='timer-active'?'active (timer)':s.status"></span>
-                                <div class="svc-btns">
-                                    <button class="svc-btn" title="Start" :disabled="s.status==='active'||s.status==='timer-active'" @click="svcAction(s,'start')">
-                                        <i class="fas fa-play"></i>
+                                <span class="badge"
+                                      :class="{'bs':s.status==='active'||s.status==='timer-active','bw':s.status==='inactive','bd':s.status==='failed'||s.status==='not-found'}"
+                                      x-text="s.status==='timer-active'?'active (timer)':s.status"></span>
+                                <div class="svc-btns" role="group" :aria-label="s.name.replace('.service','') + ' controls'">
+                                    <button class="svc-btn" title="Start" aria-label="Start service" :disabled="s.status==='active'||s.status==='timer-active'" @click="svcAction(s,'start')">
+                                        <i class="fas fa-play" aria-hidden="true"></i>
                                     </button>
-                                    <button class="svc-btn" title="Stop" :disabled="s.status==='inactive'||s.status==='not-found'" @click="svcAction(s,'stop')">
-                                        <i class="fas fa-stop"></i>
+                                    <button class="svc-btn" title="Stop" aria-label="Stop service" :disabled="s.status==='inactive'||s.status==='not-found'" @click="svcAction(s,'stop')">
+                                        <i class="fas fa-stop" aria-hidden="true"></i>
                                     </button>
-                                    <button class="svc-btn" title="Restart" :disabled="s.status==='not-found'" @click="svcAction(s,'restart')">
-                                        <i class="fas fa-sync"></i>
+                                    <button class="svc-btn" title="Restart" aria-label="Restart service" :disabled="s.status==='not-found'" @click="svcAction(s,'restart')">
+                                        <i class="fas fa-sync" aria-hidden="true"></i>
                                     </button>
                                 </div>
                             </div>
@@ -548,38 +667,53 @@
 
         <div class="card span-full" data-id="card-logs" x-show="vis.logs">
             <div class="card-hdr">
-                <i class="fas fa-scroll card-icon"></i>
+                <i class="fas fa-scroll card-icon" aria-hidden="true"></i>
                 <span class="card-title">System Logs</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.logs ? 'is-collapsed' : ''" @click="toggleCollapse('logs')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.logs ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('logs')"
+                        :aria-expanded="!collapsed.logs"
+                        aria-controls="body-logs"
+                        aria-label="Toggle System Logs"></button>
+                <button class="icon-btn" style="width:auto; padding:0 .3rem; margin-right:.3rem;" x-show="userRole === 'admin'" @click="openAuditModal()" title="View Audit Log" aria-label="View Audit Log">
+                    <i class="fas fa-user-secret"></i>
+                </button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.logs">
+            <div class="card-body" id="body-logs" x-show="!collapsed.logs">
                 <div class="log-controls">
-                    <select class="theme-select" x-model="selectedLog" @change="fetchLog()">
+                    <label for="log-type-select" class="sr-only">Log type</label>
+                    <select id="log-type-select" class="theme-select" x-model="selectedLog" @change="fetchLog()">
                         <option value="syserr">System Errors (journalctl)</option>
                         <option value="action">Action Log</option>
                         <option value="backup">NAS Backup Log</option>
                         <option value="cloud">Cloud Backup Log</option>
                     </select>
-                    <div class="icon-btn" @click="fetchLog()" title="Refresh">
-                        <i class="fas fa-sync" :class="logLoading?'fa-spin':''"></i>
-                    </div>
+                    <button class="icon-btn" @click="fetchLog()" title="Refresh logs" aria-label="Refresh logs">
+                        <i class="fas fa-sync" :class="logLoading?'fa-spin':''" aria-hidden="true"></i>
+                    </button>
                 </div>
-                <pre class="log-pre" x-text="logContent"></pre>
+                <pre class="log-pre" x-text="logContent" aria-label="Log output" aria-live="polite"></pre>
             </div>
         </div>
 
         <div class="card" data-id="card-automations" x-show="vis.automations && automations.length > 0">
             <div class="card-hdr">
-                <i class="fas fa-robot card-icon"></i>
+                <i class="fas fa-robot card-icon" aria-hidden="true"></i>
                 <span class="card-title">Automation Deck</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.automations ? 'is-collapsed' : ''" @click="toggleCollapse('automations')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.automations ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('automations')"
+                        :aria-expanded="!collapsed.automations"
+                        aria-controls="body-automations"
+                        aria-label="Toggle Automation Deck"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body action-list" x-show="!collapsed.automations">
+            <div class="card-body action-list" id="body-automations" x-show="!collapsed.automations">
                 <template x-for="act in automations" :key="act.id">
-                    <button class="btn btn-primary" @click="triggerWebhook(act.id, act.name)" style="margin-bottom:0.4rem;">
-                        <i class="fas" :class="act.icon || 'fa-bolt'"></i> <span x-text="act.name"></span>
+                    <button class="btn btn-primary" @click="triggerWebhook(act.id, act.name)" style="margin-bottom:.4rem">
+                        <i class="fas" :class="act.icon || 'fa-bolt'" aria-hidden="true"></i>
+                        <span x-text="act.name"></span>
                     </button>
                 </template>
             </div>
@@ -587,46 +721,49 @@
 
         <div class="card" data-id="card-actions" x-show="vis.actions">
             <div class="card-hdr">
-                <i class="fas fa-terminal card-icon"></i>
+                <i class="fas fa-terminal card-icon" aria-hidden="true"></i>
                 <span class="card-title">Quick Actions</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.actions ? 'is-collapsed' : ''" @click="toggleCollapse('actions')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.actions ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('actions')"
+                        :aria-expanded="!collapsed.actions"
+                        aria-controls="body-actions"
+                        aria-label="Toggle Quick Actions"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body action-list" x-show="!collapsed.actions">
+            <div class="card-body action-list" id="body-actions" x-show="!collapsed.actions">
 
                 <template x-for="act in customActions" :key="act.id">
-                    <button class="btn btn-primary" :disabled="runningScript" @click="runScript('custom', act.id)" style="margin-bottom:0.4rem;">
-                        <i class="fas" :class="act.icon || 'fa-play'"></i> <span x-text="act.name"></span>
+                    <button class="btn btn-primary" :disabled="runningScript" @click="runScript('custom', act.id)" style="margin-bottom:.4rem">
+                        <i class="fas" :class="act.icon || 'fa-play'" aria-hidden="true"></i>
+                        <span x-text="act.name"></span>
                     </button>
                 </template>
-                <div x-show="customActions && customActions.length > 0" style="height:1px; background:var(--border); margin: .4rem 0;"></div>
+                <div x-show="customActions && customActions.length > 0" style="height:1px;background:var(--border);margin:.4rem 0" role="separator"></div>
 
                 <div class="action-group" x-data="{ opt: false, target: 'all', dryRun: false, verify: false }">
-                    <button class="btn" :disabled="runningScript" @click="opt = !opt">
-                        <i class="fas fa-database"></i> NAS Backup Job
-                        <i class="fas fa-chevron-down" style="margin-left:auto; font-size:.7rem; transition:transform .2s" :style="opt?'transform:rotate(180deg)':''"></i>
+                    <button class="btn" :disabled="runningScript" @click="opt = !opt" :aria-expanded="opt">
+                        <i class="fas fa-database" aria-hidden="true"></i> NAS Backup Job
+                        <i class="fas fa-chevron-down" style="margin-left:auto;font-size:.7rem;transition:transform .2s" :style="opt?'transform:rotate(180deg)':''" aria-hidden="true"></i>
                     </button>
                     <div class="action-opts" x-show="opt" style="display:none">
-                        <div style="margin-bottom:.75rem;">
-                            <label class="field-label">Source Target</label>
-                            <select class="theme-select" style="width:100%; margin-bottom:.5rem;" x-model="target">
+                        <div style="margin-bottom:.75rem">
+                            <label class="field-label" for="backup-target">Source Target</label>
+                            <select id="backup-target" class="theme-select" style="width:100%;margin-bottom:.5rem" x-model="target">
                                 <option value="all">All Sources (Full Run)</option>
                                 <template x-for="src in backupSources" :key="src">
                                     <option :value="src" x-text="src"></option>
                                 </template>
                             </select>
                         </div>
-
-                        <div style="margin-bottom:.75rem;">
+                        <div style="margin-bottom:.75rem">
                             <label class="field-label">Destination</label>
-                            <div class="badge bn" style="text-transform:none; font-family:var(--font-data);" x-text="backupDest || 'Not configured'"></div>
+                            <div class="badge bn" style="text-transform:none;font-family:var(--font-data)" x-text="backupDest || 'Not configured'"></div>
                         </div>
-
-                        <div style="display:flex; gap:1rem; margin-bottom:.75rem;">
+                        <div style="display:flex;gap:1rem;margin-bottom:.75rem">
                             <label class="toggle-item"><input type="checkbox" x-model="dryRun"> Dry Run</label>
                             <label class="toggle-item"><input type="checkbox" x-model="verify"> Verify</label>
                         </div>
-
                         <button class="btn btn-sm btn-primary" style="width:100%" @click="
                             let args = [];
                             if (target !== 'all') args.push('--source', target);
@@ -634,36 +771,33 @@
                             if (verify) args.push('--verify');
                             runScript('backup', args.join(' '));
                             opt = false;
-                        "><i class="fas fa-play"></i> Execute Job</button>
+                        "><i class="fas fa-play" aria-hidden="true"></i> Execute Job</button>
                     </div>
                 </div>
 
                 <div class="action-group" x-data="{ opt: false, dryRun: false }">
-                    <button class="btn" :disabled="runningScript" @click="opt = !opt">
-                        <i class="fas fa-cloud-upload-alt"></i> Cloud Sync Job
+                    <button class="btn" :disabled="runningScript" @click="opt = !opt" :aria-expanded="opt">
+                        <i class="fas fa-cloud-upload-alt" aria-hidden="true"></i> Cloud Sync Job
                         <span x-show="cloudRemotes && cloudRemotes.length > 0" class="badge ba" style="margin-left:.4rem;text-transform:none;font-size:.6rem" x-text="cloudRemotes.length + ' remote' + (cloudRemotes.length !== 1 ? 's' : '')"></span>
                         <span x-show="rcloneAvailable === false" class="badge bd" style="margin-left:.4rem;font-size:.6rem">no rclone</span>
-                        <i class="fas fa-chevron-down" style="margin-left:auto; font-size:.7rem; transition:transform .2s" :style="opt?'transform:rotate(180deg)':''"></i>
+                        <i class="fas fa-chevron-down" style="margin-left:auto;font-size:.7rem;transition:transform .2s" :style="opt?'transform:rotate(180deg)':''" aria-hidden="true"></i>
                     </button>
                     <div class="action-opts" x-show="opt" style="display:none">
-
-                        <div x-show="rcloneAvailable === false" style="padding:.65rem .75rem;margin-bottom:.75rem;background:var(--danger-dim);border:1px solid rgba(255,23,68,.25);border-radius:4px;font-size:.78rem;color:var(--danger)">
-                            <i class="fas fa-times-circle" style="margin-right:.4rem"></i>
+                        <div x-show="rcloneAvailable === false" style="padding:.65rem .75rem;margin-bottom:.75rem;background:var(--danger-dim);border:1px solid color-mix(in srgb, var(--danger) 25%, transparent);border-radius:4px;font-size:.78rem;color:var(--danger)" role="alert">
+                            <i class="fas fa-times-circle" style="margin-right:.4rem" aria-hidden="true"></i>
                             <strong>rclone is not installed</strong>.
                         </div>
-
                         <div x-show="rcloneAvailable !== false && cloudRemotes && cloudRemotes.length > 0">
-                            <label class="field-label">Target Remote</label>
-                            <select class="theme-select" style="width:100%;margin-bottom:.65rem" x-model="selectedCloudRemote">
+                            <label class="field-label" for="cloud-remote-select">Target Remote</label>
+                            <select id="cloud-remote-select" class="theme-select" style="width:100%;margin-bottom:.65rem" x-model="selectedCloudRemote">
                                 <template x-for="r in cloudRemotes" :key="r.name">
                                     <option :value="r.name" x-text="r.name + ' — ' + r.label"></option>
                                 </template>
                             </select>
-
                             <template x-for="r in cloudRemotes.filter(r => r.name === selectedCloudRemote)" :key="r.name">
                                 <div style="margin-bottom:.75rem;padding:.6rem .8rem;background:var(--surface-2);border-radius:4px;border-left:3px solid" :style="'border-color:' + (r.color || 'var(--accent)')">
                                     <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem">
-                                        <i :class="r.icon" :style="'color:' + (r.color || 'var(--accent)')"></i>
+                                        <i :class="r.icon" :style="'color:' + (r.color || 'var(--accent)')" aria-hidden="true"></i>
                                         <span style="font-size:.82rem;font-weight:600" x-text="r.name + ':'"></span>
                                         <span class="badge" :style="'background:' + (r.color||'var(--accent)') + '22;color:' + (r.color||'var(--accent)') + ';border-color:' + (r.color||'var(--accent)') + '44;font-size:.6rem'" x-text="r.label"></span>
                                     </div>
@@ -672,23 +806,22 @@
                                             <span x-text="humanBytes(r.quota?.used) + ' used'"></span>
                                             <span x-text="humanBytes(r.quota?.total) + ' total'"></span>
                                         </div>
-                                        <div class="prog-track">
+                                        <div class="prog-track" role="progressbar" :aria-valuenow="r.quota?.percent||0" aria-valuemin="0" aria-valuemax="100">
                                             <div class="prog-fill" :class="(r.quota?.percent||0)>90?'f-danger':(r.quota?.percent||0)>75?'f-warning':'f-accent'" :style="'width:' + (r.quota?.percent||0) + '%'"></div>
                                         </div>
                                     </div>
                                 </div>
                             </template>
                         </div>
-
-                        <div x-show="rcloneAvailable !== false && !cloudRemotesLoading && (!cloudRemotes || cloudRemotes.length === 0)" style="padding:.6rem .75rem;margin-bottom:.75rem;background:var(--warning-dim);border:1px solid rgba(255,179,0,.25);border-radius:4px;font-size:.78rem;color:var(--warning)">
-                            <i class="fas fa-exclamation-triangle" style="margin-right:.4rem"></i>
-                            No remotes configured.
+                        <div x-show="rcloneAvailable !== false && !cloudRemotesLoading && (!cloudRemotes || cloudRemotes.length === 0)"
+                             style="padding:.6rem .75rem;margin-bottom:.75rem;background:var(--warning-dim);border:1px solid color-mix(in srgb, var(--warning) 25%, transparent);border-radius:4px;font-size:.78rem;color:var(--warning)"
+                             role="status">
+                            <i class="fas fa-exclamation-triangle" style="margin-right:.4rem" aria-hidden="true"></i>
+                            No remotes configured. Run <code>rclone config</code>.
                         </div>
-
-                        <div style="display:flex; gap:1rem; margin-bottom:.75rem;">
+                        <div style="display:flex;gap:1rem;margin-bottom:.75rem">
                             <label class="toggle-item"><input type="checkbox" x-model="dryRun"> Dry Run</label>
                         </div>
-
                         <div style="display:flex;gap:.4rem">
                             <button class="btn btn-sm btn-primary" style="flex:1"
                                     :disabled="rcloneAvailable === false || !cloudRemotes || cloudRemotes.length === 0 || !selectedCloudRemote"
@@ -699,56 +832,60 @@
                                         runScript('cloud', args.join(' '));
                                         opt = false;
                                     ">
-                                <i class="fas fa-play"></i> Execute Job
+                                <i class="fas fa-play" aria-hidden="true"></i> Execute Job
                             </button>
                         </div>
                     </div>
                 </div>
 
                 <div class="action-group" x-data="{ opt: false, dryRun: false }">
-                    <button class="btn" :disabled="runningScript" @click="opt = !opt">
-                        <i class="fas fa-folder-open"></i> Organize Downloads
-                        <i class="fas fa-chevron-down" style="margin-left:auto; font-size:.7rem; transition:transform .2s" :style="opt?'transform:rotate(180deg)':''"></i>
+                    <button class="btn" :disabled="runningScript" @click="opt = !opt" :aria-expanded="opt">
+                        <i class="fas fa-folder-open" aria-hidden="true"></i> Organize Downloads
+                        <i class="fas fa-chevron-down" style="margin-left:auto;font-size:.7rem;transition:transform .2s" :style="opt?'transform:rotate(180deg)':''" aria-hidden="true"></i>
                     </button>
                     <div class="action-opts" x-show="opt" style="display:none">
-                        <div style="margin-bottom:.75rem;">
+                        <div style="margin-bottom:.75rem">
                             <label class="field-label">Target Directory</label>
-                            <div class="badge bn" style="text-transform:none; font-family:var(--font-data);" x-text="downloadsDir || 'Not configured'"></div>
+                            <div class="badge bn" style="text-transform:none;font-family:var(--font-data)" x-text="downloadsDir || 'Not configured'"></div>
                         </div>
-                        <div style="display:flex; gap:1rem; margin-bottom:.75rem;">
+                        <div style="display:flex;gap:1rem;margin-bottom:.75rem">
                             <label class="toggle-item"><input type="checkbox" x-model="dryRun"> Dry Run</label>
                         </div>
-                        <button class="btn btn-sm btn-primary" style="width:100%" @click="
-                            runScript('organize', dryRun ? '--dry-run' : '');
-                            opt = false;
-                        "><i class="fas fa-play"></i> Execute Job</button>
+                        <button class="btn btn-sm btn-primary" style="width:100%" @click="runScript('organize', dryRun ? '--dry-run' : ''); opt = false;">
+                            <i class="fas fa-play" aria-hidden="true"></i> Execute Job
+                        </button>
                     </div>
                 </div>
 
                 <button class="btn" :disabled="runningScript" @click="runScript('verify')">
-                    <i class="fas fa-check-double"></i> Verify Backups
+                    <i class="fas fa-check-double" aria-hidden="true"></i> Verify Backups
                 </button>
                 <button class="btn" :disabled="runningScript" @click="runScript('diskcheck')">
-                    <i class="fas fa-broom"></i> Disk Cleanup
+                    <i class="fas fa-broom" aria-hidden="true"></i> Disk Cleanup
                 </button>
                 <button class="btn" :disabled="runningScript" @click="runScript('check_updates')">
-                    <i class="fas fa-arrow-circle-up"></i> Check Updates
+                    <i class="fas fa-arrow-circle-up" aria-hidden="true"></i> Check Updates
                 </button>
             </div>
         </div>
 
         <div class="card" data-id="card-bookmarks" x-show="vis.bookmarks">
             <div class="card-hdr">
-                <i class="fas fa-bookmark card-icon"></i>
+                <i class="fas fa-bookmark card-icon" aria-hidden="true"></i>
                 <span class="card-title">Homelab Links</span>
-                <i class="fas fa-chevron-down collapse-btn" :class="collapsed.bookmarks ? 'is-collapsed' : ''" @click="toggleCollapse('bookmarks')"></i>
-                <i class="fas fa-grip-lines drag-handle"></i>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.bookmarks ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('bookmarks')"
+                        :aria-expanded="!collapsed.bookmarks"
+                        aria-controls="body-bookmarks"
+                        aria-label="Toggle Homelab Links"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
-            <div class="card-body" x-show="!collapsed.bookmarks">
+            <div class="card-body" id="body-bookmarks" x-show="!collapsed.bookmarks">
                 <div class="bm-grid">
                     <template x-for="b in parsedBookmarks" :key="b.name">
-                        <a :href="b.url" target="_blank" class="bm-link">
-                            <i class="fas" :class="b.icon"></i>
+                        <a :href="b.url" target="_blank" rel="noopener noreferrer" class="bm-link">
+                            <i class="fas" :class="b.icon" aria-hidden="true"></i>
                             <span x-text="b.name"></span>
                         </a>
                     </template>
@@ -756,50 +893,149 @@
             </div>
         </div>
 
+    </div></main>
+</div><div x-show="showHistoryModal"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showHistoryModal=false"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="history-title"
+     x-cloak>
+    <div class="modal-box">
+        <div class="modal-title" id="history-title">
+            <i class="fas fa-chart-line" style="color:var(--accent)" aria-hidden="true"></i>
+            <span x-text="historyMetric + ' History'"></span>
+        </div>
+
+        <div class="field-2" style="margin-bottom: 1.5rem;">
+            <div>
+                <label class="field-label">Range</label>
+                <select class="field-select" x-model="historyRange" @change="fetchHistory()">
+                    <option value="24">Last 24 hours</option>
+                    <option value="168">Last 7 days</option>
+                    <option value="720">Last 30 days</option>
+                </select>
+            </div>
+            <div>
+                <label class="field-label">Resolution</label>
+                <select class="field-select" x-model="historyResolution" @change="fetchHistory()">
+                    <option value="60">1 minute</option>
+                    <option value="300">5 minutes</option>
+                    <option value="3600">1 hour</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="position: relative; height: 250px; width: 100%;">
+            <canvas id="historyChart"></canvas>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showHistoryModal=false">Close</button>
+        </div>
     </div>
 </div>
 
-<div x-show="showModal" class="modal-overlay" style="display:none" @click.self="showModal=false" x-cloak>
+<div x-show="showAuditModal"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showAuditModal=false"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="audit-title"
+     x-cloak>
+    <div class="modal-box" style="max-width: 900px;">
+        <div class="modal-title" id="audit-title">
+            <i class="fas fa-user-secret" style="color:var(--accent)" aria-hidden="true"></i>
+            Audit Log
+        </div>
+        <div style="max-height:60vh; overflow-y:auto; border: 1px solid var(--border); border-radius: 4px; -webkit-overflow-scrolling: touch;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>User</th>
+                        <th>Action</th>
+                        <th>Details</th>
+                        <th>IP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="entry in auditLog" :key="entry.time + entry.action">
+                        <tr>
+                            <td x-text="new Date(entry.time*1000).toLocaleString()"></td>
+                            <td x-text="entry.username"></td>
+                            <td x-text="entry.action"></td>
+                            <td x-text="entry.details"></td>
+                            <td x-text="entry.ip"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showAuditModal=false">Close</button>
+        </div>
+    </div>
+</div>
+
+<div x-show="showModal"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showModal=false"
+     role="dialog"
+     aria-modal="true"
+     :aria-label="modalTitle"
+     x-cloak>
     <div class="modal-box">
         <div class="modal-title">
-            <i class="fas fa-terminal" style="color:var(--accent)"></i>
+            <i class="fas fa-terminal" style="color:var(--accent)" aria-hidden="true"></i>
             <span x-text="modalTitle"></span>
         </div>
-        <pre id="console-out" class="console-out" x-text="modalOutput"></pre>
+        <pre id="console-out" class="console-out" x-text="modalOutput" aria-live="polite" aria-label="Script output"></pre>
         <div class="modal-footer">
             <button class="btn btn-sm" @click="showModal=false" :disabled="runningScript">Close</button>
         </div>
     </div>
 </div>
 
-<div x-show="showSettings" class="modal-overlay" style="display:none" @click.self="showSettings=false" x-cloak>
+
+<div x-show="showSettings"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showSettings=false"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="settings-title"
+     x-cloak>
     <div class="modal-box">
-        <div class="modal-title">
-            <i class="fas fa-sliders-h" style="color:var(--accent)"></i> Settings
+        <div class="modal-title" id="settings-title">
+            <i class="fas fa-sliders-h" style="color:var(--accent)" aria-hidden="true"></i> Settings
         </div>
 
-        <div class="settings-tabs">
-            <button class="stab" :class="settingsTab==='visibility'?'active':''" @click="settingsTab='visibility'">
-                <i class="fas fa-eye"></i> Visibility
+        <div class="settings-tabs" role="tablist">
+            <button class="stab" role="tab" :aria-selected="settingsTab==='visibility'" :class="settingsTab==='visibility'?'active':''" @click="settingsTab='visibility'">
+                <i class="fas fa-eye" aria-hidden="true"></i> Visibility
             </button>
-            <button class="stab" :class="settingsTab==='data'?'active':''" @click="settingsTab='data'">
-                <i class="fas fa-database"></i> General
+            <button class="stab" role="tab" :aria-selected="settingsTab==='data'" :class="settingsTab==='data'?'active':''" @click="settingsTab='data'">
+                <i class="fas fa-database" aria-hidden="true"></i> General
             </button>
-            <button class="stab" :class="settingsTab==='cloud'?'active':''" @click="settingsTab='cloud'; fetchCloudRemotes()">
-                <i class="fas fa-cloud"></i> Cloud
+            <button class="stab" role="tab" :aria-selected="settingsTab==='cloud'" :class="settingsTab==='cloud'?'active':''" @click="settingsTab='cloud'; fetchCloudRemotes()">
+                <i class="fas fa-cloud" aria-hidden="true"></i> Cloud
             </button>
-            <button class="stab" :class="settingsTab==='integrations'?'active':''" @click="settingsTab='integrations'">
-                <i class="fas fa-plug"></i> Integrations
+            <button class="stab" role="tab" :aria-selected="settingsTab==='integrations'" :class="settingsTab==='integrations'?'active':''" @click="settingsTab='integrations'">
+                <i class="fas fa-plug" aria-hidden="true"></i> Integrations
             </button>
-            <button class="stab" :class="settingsTab==='users'?'active':''" @click="settingsTab='users'; fetchUsers()" x-show="userRole==='admin'">
-                <i class="fas fa-users"></i> Users
+            <button class="stab" role="tab" :aria-selected="settingsTab==='users'" :class="settingsTab==='users'?'active':''" @click="settingsTab='users'; fetchUsers()" x-show="userRole==='admin'">
+                <i class="fas fa-users" aria-hidden="true"></i> Users
             </button>
-            <button class="stab" :class="settingsTab==='shortcuts'?'active':''" @click="settingsTab='shortcuts'">
-                <i class="fas fa-keyboard"></i> Shortcuts
+            <button class="stab" role="tab" :aria-selected="settingsTab==='shortcuts'" :class="settingsTab==='shortcuts'?'active':''" @click="settingsTab='shortcuts'">
+                <i class="fas fa-keyboard" aria-hidden="true"></i> Shortcuts
             </button>
         </div>
 
-        <div x-show="settingsTab==='visibility'">
+        <div x-show="settingsTab==='visibility'" role="tabpanel">
             <div class="s-section">
                 <span class="s-label">Module Visibility</span>
                 <div class="toggle-grid">
@@ -825,203 +1061,207 @@
             </div>
         </div>
 
-        <div x-show="settingsTab==='data'">
+        <div x-show="settingsTab==='data'" role="tabpanel">
             <div class="s-section">
                 <span class="s-label">Data Sources</span>
                 <div style="display:flex;flex-direction:column;gap:.7rem">
                     <div>
-                        <label class="field-label">Services to Monitor</label>
-                        <input class="field-input" type="text" x-model="monitoredServices">
+                        <label class="field-label" for="s-services">Services to Monitor</label>
+                        <input id="s-services" class="field-input" type="text" x-model="monitoredServices">
                     </div>
                     <div>
-                        <label class="field-label">Radar IPs (Native Ping)</label>
-                        <input class="field-input" type="text" x-model="radarIps">
+                        <label class="field-label" for="s-radar">Radar IPs (Native Ping)</label>
+                        <input id="s-radar" class="field-input" type="text" x-model="radarIps">
                     </div>
                     <div>
-                        <label class="field-label">Homelab Bookmarks</label>
-                        <textarea class="field-input" x-model="bookmarksStr" style="height:72px;resize:vertical"></textarea>
+                        <label class="field-label" for="s-bookmarks">Homelab Bookmarks</label>
+                        <textarea id="s-bookmarks" class="field-input" x-model="bookmarksStr" style="height:72px;resize:vertical"></textarea>
                     </div>
                 </div>
             </div>
-
             <div class="s-section">
                 <span class="s-label">Network Watchdog</span>
-                <p class="help-text" style="margin-bottom: .6rem">Alerts if WAN is down but Local DNS survives.</p>
+                <p class="help-text" style="margin-bottom:.6rem">Alerts if WAN is down but Local DNS survives.</p>
                 <div class="field-2">
                     <div>
-                        <label class="field-label">WAN Test IP (e.g. 8.8.8.8)</label>
-                        <input class="field-input" type="text" x-model="wanTestIp" placeholder="8.8.8.8">
+                        <label class="field-label" for="s-wan-ip">WAN Test IP (e.g. 8.8.8.8)</label>
+                        <input id="s-wan-ip" class="field-input" type="text" x-model="wanTestIp" placeholder="8.8.8.8">
                     </div>
                     <div>
-                        <label class="field-label">LAN DNS IP</label>
-                        <input class="field-input" type="text" x-model="lanTestIp" placeholder="192.168.100.111">
+                        <label class="field-label" for="s-lan-ip">LAN DNS IP</label>
+                        <input id="s-lan-ip" class="field-input" type="text" x-model="lanTestIp" placeholder="192.168.100.111">
                     </div>
                 </div>
             </div>
         </div>
 
-        <div x-show="settingsTab==='integrations'">
+        <div x-show="settingsTab==='integrations'" role="tabpanel">
             <div class="s-section">
                 <span class="s-label">TrueNAS SCALE Server</span>
                 <div class="field-2">
                     <div>
-                        <label class="field-label">API URL</label>
-                        <input class="field-input" type="text" x-model="truenasUrl" placeholder="http://192.168.1.50">
+                        <label class="field-label" for="s-truenas-url">API URL</label>
+                        <input id="s-truenas-url" class="field-input" type="url" x-model="truenasUrl" placeholder="http://192.168.1.50">
                     </div>
                     <div>
-                        <label class="field-label">API Key</label>
-                        <input class="field-input" type="password" x-model="truenasKey">
+                        <label class="field-label" for="s-truenas-key">API Key</label>
+                        <input id="s-truenas-key" class="field-input" type="password" x-model="truenasKey" autocomplete="off">
                     </div>
                 </div>
             </div>
-
             <div class="s-section">
-                <span class="s-label">Download & Media Stack</span>
+                <span class="s-label">Download &amp; Media Stack</span>
                 <div class="field-2">
                     <div>
-                        <label class="field-label">qBittorrent URL</label>
-                        <input class="field-input" type="text" x-model="qbitUrl" placeholder="http://192.168.1.50:8080">
+                        <label class="field-label" for="s-qbit-url">qBittorrent URL</label>
+                        <input id="s-qbit-url" class="field-input" type="url" x-model="qbitUrl" placeholder="http://192.168.1.50:8080">
                     </div>
-                    <div style="display:flex; gap:.5rem;">
+                    <div style="display:flex;gap:.5rem">
                         <div style="flex:1">
-                            <label class="field-label">User</label>
-                            <input class="field-input" type="text" x-model="qbitUser">
+                            <label class="field-label" for="s-qbit-user">User</label>
+                            <input id="s-qbit-user" class="field-input" type="text" x-model="qbitUser" autocomplete="username">
                         </div>
                         <div style="flex:1">
-                            <label class="field-label">Pass</label>
-                            <input class="field-input" type="password" x-model="qbitPass">
+                            <label class="field-label" for="s-qbit-pass">Pass</label>
+                            <input id="s-qbit-pass" class="field-input" type="password" x-model="qbitPass" autocomplete="current-password">
                         </div>
                     </div>
                 </div>
-                <div class="field-2" style="margin-top:.75rem;">
+                <div class="field-2" style="margin-top:.75rem">
                     <div>
-                        <label class="field-label">Radarr API URL & Key</label>
-                        <input class="field-input" type="text" x-model="radarrUrl" placeholder="http://192.168.1.50:7878" style="margin-bottom:.4rem;">
-                        <input class="field-input" type="password" x-model="radarrKey" placeholder="API Key">
+                        <label class="field-label" for="s-radarr-url">Radarr URL</label>
+                        <input id="s-radarr-url" class="field-input" type="url" x-model="radarrUrl" placeholder="http://192.168.1.50:7878" style="margin-bottom:.4rem">
+                        <label class="field-label" for="s-radarr-key">Radarr API Key</label>
+                        <input id="s-radarr-key" class="field-input" type="password" x-model="radarrKey" placeholder="API Key" autocomplete="off">
                     </div>
                     <div>
-                        <label class="field-label">Sonarr API URL & Key</label>
-                        <input class="field-input" type="text" x-model="sonarrUrl" placeholder="http://192.168.1.50:8989" style="margin-bottom:.4rem;">
-                        <input class="field-input" type="password" x-model="sonarrKey" placeholder="API Key">
+                        <label class="field-label" for="s-sonarr-url">Sonarr URL</label>
+                        <input id="s-sonarr-url" class="field-input" type="url" x-model="sonarrUrl" placeholder="http://192.168.1.50:8989" style="margin-bottom:.4rem">
+                        <label class="field-label" for="s-sonarr-key">Sonarr API Key</label>
+                        <input id="s-sonarr-key" class="field-input" type="password" x-model="sonarrKey" placeholder="API Key" autocomplete="off">
                     </div>
                 </div>
             </div>
-
             <div class="s-section">
                 <span class="s-label">Pi-hole DNS</span>
                 <div class="field-2">
                     <div>
-                        <label class="field-label">URL / IP</label>
-                        <input class="field-input" type="text" x-model="piholeUrl" placeholder="http://192.168.100.111">
+                        <label class="field-label" for="s-pihole-url">URL / IP</label>
+                        <input id="s-pihole-url" class="field-input" type="url" x-model="piholeUrl" placeholder="http://192.168.100.111">
                     </div>
                     <div>
-                        <label class="field-label">App Password (v6)</label>
-                        <input class="field-input" type="password" x-model="piholeToken">
+                        <label class="field-label" for="s-pihole-tok">App Password (v6)</label>
+                        <input id="s-pihole-tok" class="field-input" type="password" x-model="piholeToken" autocomplete="off">
                     </div>
                 </div>
             </div>
-
             <div class="s-section">
                 <span class="s-label">Media Stack (Plex API)</span>
                 <div class="field-2">
                     <div>
-                        <label class="field-label">Base URL</label>
-                        <input class="field-input" type="text" x-model="plexUrl" placeholder="http://vnnas.example.org:32400">
+                        <label class="field-label" for="s-plex-url">Base URL</label>
+                        <input id="s-plex-url" class="field-input" type="url" x-model="plexUrl" placeholder="http://vnnas.example.org:32400">
                     </div>
                     <div>
-                        <label class="field-label">X-Plex-Token</label>
-                        <input class="field-input" type="password" x-model="plexToken">
+                        <label class="field-label" for="s-plex-tok">X-Plex-Token</label>
+                        <input id="s-plex-tok" class="field-input" type="password" x-model="plexToken" autocomplete="off">
                     </div>
                 </div>
             </div>
-
             <div class="s-section">
                 <span class="s-label">Uptime Kuma (Prometheus)</span>
                 <div>
-                    <label class="field-label">Base URL</label>
-                    <input class="field-input" type="text" x-model="kumaUrl" placeholder="http://vnnas.example.org:3001">
+                    <label class="field-label" for="s-kuma-url">Base URL</label>
+                    <input id="s-kuma-url" class="field-input" type="url" x-model="kumaUrl" placeholder="http://vnnas.example.org:3001">
                 </div>
             </div>
-
             <div class="s-section">
                 <span class="s-label">Hardware Watchdog (Site B BMC Mapping)</span>
                 <div>
-                    <label class="field-label">Map OS IP to IPMI/BMC IP</label>
-                    <input class="field-input" type="text" x-model="bmcMap" placeholder="10.0.0.50|10.0.0.51">
+                    <label class="field-label" for="s-bmc-map">Map OS IP to IPMI/BMC IP</label>
+                    <input id="s-bmc-map" class="field-input" type="text" x-model="bmcMap" placeholder="10.0.0.50|10.0.0.51">
                 </div>
             </div>
         </div>
 
-        <div x-show="settingsTab==='cloud'">
+        <div x-show="settingsTab==='cloud'" role="tabpanel">
             <div class="s-section">
                 <span class="s-label">Cloud Remotes Configuration</span>
-                <div x-show="rcloneAvailable === false" style="color:var(--danger)">rclone is not installed.</div>
+                <div x-show="rcloneAvailable === false" style="color:var(--danger)" role="alert">rclone is not installed.</div>
                 <div x-show="rcloneAvailable !== false && cloudRemotes && cloudRemotes.length > 0">
                     <p class="help-text">Remotes found in rclone. Select default remote for Cloud Sync below.</p>
                 </div>
-                <div x-show="rcloneAvailable !== false && (!cloudRemotes || cloudRemotes.length === 0)" style="color:var(--warning)">
+                <div x-show="rcloneAvailable !== false && (!cloudRemotes || cloudRemotes.length === 0)" style="color:var(--warning)" role="status">
                     No remotes configured. Run <code>rclone config</code>.
                 </div>
-                <button class="btn btn-sm" @click="fetchCloudRemotes()" style="margin-top: 1rem;">
-                    <i class="fas fa-sync" :class="cloudRemotesLoading?'fa-spin':''"></i> Refresh Remotes
+                <button class="btn btn-sm" @click="fetchCloudRemotes()" style="margin-top:1rem">
+                    <i class="fas fa-sync" :class="cloudRemotesLoading?'fa-spin':''" aria-hidden="true"></i> Refresh Remotes
                 </button>
             </div>
         </div>
 
-        <div x-show="settingsTab==='users' && userRole==='admin'">
+        <div x-show="settingsTab==='users' && userRole==='admin'" role="tabpanel">
             <div class="s-section">
                 <span class="s-label">User Management</span>
-                <div x-show="showAddUserForm" class="add-user-form" style="margin-bottom: 1rem; border: 1px solid var(--border); padding: 1rem; border-radius: 4px;">
+                <div x-show="showAddUserForm" class="add-user-form" style="margin-bottom:1rem;border:1px solid var(--border);padding:1rem;border-radius:4px">
                     <div class="field-2">
                         <div>
-                            <label class="field-label">Username</label>
-                            <input class="field-input" type="text" x-model="newUsername" @keyup.enter="addUser()">
+                            <label class="field-label" for="new-username">Username</label>
+                            <input id="new-username" class="field-input" type="text" x-model="newUsername" @keyup.enter="addUser()" autocomplete="username">
                         </div>
                         <div>
-                            <label class="field-label">Password</label>
-                            <input class="field-input" type="password" x-model="newPassword" @keyup.enter="addUser()">
+                            <label class="field-label" for="new-password">Password</label>
+                            <input id="new-password" class="field-input" type="password" x-model="newPassword" @keyup.enter="addUser()" autocomplete="new-password">
                         </div>
                     </div>
                     <div style="margin-top:.75rem">
-                        <label class="field-label">Role</label>
-                        <select x-model="newRole" class="theme-select">
+                        <label class="field-label" for="new-role">Role</label>
+                        <select id="new-role" x-model="newRole" class="theme-select">
                             <option value="viewer">viewer</option>
                             <option value="admin">admin</option>
                         </select>
-                        <button class="btn btn-sm btn-primary" @click="addUser()" style="margin-left: 1rem;"><i class="fas fa-check"></i> Save</button>
+                        <button class="btn btn-sm btn-primary" @click="addUser()" style="margin-left:1rem"><i class="fas fa-check" aria-hidden="true"></i> Save</button>
                         <button class="btn btn-sm" @click="showAddUserForm=false; newUsername=''; newPassword=''; newRole='viewer'">Cancel</button>
                     </div>
                 </div>
 
                 <div style="display:flex;flex-direction:column;gap:.45rem;margin-bottom:.75rem">
                     <template x-for="u in userList" :key="u.username">
-                        <div class="user-row" style="display:flex; justify-content:space-between; padding: .5rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;">
+                        <div class="user-row" style="display:flex;justify-content:space-between;padding:.5rem;background:var(--surface-2);border:1px solid var(--border);border-radius:4px">
                             <div>
-                                <i class="fas fa-user" style="color:var(--text-muted); margin-right: .5rem;"></i>
-                                <span class="user-row-name" x-text="u.username"></span>
-                                <span class="badge" :class="u.role==='admin'?'ba':'bn'" x-text="u.role" style="margin-left: .5rem;"></span>
+                                <i class="fas fa-user" style="color:var(--text-muted);margin-right:.5rem" aria-hidden="true"></i>
+                                <span x-text="u.username"></span>
+                                <span class="badge" :class="u.role==='admin'?'ba':'bn'" x-text="u.role" style="margin-left:.5rem"></span>
                             </div>
-                            <div class="user-row-actions" style="display:flex; gap: .5rem;">
-                                <button class="btn btn-sm" @click="openPassModal(u.username)" title="Change password"><i class="fas fa-key"></i></button>
-                                <button class="btn btn-sm btn-danger" @click="confirmRemoveUser(u.username)" title="Remove user" x-show="u.username !== username"><i class="fas fa-trash"></i></button>
+                            <div style="display:flex;gap:.5rem">
+                                <button class="btn btn-sm" @click="openPassModal(u.username)" :aria-label="'Change password for ' + u.username">
+                                    <i class="fas fa-key" aria-hidden="true"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" @click="confirmRemoveUser(u.username)" :aria-label="'Remove user ' + u.username" x-show="u.username !== username">
+                                    <i class="fas fa-trash" aria-hidden="true"></i>
+                                </button>
                             </div>
                         </div>
                     </template>
                 </div>
                 <div style="display:flex;gap:.5rem">
-                    <button class="btn btn-sm" @click="fetchUsers()"><i class="fas fa-sync" :class="usersLoading?'fa-spin':''"></i> Refresh</button>
-                    <button class="btn btn-sm btn-primary" @click="showAddUserForm=!showAddUserForm"><i class="fas fa-plus"></i> Add User</button>
+                    <button class="btn btn-sm" @click="fetchUsers()">
+                        <i class="fas fa-sync" :class="usersLoading?'fa-spin':''" aria-hidden="true"></i> Refresh
+                    </button>
+                    <button class="btn btn-sm btn-primary" @click="showAddUserForm=!showAddUserForm">
+                        <i class="fas fa-plus" aria-hidden="true"></i> Add User
+                    </button>
                 </div>
             </div>
         </div>
 
-        <div x-show="settingsTab==='shortcuts'">
+        <div x-show="settingsTab==='shortcuts'" role="tabpanel">
             <div class="s-section">
                 <span class="s-label">Keyboard Shortcuts</span>
-                <div style="display: flex; gap: 1rem;">
-                    <div style="color: var(--text-muted);"><kbd>s</kbd> Settings</div>
-                    <div style="color: var(--text-muted);"><kbd>r</kbd> Refresh now</div>
-                    <div style="color: var(--text-muted);"><kbd>Esc</kbd> Close modal</div>
+                <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
+                    <div style="color:var(--text-muted)"><kbd>S</kbd> Settings</div>
+                    <div style="color:var(--text-muted)"><kbd>R</kbd> Refresh now</div>
+                    <div style="color:var(--text-muted)"><kbd>Esc</kbd> Close modal</div>
                 </div>
             </div>
         </div>
@@ -1029,72 +1269,112 @@
         <div class="settings-footer">
             <button class="btn btn-sm" @click="showSettings=false">Cancel</button>
             <button class="btn btn-sm btn-primary" @click="applySettings()">
-                <i class="fas fa-check"></i> Save & Apply
+                <i class="fas fa-check" aria-hidden="true"></i> Save &amp; Apply
             </button>
         </div>
     </div>
 </div>
 
-<div x-show="!authenticated" class="modal-overlay" style="display:none" x-cloak>
-    <div class="login-box" style="background:var(--surface); padding:2rem; border-radius:8px; border:1px solid var(--border); border-top:3px solid var(--accent); width:95%; max-width:400px; margin:auto;">
-        <div class="login-logo" style="display:flex; align-items:center; gap:.75rem; margin-bottom:1.5rem;">
-            <div class="login-logo-mark" style="width:42px; height:42px; background:var(--accent-dim); border:1px solid var(--accent); display:flex; align-items:center; justify-content:center; color:var(--accent); border-radius:6px;"><i class="fas fa-terminal"></i></div>
+
+<div x-show="!authenticated"
+     class="modal-overlay"
+     style="display:none"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="login-title"
+     x-cloak>
+    <div style="background:var(--surface);padding:2rem;border-radius:8px;border:1px solid var(--border);border-top:3px solid var(--accent);width:95%;max-width:400px;margin:auto">
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.5rem">
+            <div style="width:42px;height:42px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;color:var(--accent);border-radius:6px" aria-hidden="true">
+                <i class="fas fa-terminal"></i>
+            </div>
             <div>
-                <div class="login-title" style="font-weight:700; font-size:1.2rem; letter-spacing:.1em;">NOBA <span style="color:var(--accent)">//</span> CMD</div>
-                <div class="login-sub" style="font-size:.65rem; color:var(--text-muted); letter-spacing:.2em; text-transform:uppercase;">Command Center</div>
+                <div id="login-title" style="font-weight:700;font-size:1.2rem;letter-spacing:.1em">NOBA <span style="color:var(--accent)">//</span> CMD</div>
+                <div style="font-size:.65rem;color:var(--text-muted);letter-spacing:.2em;text-transform:uppercase">Command Center</div>
             </div>
         </div>
-        <div style="margin-bottom:1rem;">
-            <label class="field-label">Username</label>
-            <input class="field-input" type="text" x-model="loginUsername" @keyup.enter="doLogin" autofocus>
+        <div style="margin-bottom:1rem">
+            <label class="field-label" for="login-username">Username</label>
+            <input id="login-username" class="field-input" type="text" x-model="loginUsername" @keyup.enter="doLogin()" autofocus autocomplete="username">
         </div>
-        <div style="margin-bottom:1rem;">
-            <label class="field-label">Password</label>
-            <input class="field-input" type="password" x-model="loginPassword" @keyup.enter="doLogin">
+        <div style="margin-bottom:1rem">
+            <label class="field-label" for="login-password">Password</label>
+            <input id="login-password" class="field-input" type="password" x-model="loginPassword" @keyup.enter="doLogin()" autocomplete="current-password">
         </div>
-        <div x-show="loginError" style="color:var(--danger); font-size:.8rem; margin-bottom:1rem;" x-text="loginError"></div>
-        <button class="btn btn-primary" @click="doLogin" :disabled="loginLoading" style="width:100%;">
-            <i class="fas fa-spinner fa-spin" x-show="loginLoading"></i>
-            <i class="fas fa-sign-in-alt" x-show="!loginLoading"></i>
+        <div x-show="loginError" style="color:var(--danger);font-size:.8rem;margin-bottom:1rem" x-text="loginError" role="alert"></div>
+        <button class="btn btn-primary" @click="doLogin()" :disabled="loginLoading" style="width:100%">
+            <i class="fas fa-spinner fa-spin" x-show="loginLoading" aria-hidden="true"></i>
+            <i class="fas fa-sign-in-alt" x-show="!loginLoading" aria-hidden="true"></i>
             <span x-text="loginLoading ? 'Authenticating…' : 'Login'"></span>
         </button>
     </div>
 </div>
 
-<div x-show="showPassModal" class="modal-overlay" style="display:none" @click.self="showPassModal=false" x-cloak>
+
+<div x-show="showPassModal"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showPassModal=false"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="pass-modal-title"
+     x-cloak>
     <div class="modal-box" style="max-width:420px">
-        <div class="modal-title"><i class="fas fa-key" style="color:var(--accent)"></i> Change Password</div>
-        <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:1rem">Set a new password for <strong style="color:var(--text)" x-text="passModalUser"></strong></p>
+        <div class="modal-title" id="pass-modal-title">
+            <i class="fas fa-key" style="color:var(--accent)" aria-hidden="true"></i> Change Password
+        </div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:1rem">
+            Set a new password for <strong style="color:var(--text)" x-text="passModalUser"></strong>
+        </p>
         <div>
-            <label class="field-label">New Password</label>
-            <input class="field-input" type="password" x-model="passModalValue" @keyup.enter="confirmChangePassword()" x-ref="passInput">
+            <label class="field-label" for="pass-modal-input">New Password</label>
+            <input id="pass-modal-input" class="field-input" type="password" x-model="passModalValue" @keyup.enter="confirmChangePassword()" x-ref="passInput" autocomplete="new-password">
         </div>
         <div class="modal-footer">
             <button class="btn btn-sm" @click="showPassModal=false; passModalValue=''">Cancel</button>
-            <button class="btn btn-sm btn-primary" @click="confirmChangePassword()" :disabled="!passModalValue"><i class="fas fa-check"></i> Change</button>
+            <button class="btn btn-sm btn-primary" @click="confirmChangePassword()" :disabled="!passModalValue">
+                <i class="fas fa-check" aria-hidden="true"></i> Change
+            </button>
         </div>
     </div>
 </div>
 
-<div x-show="showRemoveModal" class="modal-overlay" style="display:none" @click.self="showRemoveModal=false" x-cloak>
+
+<div x-show="showRemoveModal"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showRemoveModal=false"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="remove-modal-title"
+     x-cloak>
     <div class="modal-box" style="max-width:380px">
-        <div class="modal-title"><i class="fas fa-exclamation-triangle" style="color:var(--danger)"></i> Remove User</div>
-        <p style="font-size:.84rem;margin-bottom:1.5rem">Remove user <strong style="color:var(--danger)" x-text="removeModalUser"></strong>? This cannot be undone.</p>
+        <div class="modal-title" id="remove-modal-title">
+            <i class="fas fa-exclamation-triangle" style="color:var(--danger)" aria-hidden="true"></i> Remove User
+        </div>
+        <p style="font-size:.84rem;margin-bottom:1.5rem">
+            Remove user <strong style="color:var(--danger)" x-text="removeModalUser"></strong>? This cannot be undone.
+        </p>
         <div class="modal-footer">
             <button class="btn btn-sm" @click="showRemoveModal=false">Cancel</button>
-            <button class="btn btn-sm btn-danger" @click="confirmRemove()"><i class="fas fa-trash"></i> Remove</button>
+            <button class="btn btn-sm btn-danger" @click="confirmRemove()">
+                <i class="fas fa-trash" aria-hidden="true"></i> Remove
+            </button>
         </div>
     </div>
 </div>
 
-<div class="toasts">
+
+<div class="toasts" role="log" aria-live="polite" aria-atomic="false">
     <template x-for="t in toasts" :key="t.id">
-        <div class="toast" :class="t.type">
-            <i class="fas" :class="t.type==='success'?'fa-check-circle':t.type==='error'?'fa-times-circle':'fa-info-circle'"></i>
+        <div class="toast" :class="t.type" role="status">
+            <i class="fas" :class="t.type==='success'?'fa-check-circle':t.type==='error'?'fa-times-circle':'fa-info-circle'" aria-hidden="true"></i>
             <span x-text="t.msg"></span>
         </div>
     </template>
 </div>
+
+<style>.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}</style>
 
 <script src="/static/app.js"></script>
 </body>

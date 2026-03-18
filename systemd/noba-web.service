@@ -1,16 +1,23 @@
 [Unit]
-Description=Nobara Web Dashboard
+Description=Noba Web Dashboard
 After=network.target
 
 [Service]
 Type=simple
-# Point directly to the new monolithic backend location
-ExecStart=/home/raizen/.local/libexec/noba/web/server.py
-WorkingDirectory=/home/raizen/.local/libexec/noba/web
+
+ExecStart=/usr/bin/python3 %h/.local/libexec/noba/web/server.py
+WorkingDirectory=%h/.local/libexec/noba/web
+
 Environment=PYTHONUNBUFFERED=1
 Environment=PORT=8080
+
 Restart=always
 RestartSec=5
+
+ProtectHome=off
+ProtectSystem=off
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=default.target

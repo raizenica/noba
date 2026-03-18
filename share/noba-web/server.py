@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nobara Command Center – Backend v1.9.0 (Modular UI & APIs)"""
+"""Noba Command Center – Backend v1.11.0 (Historical Data, Alert Rules, Audit)"""
 
 import glob
 import hashlib
@@ -7,6 +7,7 @@ import http.server
 import ipaddress
 import json
 import logging
+import operator
 import os
 import re
 import secrets
@@ -14,6 +15,8 @@ import shutil
 import shlex
 import signal
 import socketserver
+import ssl
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -27,11 +30,17 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
+# Ensure systemd journal captures stdout/stderr immediately without buffering
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 # ── Config ────────────────────────────────────────────────────────────────────
-VERSION        = '1.9.0'
+VERSION        = '1.11.0'
 PORT           = int(os.environ.get('PORT', 8080))
 HOST           = os.environ.get('HOST', '0.0.0.0')
-SCRIPT_DIR     = os.environ.get('NOBA_SCRIPT_DIR', os.path.expanduser('~/.local/bin'))
+SSL_CERT       = os.environ.get('SSL_CERT', '')
+SSL_KEY        = os.environ.get('SSL_KEY', '')
+SCRIPT_DIR     = os.environ.get('NOBA_SCRIPT_DIR', os.path.expanduser('~/.local/libexec/noba'))
 LOG_DIR        = os.path.expanduser('~/.local/share')
 PID_FILE       = os.environ.get('PID_FILE', '/tmp/noba-web-server.pid')
 ACTION_LOG     = os.path.join(os.path.expanduser('~/.local/share'), 'noba-action.log')
@@ -41,6 +50,16 @@ NOBA_YAML      = os.environ.get('NOBA_CONFIG', os.path.expanduser('~/.config/nob
 MAX_BODY_BYTES = 64 * 1024
 TOKEN_TTL_H    = 24
 STATS_INTERVAL = 5
+HISTORY_DB     = os.path.join(os.path.expanduser('~/.local/share'), 'noba-history.db')
+
+# Notifications cooldown to avoid spam (seconds)
+NOTIFICATION_COOLDOWN = 300
+
+# Metrics to store historically
+HISTORY_METRICS = [
+    'cpu_percent', 'mem_percent', 'cpu_temp', 'gpu_temp',
+    'disk_percent', 'ping_ms', 'net_rx_bytes', 'net_tx_bytes'
+]
 
 SCRIPT_MAP = {
     'backup':        'backup-to-nas.sh',
@@ -53,12 +72,12 @@ SCRIPT_MAP = {
 ALLOWED_ACTIONS = frozenset({'start', 'stop', 'restart', 'poweroff'})
 VALID_ROLES     = ('viewer', 'admin')
 
-# Fields allowed to be synced to the web config
 WEB_KEYS = frozenset([
     'piholeUrl', 'piholeToken', 'monitoredServices', 'radarIps', 'bookmarksStr',
     'plexUrl', 'plexToken', 'kumaUrl', 'bmcMap', 'truenasUrl', 'truenasKey',
     'radarrUrl', 'radarrKey', 'sonarrUrl', 'sonarrKey', 'qbitUrl', 'qbitUser', 'qbitPass',
-    'customActions', 'automations', 'wanTestIp', 'lanTestIp'
+    'customActions', 'automations', 'wanTestIp', 'lanTestIp',
+    'alertRules'
 ])
 
 _server_start_time = time.time()
@@ -93,9 +112,7 @@ _USERNAME_RE   = re.compile(r'^[^\s:/\\]{1,64}$')
 _PBKDF2_ITERS  = 200_000
 
 def _pbkdf2_hash(password: str, salt: str | None = None) -> str:
-    """Return a 'pbkdf2:<salt>:<hex-digest>' string ready to store."""
-    if salt is None:
-        salt = secrets.token_hex(16)
+    if salt is None: salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), _PBKDF2_ITERS)
     return f'pbkdf2:{salt}:{dk.hex()}'
 
@@ -115,12 +132,11 @@ def load_users():
         except Exception as e: logger.error("Failed to load users: %s", e)
     with users_db_lock: users_db = new_db
 
-    # BOOTSTRAP: Create default admin if DB is empty
     if not users_db:
-        with users_db_lock:
-            users_db['admin'] = (_pbkdf2_hash('admin'), 'admin')
+        with users_db_lock: users_db['admin'] = (_pbkdf2_hash('admin'), 'admin')
         save_users()
         logger.info("Created default admin user.")
+load_users()
 
 def save_users():
     with users_db_lock:
@@ -136,8 +152,6 @@ def save_users():
             if os.path.exists(tmp_db):
                 try: os.unlink(tmp_db)
                 except OSError: pass
-
-load_users()
 
 def verify_password(stored: str, password: str) -> bool:
     if not stored: return False
@@ -160,13 +174,11 @@ _USER_CACHE_TTL  = 30.0
 def load_old_user() -> tuple | None:
     global _user_cache, _user_cache_t
     with _user_cache_lock:
-        if time.time() - _user_cache_t < _USER_CACHE_TTL:
-            return _user_cache
+        if time.time() - _user_cache_t < _USER_CACHE_TTL: return _user_cache
     if not os.path.exists(AUTH_CONFIG): return None
     result = None
     try:
-        with open(AUTH_CONFIG, encoding='utf-8') as f:
-            line = f.readline().strip()
+        with open(AUTH_CONFIG, encoding='utf-8') as f: line = f.readline().strip()
         if ':' in line:
             username, rest = line.split(':', 1)
             h = rest.rsplit(':', 1)[0] if rest.count(':') >= 2 else rest
@@ -255,8 +267,7 @@ class TTLCache:
     def get(self, key: str, ttl: float = 30) -> object:
         with self._lock:
             entry = self._store.get(key)
-            if entry and (time.time() - entry['t']) < ttl:
-                return entry['v']
+            if entry and (time.time() - entry['t']) < ttl: return entry['v']
         return None
 
     def set(self, key: str, val: object) -> None:
@@ -294,7 +305,9 @@ def read_yaml_settings() -> dict:
         'plexUrl': '', 'plexToken': '', 'kumaUrl': '', 'bmcMap': '', 'backupSources': [], 'backupDest': '',
         'cloudRemote': '', 'downloadsDir': '', 'truenasUrl': '', 'truenasKey': '', 'radarrUrl': '', 'radarrKey': '',
         'sonarrUrl': '', 'sonarrKey': '', 'qbitUrl': '', 'qbitUser': '', 'qbitPass': '',
-        'customActions': [], 'automations': [], 'wanTestIp': '8.8.8.8', 'lanTestIp': ''
+        'customActions': [], 'automations': [], 'wanTestIp': '8.8.8.8', 'lanTestIp': '',
+        'notifications': {},
+        'alertRules': []
     }
     if not os.path.exists(NOBA_YAML): return defaults
     try:
@@ -312,6 +325,10 @@ def read_yaml_settings() -> dict:
                 if 'remote' in cloud: defaults['cloudRemote'] = cloud['remote']
                 downloads = full_conf.get('downloads', {})
                 if 'dir' in downloads: defaults['downloadsDir'] = downloads['dir']
+                notif = full_conf.get('notifications', {})
+                if notif: defaults['notifications'] = notif
+                rules = full_conf.get('alertRules')
+                if rules is not None: defaults['alertRules'] = rules
     except Exception: pass
     return defaults
 
@@ -323,14 +340,20 @@ def write_yaml_settings(settings: dict) -> bool:
             for k, v in settings.items():
                 if k not in WEB_KEYS: continue
                 tmp.write(f'  {k}: {json.dumps(v if isinstance(v, (str, list, dict)) else str(v))}\n')
+            if 'alertRules' in settings:
+                tmp.write(f'alertRules: {json.dumps(settings["alertRules"])}\n')
             tmp_path = tmp.name
+
         if os.path.exists(NOBA_YAML):
             backup = f'{NOBA_YAML}.bak.{int(time.time())}'
             try:
                 shutil.copy2(NOBA_YAML, backup)
                 for old_bak in sorted(glob.glob(f'{NOBA_YAML}.bak.*'))[:-5]: os.unlink(old_bak)
             except Exception: pass
-            r = subprocess.run(['yq', 'eval-all', 'select(fileIndex==0) * select(fileIndex==1)', NOBA_YAML, tmp_path], capture_output=True, text=True, timeout=5)
+            r = subprocess.run(
+                ['yq', 'eval-all', 'select(fileIndex==0) * select(fileIndex==1)', NOBA_YAML, tmp_path],
+                capture_output=True, text=True, timeout=5
+            )
             if r.returncode != 0: raise RuntimeError(f'yq merge failed: {r.stderr.strip()}')
             with open(NOBA_YAML, 'w') as f: f.write(r.stdout)
         else:
@@ -342,6 +365,221 @@ def write_yaml_settings(settings: dict) -> bool:
         if tmp_path and os.path.exists(tmp_path):
             try: os.unlink(tmp_path)
             except OSError: pass
+
+# ── Historical Database ───────────────────────────────────────────────────────
+def init_history_db():
+    db_dir = os.path.dirname(HISTORY_DB)
+    os.makedirs(db_dir, exist_ok=True)
+    with sqlite3.connect(HISTORY_DB) as conn:
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                metric TEXT NOT NULL,
+                value REAL,
+                tags TEXT
+            )
+        ''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_metric_time ON metrics(metric, timestamp)')
+
+def insert_metric(metric: str, value: float, tags: str = ''):
+    try:
+        with sqlite3.connect(HISTORY_DB) as conn:
+            c = conn.cursor()
+            c.execute('INSERT INTO metrics (timestamp, metric, value, tags) VALUES (?, ?, ?, ?)',
+                      (int(time.time()), metric, value, tags))
+    except Exception as e:
+        logger.error(f"Failed to insert metric {metric}: {e}")
+
+def get_history(metric: str, range_hours: int = 24, resolution: int = 60):
+    """Retrieve aggregated history with given resolution (seconds)."""
+    cutoff = int(time.time()) - range_hours * 3600
+    query = '''
+        SELECT (timestamp / ?) * ? as slot, AVG(value)
+        FROM metrics
+        WHERE metric = ? AND timestamp >= ?
+        GROUP BY slot
+        ORDER BY slot ASC
+    '''
+    with sqlite3.connect(HISTORY_DB) as conn:
+        c = conn.cursor()
+        c.execute(query, (resolution, resolution, metric, cutoff))
+        rows = c.fetchall()
+    return [{'time': row[0], 'value': round(row[1], 2)} for row in rows]
+
+# ── Audit Log ─────────────────────────────────────────────────────────────────
+def audit_log(action: str, username: str, details: str = '', ip: str = ''):
+    """Write an audit entry to the database."""
+    try:
+        with sqlite3.connect(HISTORY_DB) as conn:
+            c = conn.cursor()
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    ip TEXT
+                )
+            ''')
+            c.execute('INSERT INTO audit (timestamp, username, action, details, ip) VALUES (?, ?, ?, ?, ?)',
+                      (int(time.time()), username, action, details, ip))
+    except Exception as e:
+        logger.error(f"Failed to write audit log: {e}")
+
+def get_audit(limit: int = 100):
+    with sqlite3.connect(HISTORY_DB) as conn:
+        c = conn.cursor()
+        c.execute('''
+            SELECT timestamp, username, action, details, ip
+            FROM audit
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (limit,))
+        rows = c.fetchall()
+    return [{'time': r[0], 'username': r[1], 'action': r[2], 'details': r[3], 'ip': r[4]} for r in rows]
+
+# ── Notification Engine (Rule‑Based) ──────────────────────────────────────────
+_sent_alerts = {}
+
+def _safe_eval(condition_str: str, flat_stats: dict) -> bool:
+    """Safe parser for conditions like: 'cpu_percent > 90'"""
+    ops = {'>': operator.gt, '<': operator.lt, '>=': operator.ge, '<=': operator.le, '==': operator.eq, '!=': operator.ne}
+    # Clean up legacy dictionary syntax in case it remains in YAML
+    condition_str = condition_str.replace("flat['", "").replace('flat["', "").replace("']", "").replace('"]', "")
+    match = re.match(r'^\s*([a-zA-Z0-9_\[\]\.]+)\s*(>|<|>=|<=|==|!=)\s*([0-9\.-]+)\s*$', condition_str)
+    if match:
+        metric, op, val = match.groups()
+        if metric in flat_stats:
+            try:
+                return ops[op](float(flat_stats[metric]), float(val))
+            except ValueError:
+                return False
+    return False
+
+def evaluate_alert_rules(stats: dict):
+    cfg = read_yaml_settings()
+    rules = cfg.get('alertRules', [])
+    if not rules:
+        return
+
+    flat = {}
+    for k, v in stats.items():
+        if isinstance(v, (int, float, str)):
+            flat[k] = v
+        elif isinstance(v, list):
+            for i, item in enumerate(v):
+                if isinstance(item, dict):
+                    for subk, subv in item.items():
+                        if isinstance(subv, (int, float)):
+                            flat[f"{k}[{i}].{subk}"] = subv
+
+    for rule in rules:
+        try:
+            rule_id = rule.get('id', 'unknown')
+            condition = rule.get('condition', '')
+            if not condition:
+                continue
+
+            if _safe_eval(condition, flat):
+                now = time.time()
+                last = _sent_alerts.get(rule_id, 0)
+                if now - last < NOTIFICATION_COOLDOWN:
+                    continue
+                _sent_alerts[rule_id] = now
+                severity = rule.get('severity', 'warning')
+                message = rule.get('message', condition)
+                channels = rule.get('channels', [])
+                _dispatch_notifications(severity, message, cfg.get('notifications', {}), channels)
+        except Exception as e:
+            logger.error(f"Error evaluating rule {rule.get('id')}: {e}")
+
+def _dispatch_notifications(level: str, msg: str, notif_cfg: dict, channels: list = None):
+    if not channels:
+        email = notif_cfg.get('email', {})
+        if email.get('enabled'): _send_email(level, msg, email)
+        tg = notif_cfg.get('telegram', {})
+        if tg.get('enabled'): _send_telegram(level, msg, tg)
+        dc = notif_cfg.get('discord', {})
+        if dc.get('enabled'): _send_discord(level, msg, dc)
+        sl = notif_cfg.get('slack', {})
+        if sl.get('enabled'): _send_slack(level, msg, sl)
+    else:
+        for ch in channels:
+            if ch == 'email':
+                email = notif_cfg.get('email', {})
+                if email.get('enabled'): _send_email(level, msg, email)
+            elif ch == 'telegram':
+                tg = notif_cfg.get('telegram', {})
+                if tg.get('enabled'): _send_telegram(level, msg, tg)
+            elif ch == 'discord':
+                dc = notif_cfg.get('discord', {})
+                if dc.get('enabled'): _send_discord(level, msg, dc)
+            elif ch == 'slack':
+                sl = notif_cfg.get('slack', {})
+                if sl.get('enabled'): _send_slack(level, msg, sl)
+
+def _send_email(level, msg, cfg):
+    try:
+        import smtplib
+        from email.message import EmailMessage
+        smtp, user, passwd = cfg.get('smtp_server', ''), cfg.get('username', ''), cfg.get('password', '')
+        from_addr, to_addr = cfg.get('from', ''), cfg.get('to', '')
+        if smtp and user and passwd and from_addr and to_addr:
+            em = EmailMessage()
+            em.set_content(f"NOBA Alert [{level}]: {msg}")
+            em['Subject'] = f"NOBA {level.upper()} Alert"
+            em['From'] = from_addr
+            em['To'] = to_addr
+            with smtplib.SMTP(smtp) as s:
+                if cfg.get('starttls'): s.starttls()
+                s.login(user, passwd)
+                s.send_message(em)
+            logger.info(f"Sent email notification: {msg}")
+    except Exception as e: logger.error(f"Email notification failed: {e}")
+
+def _send_telegram(level, msg, cfg):
+    try:
+        token, chat_id = cfg.get('bot_token', ''), cfg.get('chat_id', '')
+        if token and chat_id:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            data = urllib.parse.urlencode({'chat_id': chat_id, 'text': f"*NOBA {level.upper()}*: {msg}"}).encode()
+            req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/x-www-form-urlencoded'})
+            urllib.request.urlopen(req, timeout=5)
+            logger.info(f"Sent Telegram notification: {msg}")
+    except Exception as e: logger.error(f"Telegram notification failed: {e}")
+
+def _send_discord(level, msg, cfg):
+    try:
+        webhook = cfg.get('webhook_url', '')
+        if webhook:
+            payload = json.dumps({'content': f"**NOBA {level.upper()}**\n{msg}"}).encode('utf-8')
+            req = urllib.request.Request(webhook, data=payload, headers={'Content-Type': 'application/json'})
+            urllib.request.urlopen(req, timeout=5)
+            logger.info(f"Sent Discord notification: {msg}")
+    except Exception as e: logger.error(f"Discord notification failed: {e}")
+
+def _send_slack(level, msg, cfg):
+    try:
+        webhook = cfg.get('webhook_url', '')
+        if webhook:
+            payload = json.dumps({'text': f"*NOBA {level.upper()} Alert*\n{msg}"}).encode('utf-8')
+            req = urllib.request.Request(webhook, data=payload, headers={'Content-Type': 'application/json'})
+            urllib.request.urlopen(req, timeout=5)
+            logger.info(f"Sent Slack notification: {msg}")
+    except Exception as e: logger.error(f"Slack notification failed: {e}")
+
+def send_notification(level: str, msg: str, category: str = None) -> None:
+    cfg = read_yaml_settings()
+    notif_cfg = cfg.get('notifications', {})
+    if not notif_cfg: return
+    now = time.time()
+    key = category or msg
+    if now - _sent_alerts.get(key, 0) < NOTIFICATION_COOLDOWN: return
+    _sent_alerts[key] = now
+    threading.Thread(target=_dispatch_notifications, args=(level, msg, notif_cfg, None), daemon=True).start()
 
 # ── Integrations ──────────────────────────────────────────────────────────────
 _state_lock = threading.Lock()
@@ -364,14 +602,11 @@ def get_truenas(url: str, key: str) -> dict:
         with urllib.request.urlopen(req1, timeout=4) as r:
             for app in json.loads(r.read().decode()):
                 result['apps'].append({'name': app.get('name', 'Unknown'), 'state': app.get('state', 'Unknown')})
-
         req2 = urllib.request.Request(f"{url.rstrip('/')}/api/v2.0/alert/list", headers=hdrs)
         with urllib.request.urlopen(req2, timeout=4) as r:
             for alert in json.loads(r.read().decode()):
                 if alert.get('level') in ['WARNING', 'CRITICAL'] and not alert.get('dismissed'):
                     result['alerts'].append({'level': alert.get('level'), 'text': alert.get('formatted', 'Unknown Alert')})
-
-        # NEW: Fetch all Virtual Machines for public configurability
         try:
             req3 = urllib.request.Request(f"{url.rstrip('/')}/api/v2.0/vm", headers=hdrs)
             with urllib.request.urlopen(req3, timeout=4) as r:
@@ -382,7 +617,6 @@ def get_truenas(url: str, key: str) -> dict:
                         'state': vm.get('status', {}).get('state', 'UNKNOWN')
                     })
         except Exception as e: logger.warning(f"TrueNAS VM fetch failed: {e}")
-
         result['status'] = 'online'
     except Exception: pass
     return result
@@ -392,8 +626,7 @@ def get_servarr(url: str, key: str) -> dict:
     hdrs = {'X-Api-Key': key, 'Accept': 'application/json'}
     try:
         req = urllib.request.Request(f"{url.rstrip('/')}/api/v3/queue", headers=hdrs)
-        with urllib.request.urlopen(req, timeout=3) as r:
-            return {'queue_count': json.loads(r.read().decode()).get('totalRecords', 0), 'status': 'online'}
+        with urllib.request.urlopen(req, timeout=3) as r: return {'queue_count': json.loads(r.read().decode()).get('totalRecords', 0), 'status': 'online'}
     except Exception: return {'queue_count': 0, 'status': 'offline'}
 
 def get_qbit(url: str, user: str, password: str) -> dict:
@@ -419,11 +652,12 @@ def get_qbit(url: str, user: str, password: str) -> dict:
 
 def get_plex(url: str, token: str) -> dict | None:
     if not url or not token: return None
+    base = url.rstrip('/')
     hdrs = {'Accept': 'application/json', 'X-Plex-Token': token}
     try:
-        req1 = urllib.request.Request(f"{url.rstrip('/')}/status/sessions", headers=hdrs)
+        req1 = urllib.request.Request(f"{base}/status/sessions", headers=hdrs)
         with urllib.request.urlopen(req1, timeout=3) as r: sessions = json.loads(r.read().decode()).get('MediaContainer', {}).get('size', 0)
-        req2 = urllib.request.Request(f"{url.rstrip('/')}/activities", headers=hdrs)
+        req2 = urllib.request.Request(f"{base}/activities", headers=hdrs)
         with urllib.request.urlopen(req2, timeout=3) as r: activities = json.loads(r.read().decode()).get('MediaContainer', {}).get('size', 0)
         return {'sessions': sessions, 'activities': activities, 'status': 'online'}
     except Exception: return {'sessions': 0, 'activities': 0, 'status': 'offline'}
@@ -432,8 +666,7 @@ def get_kuma(url: str) -> list:
     if not url: return []
     try:
         req = urllib.request.Request(f"{url.rstrip('/')}/metrics")
-        with urllib.request.urlopen(req, timeout=3) as r:
-            lines = r.read().decode().splitlines()
+        with urllib.request.urlopen(req, timeout=3) as r: lines = r.read().decode().splitlines()
         monitors = []
         for line in lines:
             if line.startswith('monitor_status{'):
@@ -454,11 +687,23 @@ def get_pihole(url: str, token: str) -> dict | None:
         with urllib.request.urlopen(req, timeout=3) as r: return json.loads(r.read().decode())
     try:
         data = _get('/api/stats/summary', {'sid': token} if token else {})
-        return {'queries': data.get('queries', {}).get('total', 0), 'blocked': data.get('ads', {}).get('blocked', 0), 'percent': round(data.get('ads', {}).get('percentage', 0.0), 1), 'status':  data.get('gravity', {}).get('status', 'unknown'), 'domains': f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}"}
+        return {
+            'queries': data.get('queries', {}).get('total', 0),
+            'blocked': data.get('ads', {}).get('blocked', 0),
+            'percent': round(data.get('ads', {}).get('percentage', 0.0), 1),
+            'status':  data.get('gravity', {}).get('status', 'unknown'),
+            'domains': f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}"
+        }
     except Exception: pass
     try:
         data = _get('/admin/api.php?summaryRaw' + (f'&auth={token}' if token else ''))
-        return {'queries': data.get('dns_queries_today', 0), 'blocked': data.get('ads_blocked_today', 0), 'percent': round(data.get('ads_percentage_today', 0), 1), 'status':  data.get('status', 'enabled'), 'domains': f"{data.get('domains_being_blocked', 0):,}"}
+        return {
+            'queries': data.get('dns_queries_today', 0),
+            'blocked': data.get('ads_blocked_today', 0),
+            'percent': round(data.get('ads_percentage_today', 0), 1),
+            'status':  data.get('status', 'enabled'),
+            'domains': f"{data.get('domains_being_blocked', 0):,}"
+        }
     except Exception: return None
 
 def human_bps(bps: float) -> str:
@@ -515,7 +760,7 @@ def ping_host(ip: str) -> tuple:
     if not validate_ip(ip): return ip, False, 0
     try:
         t0 = time.time()
-        r  = subprocess.run(['ping', '-c', '1', '-W', '1', ip], capture_output=True, timeout=2.5)
+        r = subprocess.run(['ping', '-c', '1', '-W', '1', ip], capture_output=True, timeout=2.5)
         return ip, r.returncode == 0, round((time.time() - t0) * 1000)
     except Exception: return ip, False, 0
 
@@ -525,7 +770,7 @@ def get_service_status(svc: str) -> tuple:
     for scope, is_user in ((['--user'], True), ([], False)):
         cmd = ['systemctl'] + scope + ['show', '-p', 'ActiveState,LoadState', svc]
         out = run(cmd, timeout=2)
-        d   = dict(line.split('=', 1) for line in out.splitlines() if '=' in line)
+        d = dict(line.split('=', 1) for line in out.splitlines() if '=' in line)
         if d.get('LoadState') not in (None, '', 'not-found'):
             state = d.get('ActiveState', 'unknown')
             if state == 'inactive' and svc.endswith('.service'):
@@ -598,8 +843,11 @@ def _collect_system() -> dict:
         avail = mm.get('MemAvailable', 0) // 1024
         s['memory'] = f'{tot - avail} MiB / {tot} MiB'
         s['memPercent'] = round(100 * (tot - avail) / tot) if tot > 0 else 0
-    except Exception:
-        s.setdefault('uptime', '--'); s.setdefault('loadavg', '--'); s.setdefault('memPercent', 0)
+    except Exception as e:
+        logger.debug(f"System stats partial failure: {e}")
+        s.setdefault('uptime', '--')
+        s.setdefault('loadavg', '--')
+        s.setdefault('memPercent', 0)
     return s
 
 def _collect_hardware() -> dict:
@@ -628,7 +876,13 @@ def _collect_storage() -> dict:
         if any(mount.startswith(p) for p in ('/var/lib/snapd', '/boot', '/run', '/snap')): continue
         try:
             pct = int(parts[4].replace('%', ''))
-            disks.append({'mount': mount, 'percent': pct, 'barClass': 'danger' if pct >= 90 else 'warning' if pct >= 75 else 'success', 'size': parts[1].replace('M', ' MiB'), 'used': parts[2].replace('M', ' MiB')})
+            disks.append({
+                'mount': mount,
+                'percent': pct,
+                'barClass': 'danger' if pct >= 90 else 'warning' if pct >= 75 else 'success',
+                'size': parts[1].replace('M', ' MiB'),
+                'used': parts[2].replace('M', ' MiB')
+            })
         except Exception: pass
     pools = []
     for line in run(['zpool', 'list', '-H', '-o', 'name,health'], timeout=3, cache_key='zpool', cache_ttl=15).splitlines():
@@ -654,23 +908,40 @@ def _collect_network() -> dict:
 def _build_alerts(stats: dict) -> list:
     alerts = []
     cpu = stats.get('cpuPercent', 0)
-    if cpu > 90: alerts.append({'level': 'danger',  'msg': f'CPU critical: {cpu}%'})
-    elif cpu > 75: alerts.append({'level': 'warning', 'msg': f'CPU high: {cpu}%'})
+    if cpu > 90:
+        alerts.append({'level': 'danger',  'msg': f'CPU critical: {cpu}%'})
+        send_notification('danger', f'CPU critical: {cpu}%', category='cpu_crit')
+    elif cpu > 75:
+        alerts.append({'level': 'warning', 'msg': f'CPU high: {cpu}%'})
+        send_notification('warning', f'CPU high: {cpu}%', category='cpu_high')
     ct = stats.get('cpuTemp', 'N/A')
     if ct != 'N/A':
         t = int(ct.replace('°C', ''))
-        if t > 85: alerts.append({'level': 'danger',  'msg': f'CPU temp critical: {t}°C'})
-        elif t > 70: alerts.append({'level': 'warning', 'msg': f'CPU temp elevated: {t}°C'})
+        if t > 85:
+            alerts.append({'level': 'danger',  'msg': f'CPU temp critical: {t}°C'})
+            send_notification('danger', f'CPU temp critical: {t}°C', category='temp_crit')
+        elif t > 70:
+            alerts.append({'level': 'warning', 'msg': f'CPU temp elevated: {t}°C'})
+            send_notification('warning', f'CPU temp elevated: {t}°C', category='temp_high')
     for disk in stats.get('disks', []):
         p = disk.get('percent', 0)
-        if p >= 90: alerts.append({'level': 'danger',  'msg': f"Disk {disk['mount']} at {p}%"})
-        elif p >= 80: alerts.append({'level': 'warning', 'msg': f"Disk {disk['mount']} at {p}%"})
+        if p >= 90:
+            alerts.append({'level': 'danger',  'msg': f"Disk {disk['mount']} at {p}%"})
+            send_notification('danger', f"Disk {disk['mount']} at {p}%", category=f"disk_crit_{disk['mount']}")
+        elif p >= 80:
+            alerts.append({'level': 'warning', 'msg': f"Disk {disk['mount']} at {p}%"})
+            send_notification('warning', f"Disk {disk['mount']} at {p}%", category=f"disk_high_{disk['mount']}")
     for svc in stats.get('services', []):
-        if svc.get('status') == 'failed': alerts.append({'level': 'danger', 'msg': f"Service failed: {svc['name']}"})
+        if svc.get('status') == 'failed':
+            alerts.append({'level': 'danger', 'msg': f"Service failed: {svc['name']}"})
+            send_notification('danger', f"Service failed: {svc['name']}", category=f"svc_{svc['name']}")
     tn = stats.get('truenas')
     if tn and tn.get('status') == 'online':
         for alert in tn.get('alerts', []):
-            alerts.append({'level': 'danger' if alert.get('level') == 'CRITICAL' else 'warning', 'msg': f"TrueNAS: {alert.get('text')}"})
+            if alert.get('level') in ['WARNING', 'CRITICAL']:
+                level = 'danger' if alert.get('level') == 'CRITICAL' else 'warning'
+                alerts.append({'level': level, 'msg': f"TrueNAS: {alert.get('text')}"})
+                send_notification(level, f"TrueNAS: {alert.get('text')}", category=f"tn_alert_{alert.get('text')[:20]}")
     return alerts
 
 _pool = ThreadPoolExecutor(max_workers=24, thread_name_prefix='noba-worker')
@@ -705,7 +976,6 @@ def collect_stats(qs: dict) -> dict:
     qbit_user= cfg.get('qbitUser',   '')
     qbit_pass= cfg.get('qbitPass',   '')
 
-    # NEW: Network Watchdog IPs
     wan_ip   = cfg.get('wanTestIp', '')
     lan_ip   = cfg.get('lanTestIp', '')
 
@@ -718,7 +988,6 @@ def collect_stats(qs: dict) -> dict:
     ping_futs = {_pool.submit(ping_host, ip): ip for ip in ip_list}
     bmc_futs  = {_pool.submit(ping_host, bmc_ip): (os_ip, bmc_ip) for os_ip, bmc_ip in bmc_list}
 
-    # NEW: Watchdog Pings
     wan_fut   = _pool.submit(ping_host, wan_ip) if wan_ip else None
     lan_fut   = _pool.submit(ping_host, lan_ip) if lan_ip else None
 
@@ -747,7 +1016,6 @@ def collect_stats(qs: dict) -> dict:
         except Exception: radar.append({'ip': ip, 'status': 'Down', 'ms': 0})
     stats['radar'] = radar
 
-    # NEW: Watchdog Aggregation
     stats['netHealth'] = {'wan': 'Down', 'lan': 'Down', 'configured': bool(wan_ip or lan_ip)}
     if wan_fut:
         try: _, wan_up, _ = wan_fut.result(timeout=3); stats['netHealth']['wan'] = 'Up' if wan_up else 'Down'
@@ -788,7 +1056,30 @@ def collect_stats(qs: dict) -> dict:
             os_status = next((r['status'] for r in radar if r['ip'] == os_ip), None)
             if os_status == 'Down' and bmc_up:
                  stats['alerts'].append({'level': 'danger', 'msg': f'BMC Sentinel: {os_ip} OS offline, but BMC ({bmc_ip}) reachable! Likely RAID priority reset.'})
+                 send_notification('danger', f'BMC Sentinel: {os_ip} OS offline, but BMC reachable.', category=f"bmc_{os_ip}")
         except Exception: pass
+
+    evaluate_alert_rules(stats)
+
+    try:
+        insert_metric('cpu_percent', stats.get('cpuPercent', 0))
+        insert_metric('mem_percent', stats.get('memPercent', 0))
+        ct = stats.get('cpuTemp', 'N/A')
+        if ct != 'N/A':
+            insert_metric('cpu_temp', float(ct.replace('°C', '')))
+        gt = stats.get('gpuTemp', 'N/A')
+        if gt != 'N/A':
+            insert_metric('gpu_temp', float(gt.replace('°C', '')))
+        for disk in stats.get('disks', []):
+            insert_metric('disk_percent', disk['percent'], disk['mount'])
+        for r in radar:
+            if r['status'] == 'Up' and r['ms'] > 0:
+                insert_metric('ping_ms', r['ms'], r['ip'])
+        rx, tx = get_net_io()
+        insert_metric('net_rx_bytes', rx)
+        insert_metric('net_tx_bytes', tx)
+    except Exception as e:
+        logger.error(f"Failed to store history: {e}")
 
     return stats
 
@@ -831,7 +1122,6 @@ _active_job: dict | None = None
 _job_lock = threading.Lock()
 
 class Handler(http.server.SimpleHTTPRequestHandler):
-
     server_version = f"noba-web/{VERSION}"
     sys_version = ""
 
@@ -862,12 +1152,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json({'error': 'Invalid JSON'}, 400)
             return None
 
+    def _audit(self, action: str, details: str = ''):
+        username, _ = authenticate_request(self.headers)
+        if username:
+            audit_log(action, username, details, self._client_ip())
+
     def do_GET(self):
         parsed = urlparse(self.path)
         qs     = parse_qs(parsed.query)
         path   = parsed.path
 
-        if path in ('/', '/index.html') or path.startswith('/static/'):
+        if path in ('/', '/index.html') or path.startswith('/static/') or path == '/manifest.json':
             super().do_GET()
             return
 
@@ -887,7 +1182,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == '/api/stats':
             _bg.update_qs(qs)
             try: self._json(_bg.get() or collect_stats(qs))
-            except Exception as e: self._json({'error': str(e)}, 500)
+            except Exception as e:
+                logger.exception('Error in /api/stats')
+                self._json({'error': str(e)}, 500)
+            return
+
+        if path == '/api/notifications/test':
+            if role != 'admin':
+                self._json({'error': 'Forbidden'}, 403)
+                return
+            send_notification('info', 'This is a test notification from NOBA', category='test')
+            self._audit('test_notification', 'Test notification triggered')
+            self._json({'status': 'ok', 'message': 'Notification sent'})
             return
 
         if path == '/api/settings':
@@ -897,6 +1203,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == '/api/cloud-remotes':
             try: self._json(get_rclone_remotes())
             except Exception: self._json({'available': False, 'remotes': []})
+            return
+
+        if path.startswith('/api/history/'):
+            metric = path[13:]
+            try:
+                range_h = int(qs.get('range', ['24'])[0])
+                resolution = int(qs.get('resolution', ['60'])[0])
+                data = get_history(metric, range_h, resolution)
+                self._json(data)
+            except Exception as e:
+                self._json({'error': str(e)}, 500)
+            return
+
+        if path == '/api/audit':
+            if role != 'admin':
+                self._json({'error': 'Forbidden'}, 403)
+                return
+            try:
+                limit = int(qs.get('limit', ['100'])[0])
+                self._json(get_audit(limit))
+            except Exception as e:
+                self._json({'error': str(e)}, 500)
             return
 
         if path == '/api/stream':
@@ -985,17 +1313,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             user_old = load_old_user()
             if user_old and secrets.compare_digest(username, user_old[0]) and verify_password(user_old[1], password):
                 _rate_limiter.reset(ip)
-                self._json({'token': generate_token(username, 'admin')})
+                token = generate_token(username, 'admin')
+                audit_log('login', username, 'success', ip)
+                self._json({'token': token})
                 return
 
             with users_db_lock: user_data = users_db.get(username)
             if user_data and verify_password(user_data[0], password):
                 _rate_limiter.reset(ip)
-                self._json({'token': generate_token(username, user_data[1])})
+                token = generate_token(username, user_data[1])
+                audit_log('login', username, 'success', ip)
+                self._json({'token': token})
                 return
 
             locked = _rate_limiter.record_failure(ip)
             logger.warning("Failed login attempt for user '%s' from IP %s", username, ip)
+            audit_log('login_failed', username or 'unknown', f'Failed attempt from {ip}', ip)
             self._json({'error': 'Too many failed attempts.' if locked else 'Invalid credentials'}, 401)
             return
 
@@ -1003,7 +1336,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query)
             auth = self.headers.get('Authorization', '')
             token = auth[7:] if auth.startswith('Bearer ') else qs.get('token', [''])[0]
-            if token: revoke_token(token)
+            if token:
+                uname, _ = validate_token(token)
+                if uname:
+                    audit_log('logout', uname, '', ip)
+                revoke_token(token)
             self._json({'status': 'ok'})
             return
 
@@ -1019,10 +1356,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             body = self._read_body()
             if body is None: return
             ok = write_yaml_settings(body)
+            audit_log('settings_update', username, 'Updated web settings', ip)
             self._json({'status': 'ok'} if ok else {'error': 'Failed to write settings'}, 200 if ok else 500)
             return
 
-        # NEW: TrueNAS VM Control Endpoint
         if path == '/api/truenas/vm':
             body = self._read_body()
             if body is None: return
@@ -1036,14 +1373,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
             try:
                 url = f"{cfg['truenasUrl'].rstrip('/')}/api/v2.0/vm/id/{vm_id}/{action}"
-                req = urllib.request.Request(url, data=b"{}", headers={'Authorization': f"Bearer {cfg['truenasKey']}", 'Content-Type': 'application/json'}, method='POST')
+                req = urllib.request.Request(url, data=b"{}", headers={
+                    'Authorization': f"Bearer {cfg['truenasKey']}",
+                    'Content-Type': 'application/json'
+                }, method='POST')
                 with urllib.request.urlopen(req, timeout=5) as r:
-                    self._json({'success': r.getcode() == 200})
+                    success = r.getcode() == 200
+                audit_log('vm_action', username, f"VM {vm_id} {action} {success}", ip)
+                self._json({'success': success})
             except Exception as e:
+                audit_log('vm_action', username, f"VM {vm_id} {action} failed: {e}", ip)
                 self._json({'success': False, 'error': str(e)})
             return
 
-        # NEW: Config-Driven Webhook Executor
         if path == '/api/webhook':
             body = self._read_body()
             if body is None: return
@@ -1055,12 +1397,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not hook or not hook.get('url'):
                 self._json({'success': False, 'error': 'Webhook not found in config'})
                 return
-
             try:
                 req = urllib.request.Request(hook['url'], method=hook.get('method', 'POST').upper())
                 with urllib.request.urlopen(req, timeout=8) as r:
-                    self._json({'success': r.getcode() >= 200 and r.getcode() < 300})
+                    success = r.getcode() >= 200 and r.getcode() < 300
+                audit_log('webhook', username, f"Webhook {hook_id} {success}", ip)
+                self._json({'success': success})
             except Exception as e:
+                audit_log('webhook', username, f"Webhook {hook_id} failed: {e}", ip)
                 self._json({'success': False, 'error': str(e)})
             return
 
@@ -1073,8 +1417,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if isinstance(args_in, str) and args_in.strip():
                 try: safe_args = shlex.split(args_in)
                 except ValueError: safe_args = args_in.split()
-            elif isinstance(args_in, list):
-                safe_args = [str(a) for a in args_in if str(a).strip()]
+            elif isinstance(args_in, list): safe_args = [str(a) for a in args_in if str(a).strip()]
 
             global _active_job
             with _job_lock:
@@ -1095,8 +1438,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     act = next((a for a in custom_actions if a.get('id') == args_in), None)
                     if act and act.get('command'):
                         cmd_str = act['command']
-                        with open(ACTION_LOG, 'a') as f:
-                            p = subprocess.Popen(['bash', '-c', cmd_str], stdout=f, stderr=subprocess.STDOUT)
+                        with open(ACTION_LOG, 'a') as f: p = subprocess.Popen(['bash', '-c', cmd_str], stdout=f, stderr=subprocess.STDOUT)
                     else:
                         with open(ACTION_LOG, 'a') as f: f.write(f'[ERROR] Custom action not found or no command defined: {args_in}\n')
                         status = 'failed'
@@ -1122,14 +1464,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         p.kill(); p.wait()
                         with open(ACTION_LOG, 'a') as f: f.write('\n[ERROR] Script timed out after 300s.\n')
                         status = 'timeout'
-            except Exception as e:
-                logger.exception('Script runner error: %s', e)
+            except Exception as e: logger.exception('Script runner error: %s', e)
             finally:
                 with open(ACTION_LOG, 'a') as f: f.write(f'\n>> [{datetime.now().strftime("%H:%M:%S")}] {status.upper()}\n')
                 with _job_lock:
                     if _active_job and _active_job.get('script') == script:
                         _active_job['status'] = status
                         _active_job['finished'] = datetime.now().isoformat()
+                audit_log('script_run', username, f"{script} {args_in} -> {status}", ip)
 
             self._json({'success': status == 'done', 'status': status, 'script': script})
             return
@@ -1138,19 +1480,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             body = self._read_body()
             if body is None: return
             remote = body.get('remote', '').strip()
-            if not remote or not _REMOTE_NAME_RE.match(remote):
+            if not remote or not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9 ._-]{0,63}$', remote):
                 self._json({'success': False, 'error': 'Invalid remote name'}, 400)
                 return
             try:
                 r = subprocess.run(['rclone', 'lsd', remote + ':', '--max-depth', '1'], capture_output=True, text=True, timeout=15)
                 stderr_clean = r.stderr.strip()
                 err_line = next((l for l in stderr_clean.splitlines() if l.strip() and not l.startswith('NOTICE')), stderr_clean[:120] if stderr_clean else '')
-                self._json({'success': r.returncode == 0, 'error': err_line if r.returncode != 0 else ''})
+                success = r.returncode == 0
+                audit_log('cloud_test', username, f"Remote {remote} -> {success}", ip)
+                self._json({'success': success, 'error': err_line if not success else ''})
             except subprocess.TimeoutExpired:
+                audit_log('cloud_test', username, f"Remote {remote} timeout", ip)
                 self._json({'success': False, 'error': 'Connection timed out (15 s)'})
             except FileNotFoundError:
+                audit_log('cloud_test', username, f"rclone not found", ip)
                 self._json({'success': False, 'error': 'rclone not found on this system'})
             except Exception as e:
+                audit_log('cloud_test', username, f"Remote {remote} error: {e}", ip)
                 self._json({'success': False, 'error': str(e)})
             return
 
@@ -1166,12 +1513,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not svc or not validate_service_name(svc):
                 self._json({'success': False, 'error': 'Invalid service name'})
                 return
-
             cmd = (['systemctl', '--user', action, svc] if is_user else ['sudo', '-n', 'systemctl', action, svc])
             try:
                 r = subprocess.run(cmd, timeout=10, capture_output=True)
-                self._json({'success': r.returncode == 0, 'stderr': r.stderr.decode().strip()})
+                success = r.returncode == 0
+                audit_log('service_control', username, f"{action} {svc} (user={is_user}) -> {success}", ip)
+                self._json({'success': success, 'stderr': r.stderr.decode().strip()})
             except Exception as e:
+                audit_log('service_control', username, f"{action} {svc} failed: {e}", ip)
                 self._json({'success': False, 'error': str(e)})
             return
 
@@ -1197,6 +1546,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         return
                     users_db[new_username] = (_pbkdf2_hash(password), new_role)
                 save_users()
+                audit_log('user_add', username, f"Added {new_username} with role {new_role}", ip)
                 self._json({'status': 'ok'})
                 return
 
@@ -1208,6 +1558,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         return
                     del users_db[target]
                 save_users()
+                audit_log('user_remove', username, f"Removed {target}", ip)
                 self._json({'status': 'ok'})
                 return
 
@@ -1219,6 +1570,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         return
                     users_db[target] = (_pbkdf2_hash(password), users_db[target][1])
                 save_users()
+                audit_log('user_password_change', username, f"Changed password for {target}", ip)
                 self._json({'status': 'ok'})
                 return
 
@@ -1228,7 +1580,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
             self._json({'error': 'Invalid action'}, 400)
             return
-
         self.send_error(404)
 
 # ── Server ────────────────────────────────────────────────────────────────────
@@ -1245,17 +1596,26 @@ def _sigterm_handler(signum, frame) -> None:
 
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
-if __name__ == '__main__':
-    try:
-        with open(PID_FILE, 'w') as f: f.write(str(os.getpid()))
-    except Exception as e: logger.warning('Could not write PID file: %s', e)
+def run_server():
+    global _server
+
+    init_history_db()
+    audit_log('system_start', 'system', f"Noba v{VERSION} starting")
 
     _bg.start()
     threading.Thread(target=_token_cleanup_loop, daemon=True, name='token-cleanup').start()
 
     _server = ThreadingHTTPServer((HOST, PORT), Handler)
-    logger.info('Nobara v%s listening on http://%s:%d', VERSION, HOST, PORT)
-    print(f'Noba backend v{VERSION} listening on http://{HOST}:{PORT}', file=sys.stderr)
+
+    if SSL_CERT and SSL_KEY:
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        context.load_cert_chain(certfile=SSL_CERT, keyfile=SSL_KEY)
+        _server.socket = context.wrap_socket(_server.socket, server_side=True)
+        logger.info('Noba v%s listening on https://%s:%d', VERSION, HOST, PORT)
+        print(f'Noba backend v{VERSION} (HTTPS) listening on https://{HOST}:{PORT}', file=sys.stderr)
+    else:
+        logger.info('Noba v%s listening on http://%s:%d', VERSION, HOST, PORT)
+        print(f'Noba backend v{VERSION} listening on http://{HOST}:{PORT}', file=sys.stderr)
 
     try: _server.serve_forever()
     except KeyboardInterrupt: logger.info('Shutdown requested via KeyboardInterrupt')
@@ -1263,6 +1623,13 @@ if __name__ == '__main__':
         _shutdown_flag.set()
         _server.shutdown()
         _pool.shutdown(wait=False)
+        audit_log('system_stop', 'system', "Server stopping")
         try: os.unlink(PID_FILE)
         except Exception: pass
         logger.info('Server stopped.')
+
+if __name__ == '__main__':
+    try:
+        with open(PID_FILE, 'w') as f: f.write(str(os.getpid()))
+    except Exception as e: logger.warning('Could not write PID file: %s', e)
+    run_server()

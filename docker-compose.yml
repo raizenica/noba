@@ -5,13 +5,18 @@ services:
     container_name: noba-dashboard
     restart: unless-stopped
     ports:
-      - "8081:8080"
+      - "8080:8080"          # HTTP
+      - "8443:8443"          # HTTPS (optional)
     environment:
-      - TZ=Europe/Brussels # Users will change this to their timezone
+      - TZ=Europe/Brussels   # Users will change this to their timezone
+      - SSL_CERT=/certs/fullchain.pem   # optional, for HTTPS
+      - SSL_KEY=/certs/privkey.pem       # optional
     volumes:
       # Maps the container's config folder to the host so users can edit config.yaml easily
       - ./data/config:/app/config
       # Maps the container's logs to the host
       - ./data/logs:/root/.local/share
+      # Optional: Maps host SSL certificates
+      - ./data/certs:/certs:ro
       # Optional: Maps the host Docker socket so the dashboard can read container states
       - /var/run/docker.sock:/var/run/docker.sock:ro
