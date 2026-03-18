@@ -1,0 +1,42 @@
+name: Update RPM Repository
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-repo:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: rpm-repository
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y createrepo-c
+
+      - name: Download all RPMs from release
+        run: |
+          mkdir -p rpm-repo/Packages
+          gh release download ${{ github.event.release.tag_name }} \
+            --pattern '*.rpm' \
+            --dir rpm-repo/Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create repository metadata
+        run: |
+          cd rpm-repo
+          createrepo_c --update .
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git commit -m "Update RPM repository for ${{ github.event.release.tag_name }}" || echo "No changes to commit"
+          git push origin gh-pages

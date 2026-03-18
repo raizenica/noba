@@ -1,0 +1,48 @@
+name: Build RPM Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        distro: [el8, el9]
+        arch: [x86_64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create source tarball
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          tar -czf noba-${VERSION}.tar.gz \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude=tests \
+            --exclude=__pycache__ \
+            bin/ libexec/ lib/ share/ systemd/ docs/ data/
+
+      - name: Build RPM package
+        id: rpm_build
+        uses: naveenrajm7/rpmbuild@${{ matrix.distro == 'el8' && 'centos7' || 'centos8' }}
+        with:
+          spec_file: "noba.spec"
+
+      - name: Upload RPM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: noba-${{ matrix.distro }}-${{ matrix.arch }}
+          path: ${{ steps.rpm_build.outputs.rpm_dir_path }}/
+
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.rpm_build.outputs.rpm_dir_path }}/*.rpm
+            ${{ steps.rpm_build.outputs.source_rpm_path }}
