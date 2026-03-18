@@ -633,7 +633,7 @@ function dashboard() {
                     headers: { 'Authorization': 'Bearer ' + this._token() },
                 });
                 const data = await res.json();
-                this.addToast(res.ok ? 'Test notification sent' : (data.error || 'Test failed'),
+                this.addToast(res.ok ? 'Test notification sent' : (data.detail || data.error || 'Test failed'),
                               res.ok ? 'success' : 'error');
             } catch {
                 this.addToast('Network error', 'error');
@@ -820,7 +820,7 @@ function dashboard() {
                     if (this.userRole === 'admin') await this.fetchUsers();
                     this.connectSSE();
                 } else {
-                    this.loginError = data.error || 'Login failed';
+                    this.loginError = data.detail || data.error || 'Login failed';
                 }
             } catch {
                 this.loginError = 'Network error';
@@ -885,7 +885,7 @@ function dashboard() {
                     await this.fetchUsers();
                 } else {
                     const err = await res.json();
-                    this.addToast(err.error || 'Failed to add user', 'error');
+                    this.addToast(err.detail || err.error || 'Failed to add user', 'error');
                 }
             } catch (e) {
                 this.addToast('Error adding user: ' + e.message, 'error');
@@ -912,7 +912,7 @@ function dashboard() {
                     this.addToast(`Password changed for ${username}`, 'success');
                 } else {
                     const err = await res.json();
-                    this.addToast(err.error || 'Failed to change password', 'error');
+                    this.addToast(err.detail || err.error || 'Failed to change password', 'error');
                 }
             } catch (e) {
                 this.addToast('Error changing password: ' + e.message, 'error');
@@ -941,7 +941,7 @@ function dashboard() {
                     await this.fetchUsers();
                 } else {
                     const err = await res.json();
-                    this.addToast(err.error || 'Failed to remove user', 'error');
+                    this.addToast(err.detail || err.error || 'Failed to remove user', 'error');
                 }
             } catch (e) {
                 this.addToast('Error removing user: ' + e.message, 'error');
@@ -1182,7 +1182,7 @@ function dashboard() {
                     this.addToast('Config restored — reloading settings…', 'success');
                     await this.fetchSettings();
                 } else {
-                    this.addToast(data.error || 'Restore failed', 'error');
+                    this.addToast(data.detail || data.error || 'Restore failed', 'error');
                 }
             } catch (e) {
                 this.addToast('Restore error: ' + e.message, 'error');
