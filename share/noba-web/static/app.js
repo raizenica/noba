@@ -40,6 +40,7 @@ function dashboard() {
         'proxmoxUrl', 'proxmoxUser', 'proxmoxTokenName', 'proxmoxTokenValue',
         'pushoverEnabled', 'pushoverAppToken', 'pushoverUserKey',
         'gotifyEnabled', 'gotifyUrl', 'gotifyAppToken',
+        'alertRules',
     ];
 
     /** Keys that live in localStorage as a local mirror (excludes complex objects
@@ -134,7 +135,7 @@ function dashboard() {
         gotifyEnabled:   false, gotifyUrl: '',        gotifyAppToken: '',
 
         // ── Dynamic / job settings ─────────────────────────────────────────────
-        customActions: [], automations: [],
+        customActions: [], automations: [], alertRules: [],
         backupSources: [], backupDest: '', cloudRemote: '', downloadsDir: '',
         cloudRemotes: [], selectedCloudRemote: '', cloudRemotesLoading: false,
         rcloneAvailable: null, rcloneVersion: '', cloudTestResults: {},

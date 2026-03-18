@@ -244,12 +244,21 @@ def authenticate_request(headers, query=None):
         if username: return username, role
     return None, None
 
+_prune_counter = 0
+
 def _token_cleanup_loop() -> None:
+    global _prune_counter
     while not _shutdown_flag.wait(300):
         now = datetime.now()
         with _tokens_lock:
             expired = [t for t, (_, _, exp) in list(_tokens.items()) if exp <= now]
             for t in expired: del _tokens[t]
+        _rate_limiter.cleanup()
+        # Prune history DB every ~6 hours (12 cycles * 5 min = 60 min, ×6 = 72 cycles)
+        _prune_counter += 1
+        if _prune_counter >= 72:
+            _prune_counter = 0
+            prune_history_db()
 
 class LoginRateLimiter:
     def __init__(self, max_attempts: int = 5, window_s: int = 60, lockout_s: int = 300):
@@ -284,6 +293,16 @@ class LoginRateLimiter:
         with self._lock:
             self._attempts.pop(ip, None)
             self._lockouts.pop(ip, None)
+
+    def cleanup(self) -> None:
+        """Remove stale entries to prevent unbounded memory growth."""
+        now = datetime.now()
+        with self._lock:
+            cutoff = now - timedelta(seconds=self.window_s)
+            stale = [ip for ip, ts in self._attempts.items() if all(t <= cutoff for t in ts)]
+            for ip in stale: del self._attempts[ip]
+            expired = [ip for ip, exp in self._lockouts.items() if exp <= now]
+            for ip in expired: del self._lockouts[ip]
 
 _rate_limiter = LoginRateLimiter()
 
@@ -367,7 +386,8 @@ def read_yaml_settings() -> dict:
                 defaults['gotifyEnabled']  = bool(got.get('enabled', False))
                 defaults['gotifyUrl']      = str(got.get('url', ''))
                 defaults['gotifyAppToken'] = str(got.get('app_token', ''))
-                rules = full_conf.get('alertRules')
+                # alertRules: prefer web.alertRules, fall back to root for compat
+                rules = web.get('alertRules', full_conf.get('alertRules'))
                 if rules is not None: defaults['alertRules'] = rules
     except Exception: pass
     return defaults
@@ -380,8 +400,6 @@ def write_yaml_settings(settings: dict) -> bool:
             for k, v in settings.items():
                 if k not in WEB_KEYS or k in _NOTIF_WEB_KEYS: continue
                 tmp.write(f'  {k}: {json.dumps(v if isinstance(v, (str, list, dict)) else str(v))}\n')
-            if 'alertRules' in settings:
-                tmp.write(f'alertRules: {json.dumps(settings["alertRules"])}\n')
             # Map flat pushover/gotify keys → notifications.* YAML section
             has_push = any(k in settings for k in ('pushoverEnabled', 'pushoverAppToken', 'pushoverUserKey'))
             has_got  = any(k in settings for k in ('gotifyEnabled', 'gotifyUrl', 'gotifyAppToken'))
@@ -451,6 +469,17 @@ def insert_metrics(metrics: list):
             c.executemany('INSERT INTO metrics (timestamp, metric, value, tags) VALUES (?, ?, ?, ?)', rows)
     except Exception as e:
         logger.error(f"Failed to batch insert metrics: {e}")
+
+HISTORY_RETENTION_DAYS = int(os.environ.get('NOBA_HISTORY_DAYS', 90))
+
+def prune_history_db():
+    """Delete metrics older than retention period to prevent unbounded growth."""
+    try:
+        cutoff = int(time.time()) - HISTORY_RETENTION_DAYS * 86400
+        with sqlite3.connect(HISTORY_DB) as conn:
+            conn.execute('DELETE FROM metrics WHERE timestamp < ?', (cutoff,))
+    except Exception as e:
+        logger.error(f"Failed to prune history: {e}")
 
 def get_history(metric: str, range_hours: int = 24, resolution: int = 60):
     cutoff = int(time.time()) - range_hours * 3600
@@ -1060,6 +1089,7 @@ def _collect_network() -> dict:
 
     return {
         'netRx': human_bps(rx_bps), 'netTx': human_bps(tx_bps),
+        'netRxRaw': rx_bps, 'netTxRaw': tx_bps,
         'topCpu': top_cpu,
         'topMem': top_mem,
     }
@@ -1248,9 +1278,8 @@ def collect_stats(qs: dict) -> dict:
             if r['status'] == 'Up' and r['ms'] > 0:
                 metrics_batch.append(('ping_ms', r['ms'], r['ip']))
 
-        rx, tx = get_net_io()
-        metrics_batch.append(('net_rx_bytes', rx, ''))
-        metrics_batch.append(('net_tx_bytes', tx, ''))
+        metrics_batch.append(('net_rx_bytes', stats.get('netRxRaw', 0), ''))
+        metrics_batch.append(('net_tx_bytes', stats.get('netTxRaw', 0), ''))
 
         # Single batched transaction
         insert_metrics(metrics_batch)
@@ -1290,7 +1319,7 @@ _SECURITY_HEADERS = {
     'X-Content-Type-Options':  'nosniff',
     'X-Frame-Options':         'SAMEORIGIN',
     'Referrer-Policy':         'same-origin',
-    'Content-Security-Policy': "default-src 'self'",
+    'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'",
     'Permissions-Policy':      'geolocation=(), microphone=(), camera=()',
 }
 
@@ -1381,28 +1410,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception: self._json({'available': False, 'remotes': []})
             return
 
-        if path.startswith('/api/history/'):
-            metric = path[13:]
-            try:
-                range_h = int(qs.get('range', ['24'])[0])
-                resolution = int(qs.get('resolution', ['60'])[0])
-                data = get_history(metric, range_h, resolution)
-                self._json(data)
-            except Exception as e:
-                self._json({'error': str(e)}, 500)
-            return
-
-        if path == '/api/audit':
-            if role != 'admin':
-                self._json({'error': 'Forbidden'}, 403)
-                return
-            try:
-                limit = int(qs.get('limit', ['100'])[0])
-                self._json(get_audit(limit))
-            except Exception as e:
-                self._json({'error': str(e)}, 500)
-            return
-
         if path.startswith('/api/history/') and path.endswith('/export'):
             metric = path[13:-7]   # strip /api/history/ prefix and /export suffix
             if metric not in HISTORY_METRICS:
@@ -1430,6 +1437,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._json({'error': str(e)}, 500)
             return
 
+        if path.startswith('/api/history/'):
+            metric = path[13:]
+            try:
+                range_h = int(qs.get('range', ['24'])[0])
+                resolution = int(qs.get('resolution', ['60'])[0])
+                data = get_history(metric, range_h, resolution)
+                self._json(data)
+            except Exception as e:
+                self._json({'error': str(e)}, 500)
+            return
+
+        if path == '/api/audit':
+            if role != 'admin':
+                self._json({'error': 'Forbidden'}, 403)
+                return
+            try:
+                limit = int(qs.get('limit', ['100'])[0])
+                self._json(get_audit(limit))
+            except Exception as e:
+                self._json({'error': str(e)}, 500)
+            return
+
         if path == '/api/config/backup':
             if role != 'admin':
                 self._json({'error': 'Forbidden'}, 403)
@@ -1447,7 +1476,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 for k, v in _SECURITY_HEADERS.items(): self.send_header(k, v)
                 self.end_headers()
                 self.wfile.write(body)
-                audit_log('config_backup', username, 'Downloaded config backup', ip)
+                audit_log('config_backup', username, 'Downloaded config backup', self._client_ip())
             except Exception as e:
                 self._json({'error': str(e)}, 500)
             return
@@ -1458,6 +1487,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-Type',  'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection',    'keep-alive')
+            for k, v in _SECURITY_HEADERS.items(): self.send_header(k, v)
             self.end_headers()
 
             last_heartbeat = time.time()
@@ -1497,6 +1527,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'text/plain; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
+            for k, v in _SECURITY_HEADERS.items(): self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
             return
@@ -1506,6 +1537,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'text/plain; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
+            for k, v in _SECURITY_HEADERS.items(): self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
             return
