@@ -181,7 +181,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-truenas" x-show="vis.truenas">
+        <div class="card" data-id="card-truenas" x-show="vis.truenas && truenasUrl">
             <div class="card-hdr">
                 <i class="fas fa-server card-icon"></i>
                 <span class="card-title">TrueNAS Integration</span>
@@ -211,7 +211,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-plex" x-show="vis.plex">
+        <div class="card" data-id="card-plex" x-show="vis.plex && plexUrl">
             <div class="card-hdr">
                 <i class="fas fa-film card-icon"></i>
                 <span class="card-title">Media Stack</span>
@@ -244,7 +244,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-downloads" x-show="vis.downloads">
+        <div class="card" data-id="card-downloads" x-show="vis.downloads && (qbitUrl || radarrUrl || sonarrUrl)">
             <div class="card-hdr">
                 <i class="fas fa-download card-icon"></i>
                 <span class="card-title">Download Stack</span>
@@ -252,7 +252,7 @@
                 <i class="fas fa-grip-lines drag-handle"></i>
             </div>
             <div class="card-body" x-show="!collapsed.downloads">
-                <div style="margin-bottom: 1rem;">
+                <div x-show="qbitUrl" style="margin-bottom: 1rem;">
                     <div class="row" style="border-bottom: none; padding-bottom: 0;">
                         <span class="row-label" style="color:var(--text)">qBittorrent</span>
                         <span class="badge" :class="qbit && qbit.status === 'online' ? 'bs' : 'bn'" x-text="qbit ? qbit.status.toUpperCase() : 'OFFLINE'"></span>
@@ -272,11 +272,11 @@
                         <span class="row-val" x-text="qbit.active_torrents"></span>
                     </div>
                 </div>
-                <div class="row">
+                <div class="row" x-show="radarrUrl">
                     <span class="row-label" style="color:var(--text)">Radarr Queue</span>
                     <span class="row-val" x-text="radarr && radarr.status === 'online' ? radarr.queue_count : '--'"></span>
                 </div>
-                <div class="row">
+                <div class="row" x-show="sonarrUrl">
                     <span class="row-label" style="color:var(--text)">Sonarr Queue</span>
                     <span class="row-val" x-text="sonarr && sonarr.status === 'online' ? sonarr.queue_count : '--'"></span>
                 </div>
@@ -311,7 +311,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-pihole" x-show="vis.pihole">
+        <div class="card" data-id="card-pihole" x-show="vis.pihole && piholeUrl">
             <div class="card-hdr">
                 <i class="fas fa-shield-alt card-icon"></i>
                 <span class="card-title">Pi-hole DNS</span>
@@ -402,7 +402,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-kuma" x-show="vis.kuma">
+        <div class="card" data-id="card-kuma" x-show="vis.kuma && kumaUrl">
             <div class="card-hdr">
                 <i class="fas fa-heartbeat card-icon"></i>
                 <span class="card-title">Uptime Kuma</span>
@@ -547,8 +547,15 @@
             </div>
             <div class="card-body action-list" x-show="!collapsed.actions">
 
+                <template x-for="act in customActions" :key="act.id">
+                    <button class="btn btn-primary" :disabled="runningScript" @click="runScript('custom', act.id)" style="margin-bottom:0.4rem;">
+                        <i class="fas" :class="act.icon || 'fa-play'"></i> <span x-text="act.name"></span>
+                    </button>
+                </template>
+                <div x-show="customActions && customActions.length > 0" style="height:1px; background:var(--border); margin: .4rem 0;"></div>
+
                 <div class="action-group" x-data="{ opt: false, target: 'all', dryRun: false, verify: false }">
-                    <button class="btn btn-primary" :disabled="runningScript" @click="opt = !opt">
+                    <button class="btn" :disabled="runningScript" @click="opt = !opt">
                         <i class="fas fa-database"></i> NAS Backup Job
                         <i class="fas fa-chevron-down" style="margin-left:auto; font-size:.7rem; transition:transform .2s" :style="opt?'transform:rotate(180deg)':''"></i>
                     </button>

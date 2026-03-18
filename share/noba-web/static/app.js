@@ -41,6 +41,9 @@ function dashboard() {
         qbitUser:          localStorage.getItem('noba-qbit-user')   || '',
         qbitPass:          localStorage.getItem('noba-qbit-pass')   || '',
 
+        // Dynamic Features
+        customActions:     [],
+
         // Job Settings
         backupSources: [], backupDest: '', cloudRemote: '', downloadsDir: '',
         cloudRemotes: [], selectedCloudRemote: '', cloudRemotesLoading: false,
@@ -110,7 +113,6 @@ function dashboard() {
 
         // ── 3. Lifecycle ──
         async init() {
-            // Protected layout initializations
             try { this.initSortable(); } catch (e) { console.warn("Sortable init skipped", e); }
             try { this.initKeyboard(); } catch (e) { console.warn("Keyboard init skipped", e); }
             try { this.initMasonry(); } catch (e) { console.warn("Masonry init skipped", e); }
@@ -140,7 +142,6 @@ function dashboard() {
                 for (let entry of entries) {
                     const card = entry.target;
                     if (card.style.display === 'none') continue;
-                    // Calculate spans based on grid-auto-rows: 10px
                     const height = card.getBoundingClientRect().height;
                     const rowSpan = Math.ceil((height + 18) / 10);
                     card.style.gridRowEnd = `span ${rowSpan}`;
@@ -238,12 +239,10 @@ function dashboard() {
         },
 
         _buildQueryParams() {
-            // Only non-secret runtime params are sent in the URL.
-            // API keys / passwords are read from server-side YAML config — never in query strings.
             const params = new URLSearchParams({
                 services: this.monitoredServices,
                 radar:    this.radarIps,
-                pihole:   this.piholeUrl,   // URL only — token stays server-side
+                pihole:   this.piholeUrl,
                 plexUrl:  this.plexUrl,
                 kumaUrl:  this.kumaUrl,
                 bmcMap:   this.bmcMap,
@@ -338,6 +337,8 @@ function dashboard() {
                     if (s.backupDest != null) this.backupDest = s.backupDest;
                     if (s.cloudRemote != null) this.cloudRemote = s.cloudRemote;
                     if (s.downloadsDir != null) this.downloadsDir = s.downloadsDir;
+
+                    if (s.customActions != null) this.customActions = s.customActions;
 
                     this.saveSettings();
                 }
@@ -443,7 +444,7 @@ function dashboard() {
             if (!this.authenticated || this.runningScript) return;
             this.runningScript = true;
             this.modalTitle  = `Running: ${script}`;
-            this.modalOutput = `>> [${new Date().toLocaleTimeString()}] Starting ${script} ${argStr}...\n`;
+            this.modalOutput = `>> [${new Date().toLocaleTimeString()}] Starting action...\n`;
             this.showModal   = true;
 
             const token = localStorage.getItem('noba-token');
@@ -462,7 +463,6 @@ function dashboard() {
                 });
                 const result = await res.json();
                 this.modalTitle = result.success ? '✓ Completed' : '✗ Failed';
-                this.addToast(result.success ? `${script} completed` : `${script} failed`, result.success ? 'success' : 'error');
             } catch { this.modalTitle = '✗ Connection Error'; } finally {
                 clearInterval(poll);
                 try {
@@ -501,8 +501,6 @@ function dashboard() {
                     await this.fetchSettings();
                     await this.fetchCloudRemotes();
                     if (this.userRole === 'admin') await this.fetchUsers();
-                    // Connect live stream — do NOT call init() again as that would
-                    // duplicate all setInterval timers registered during component init.
                     this.connectSSE();
                     await this.fetchLog();
                 } else { this.loginError = data.error || 'Login failed'; }

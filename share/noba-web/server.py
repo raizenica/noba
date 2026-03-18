@@ -53,6 +53,14 @@ SCRIPT_MAP = {
 ALLOWED_ACTIONS = frozenset({'start', 'stop', 'restart'})
 VALID_ROLES     = ('viewer', 'admin')
 
+# Fields allowed to be synced to the web config
+WEB_KEYS = frozenset([
+    'piholeUrl', 'piholeToken', 'monitoredServices', 'radarIps', 'bookmarksStr',
+    'plexUrl', 'plexToken', 'kumaUrl', 'bmcMap', 'truenasUrl', 'truenasKey',
+    'radarrUrl', 'radarrKey', 'sonarrUrl', 'sonarrKey', 'qbitUrl', 'qbitUser', 'qbitPass',
+    'customActions'
+])
+
 _server_start_time = time.time()
 _shutdown_flag     = threading.Event()
 
@@ -147,7 +155,6 @@ def load_old_user() -> tuple | None:
     with _user_cache_lock:
         if time.time() - _user_cache_t < _USER_CACHE_TTL:
             return _user_cache
-    # Read file outside lock (I/O should not hold the lock)
     if not os.path.exists(AUTH_CONFIG):
         return None
     result = None
@@ -251,7 +258,6 @@ class TTLCache:
     def set(self, key: str, val: object) -> None:
         with self._lock:
             if len(self._store) >= self._max:
-                # Evict the single oldest entry to keep size bounded
                 oldest = min(self._store, key=lambda k: self._store[k]['t'])
                 del self._store[oldest]
             self._store[key] = {'v': val, 't': time.time()}
@@ -284,7 +290,7 @@ def read_yaml_settings() -> dict:
         'piholeUrl': '', 'piholeToken': '', 'monitoredServices': '', 'radarIps': '', 'bookmarksStr': '',
         'plexUrl': '', 'plexToken': '', 'kumaUrl': '', 'bmcMap': '', 'backupSources': [], 'backupDest': '',
         'cloudRemote': '', 'downloadsDir': '', 'truenasUrl': '', 'truenasKey': '', 'radarrUrl': '', 'radarrKey': '',
-        'sonarrUrl': '', 'sonarrKey': '', 'qbitUrl': '', 'qbitUser': '', 'qbitPass': ''
+        'sonarrUrl': '', 'sonarrKey': '', 'qbitUrl': '', 'qbitUser': '', 'qbitPass': '', 'customActions': []
     }
     if not os.path.exists(NOBA_YAML): return defaults
     try:
@@ -293,8 +299,9 @@ def read_yaml_settings() -> dict:
             full_conf = json.loads(r.stdout)
             if isinstance(full_conf, dict):
                 web = full_conf.get('web', {})
-                for k in ['piholeUrl', 'piholeToken', 'monitoredServices', 'radarIps', 'bookmarksStr', 'plexUrl', 'plexToken', 'kumaUrl', 'bmcMap', 'truenasUrl', 'truenasKey', 'radarrUrl', 'radarrKey', 'sonarrUrl', 'sonarrKey', 'qbitUrl', 'qbitUser', 'qbitPass']:
+                for k in WEB_KEYS:
                     if k in web: defaults[k] = web[k]
+
                 backup = full_conf.get('backup', {})
                 if 'sources' in backup: defaults['backupSources'] = backup['sources']
                 if 'dest' in backup: defaults['backupDest'] = backup['dest']
@@ -307,20 +314,13 @@ def read_yaml_settings() -> dict:
 
 def write_yaml_settings(settings: dict) -> bool:
     tmp_path: str | None = None
-    # Keys that belong in the web: section of the YAML
-    WEB_KEYS = frozenset([
-        'piholeUrl', 'piholeToken', 'monitoredServices', 'radarIps', 'bookmarksStr',
-        'plexUrl', 'plexToken', 'kumaUrl', 'bmcMap', 'truenasUrl', 'truenasKey',
-        'radarrUrl', 'radarrKey', 'sonarrUrl', 'sonarrKey', 'qbitUrl', 'qbitUser', 'qbitPass'
-    ])
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
             tmp.write('web:\n')
             for k, v in settings.items():
                 if k not in WEB_KEYS:
                     continue
-                # Always JSON-encode the value so special YAML chars are safe
-                tmp.write(f'  {k}: {json.dumps(v if isinstance(v, str) else str(v))}\n')
+                tmp.write(f'  {k}: {json.dumps(v if isinstance(v, (str, list, dict)) else str(v))}\n')
             tmp_path = tmp.name
         if os.path.exists(NOBA_YAML):
             backup = f'{NOBA_YAML}.bak.{int(time.time())}'
@@ -670,9 +670,6 @@ def collect_stats(qs: dict) -> dict:
     with _state_lock: stats['cpuHistory'] = list(_cpu_history)
     stats.update(_collect_network())
 
-    # Non-secret runtime params arrive as query params (services to watch, IPs to ping).
-    # Secret credentials (API keys, passwords) are read from the server-side YAML so they
-    # never have to appear in URLs or server access logs.
     cfg = read_yaml_settings()
 
     svc_list = [s.strip() for s in qs.get('services', [''])[0].split(',') if s.strip()]
@@ -839,7 +836,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         qs     = parse_qs(parsed.query)
         path   = parsed.path
 
-        # ── 🚨 MODULAR ROUTING FIX: Allows /static/ directory to be served ──
         if path in ('/', '/index.html') or path.startswith('/static/'):
             super().do_GET()
             return
@@ -1020,7 +1016,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ts = datetime.now().strftime('%H:%M:%S')
                 with open(ACTION_LOG, 'w') as f: f.write(f'>> [{ts}] Initiating: {script} {" ".join(safe_args)}\n\n')
 
-                if script == 'speedtest':
+                # NEW: Config-driven execution
+                if script == 'custom':
+                    cfg = read_yaml_settings()
+                    custom_actions = cfg.get('customActions', [])
+                    act = next((a for a in custom_actions if a.get('id') == args_in), None)
+                    if act and act.get('command'):
+                        cmd_str = act['command']
+                        with open(ACTION_LOG, 'a') as f:
+                            # Executed via bash -c to allow chaining & piping
+                            p = subprocess.Popen(['bash', '-c', cmd_str], stdout=f, stderr=subprocess.STDOUT)
+                    else:
+                        with open(ACTION_LOG, 'a') as f: f.write(f'[ERROR] Custom action not found or no command defined: {args_in}\n')
+                        status = 'failed'
+
+                elif script == 'speedtest':
                     with open(ACTION_LOG, 'a') as f: p = subprocess.Popen(['speedtest-cli', '--simple'] + safe_args, stdout=f, stderr=subprocess.STDOUT)
                 elif script in SCRIPT_MAP:
                     sfile = os.path.join(SCRIPT_DIR, SCRIPT_MAP[script])
