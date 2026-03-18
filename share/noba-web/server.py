@@ -372,6 +372,9 @@ def init_history_db():
     os.makedirs(db_dir, exist_ok=True)
     with sqlite3.connect(HISTORY_DB) as conn:
         c = conn.cursor()
+        # Enable WAL mode for high-concurrency asynchronous writes (ZFS safe)
+        c.execute('PRAGMA journal_mode=WAL;')
+        c.execute('PRAGMA synchronous=NORMAL;')
         c.execute('''
             CREATE TABLE IF NOT EXISTS metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -383,17 +386,18 @@ def init_history_db():
         ''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_metric_time ON metrics(metric, timestamp)')
 
-def insert_metric(metric: str, value: float, tags: str = ''):
+def insert_metrics(metrics: list):
+    """Batch insert multiple metrics to prevent disk I/O bottleneck."""
     try:
         with sqlite3.connect(HISTORY_DB) as conn:
             c = conn.cursor()
-            c.execute('INSERT INTO metrics (timestamp, metric, value, tags) VALUES (?, ?, ?, ?)',
-                      (int(time.time()), metric, value, tags))
+            now = int(time.time())
+            rows = [(now, m, v, t) for m, v, t in metrics]
+            c.executemany('INSERT INTO metrics (timestamp, metric, value, tags) VALUES (?, ?, ?, ?)', rows)
     except Exception as e:
-        logger.error(f"Failed to insert metric {metric}: {e}")
+        logger.error(f"Failed to batch insert metrics: {e}")
 
 def get_history(metric: str, range_hours: int = 24, resolution: int = 60):
-    """Retrieve aggregated history with given resolution (seconds)."""
     cutoff = int(time.time()) - range_hours * 3600
     query = '''
         SELECT (timestamp / ?) * ? as slot, AVG(value)
@@ -410,7 +414,6 @@ def get_history(metric: str, range_hours: int = 24, resolution: int = 60):
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────
 def audit_log(action: str, username: str, details: str = '', ip: str = ''):
-    """Write an audit entry to the database."""
     try:
         with sqlite3.connect(HISTORY_DB) as conn:
             c = conn.cursor()
@@ -445,9 +448,8 @@ def get_audit(limit: int = 100):
 _sent_alerts = {}
 
 def _safe_eval(condition_str: str, flat_stats: dict) -> bool:
-    """Safe parser for conditions like: 'cpu_percent > 90'"""
+    """Safe parser for conditions like: 'cpu_percent > 90' to prevent RCE"""
     ops = {'>': operator.gt, '<': operator.lt, '>=': operator.ge, '<=': operator.le, '==': operator.eq, '!=': operator.ne}
-    # Clean up legacy dictionary syntax in case it remains in YAML
     condition_str = condition_str.replace("flat['", "").replace('flat["', "").replace("']", "").replace('"]', "")
     match = re.match(r'^\s*([a-zA-Z0-9_\[\]\.]+)\s*(>|<|>=|<=|==|!=)\s*([0-9\.-]+)\s*$', condition_str)
     if match:
@@ -893,16 +895,24 @@ def _collect_storage() -> dict:
 
 def _collect_network() -> dict:
     rx_bps, tx_bps = get_net_io()
-    def parse_ps(out: str) -> list:
-        res = []
-        for l in out.splitlines()[1:6]:
-            parts = l.strip().rsplit(None, 1)
-            if len(parts) == 2: res.append({'name': parts[0][:16], 'val': parts[1] + '%'})
-        return res
+
+    # Optimized: Run ps once and parse entirely in Python to save subprocess I/O
+    out = run(['ps', 'ax', '--format', 'comm,%cpu,%mem'], timeout=2)
+    procs = []
+    for l in out.splitlines()[1:]:
+        parts = l.strip().rsplit(None, 2)
+        if len(parts) == 3:
+            try:
+                procs.append((parts[0][:16], float(parts[1]), float(parts[2])))
+            except ValueError: pass
+
+    top_cpu = [{'name': p[0], 'val': f"{p[1]:.1f}%"} for p in sorted(procs, key=lambda x: x[1], reverse=True)[:5]]
+    top_mem = [{'name': p[0], 'val': f"{p[2]:.1f}%"} for p in sorted(procs, key=lambda x: x[2], reverse=True)[:5]]
+
     return {
         'netRx': human_bps(rx_bps), 'netTx': human_bps(tx_bps),
-        'topCpu': parse_ps(run(['ps', 'ax', '--format', 'comm,%cpu', '--sort', '-%cpu'], timeout=2)),
-        'topMem': parse_ps(run(['ps', 'ax', '--format', 'comm,%mem', '--sort', '-%mem'], timeout=2)),
+        'topCpu': top_cpu,
+        'topMem': top_mem,
     }
 
 def _build_alerts(stats: dict) -> list:
@@ -1062,24 +1072,32 @@ def collect_stats(qs: dict) -> dict:
     evaluate_alert_rules(stats)
 
     try:
-        insert_metric('cpu_percent', stats.get('cpuPercent', 0))
-        insert_metric('mem_percent', stats.get('memPercent', 0))
+        metrics_batch = [
+            ('cpu_percent', stats.get('cpuPercent', 0), ''),
+            ('mem_percent', stats.get('memPercent', 0), '')
+        ]
         ct = stats.get('cpuTemp', 'N/A')
         if ct != 'N/A':
-            insert_metric('cpu_temp', float(ct.replace('°C', '')))
+            metrics_batch.append(('cpu_temp', float(ct.replace('°C', '')), ''))
         gt = stats.get('gpuTemp', 'N/A')
         if gt != 'N/A':
-            insert_metric('gpu_temp', float(gt.replace('°C', '')))
+            metrics_batch.append(('gpu_temp', float(gt.replace('°C', '')), ''))
+
         for disk in stats.get('disks', []):
-            insert_metric('disk_percent', disk['percent'], disk['mount'])
+            metrics_batch.append(('disk_percent', disk['percent'], disk['mount']))
+
         for r in radar:
             if r['status'] == 'Up' and r['ms'] > 0:
-                insert_metric('ping_ms', r['ms'], r['ip'])
+                metrics_batch.append(('ping_ms', r['ms'], r['ip']))
+
         rx, tx = get_net_io()
-        insert_metric('net_rx_bytes', rx)
-        insert_metric('net_tx_bytes', tx)
+        metrics_batch.append(('net_rx_bytes', rx, ''))
+        metrics_batch.append(('net_tx_bytes', tx, ''))
+
+        # Single batched transaction
+        insert_metrics(metrics_batch)
     except Exception as e:
-        logger.error(f"Failed to store history: {e}")
+        logger.error(f"Failed to build or store history: {e}")
 
     return stats
 
@@ -1162,7 +1180,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         qs     = parse_qs(parsed.query)
         path   = parsed.path
 
-        if path in ('/', '/index.html') or path.startswith('/static/') or path == '/manifest.json':
+        if path in ('/', '/index.html', '/service-worker.js', '/manifest.json') or path.startswith('/static/'):
             super().do_GET()
             return
 
