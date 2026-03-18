@@ -496,7 +496,98 @@ def prune_history_db():
     except Exception as e:
         logger.error(f"Failed to prune history: {e}")
 
-def get_history(metric: str, range_hours: int = 24, resolution: int = 60):
+def collect_smart() -> list:
+    """Probe SMART health for every real block device via smartctl -a -j.
+
+    Results are cached for 5 minutes since SMART queries are slow and
+    don't need to be refreshed on every API call.
+    Returns one dict per device. Callers should handle an empty list when
+    smartctl is not installed or no supported drives are found.
+    """
+    cached = _cache.get('smart_data', 300)
+    if cached is not None:
+        return cached
+
+    import glob as _glob
+    results = []
+    devs = sorted(
+        {f'/dev/{os.path.basename(p)}' for p in _glob.glob('/sys/block/*')
+         if any(os.path.basename(p).startswith(pfx) for pfx in ('sd', 'hd', 'nvme', 'vd'))}
+    )
+    for dev in devs:
+        try:
+            raw = subprocess.check_output(
+                ['smartctl', '-a', '-j', dev], timeout=10, stderr=subprocess.DEVNULL
+            )
+            d = json.loads(raw)
+        except FileNotFoundError:
+            break  # smartctl not installed — stop probing
+        except subprocess.TimeoutExpired:
+            results.append({'device': dev, 'error': 'timeout'})
+            continue
+        except Exception as e:
+            results.append({'device': dev, 'error': str(e)})
+            continue
+
+        model    = d.get('model_name') or d.get('model_family', '')
+        serial   = d.get('serial_number', '')
+        capacity = d.get('user_capacity', {}).get('bytes', 0)
+        smart_ok = d.get('smart_status', {}).get('passed', True)
+        temp     = d.get('temperature', {}).get('current')
+        poh      = None
+        attrs: dict = {}
+
+        # ATA / SATA attribute table
+        for attr in d.get('ata_smart_attributes', {}).get('table', []):
+            aid = attr.get('id')
+            raw_val = attr.get('raw', {}).get('value', 0)
+            norm_val = attr.get('value', 0)
+            if   aid == 5:   attrs['reallocated_sectors']    = raw_val
+            elif aid == 9:   poh                             = raw_val
+            elif aid == 177: attrs['wear_leveling_count']    = norm_val
+            elif aid == 194:
+                if temp is None: temp = raw_val
+            elif aid == 197: attrs['pending_sectors']        = raw_val
+            elif aid == 198: attrs['uncorrectable_sectors']  = raw_val
+            elif aid == 231: attrs['ssd_life_left_pct']      = norm_val
+            elif aid == 233: attrs['nand_writes_gb']         = raw_val
+
+        # NVMe health log
+        nvme = d.get('nvme_smart_health_information_log', {})
+        if nvme:
+            if temp is None: temp = nvme.get('temperature')
+            attrs['available_spare_pct'] = nvme.get('available_spare')
+            attrs['percentage_used']     = nvme.get('percentage_used')
+            poh = nvme.get('power_on_hours', poh)
+
+        # Simple risk score: 0 (healthy) → 100 (critical)
+        risk = 0
+        if not smart_ok:                                          risk = 100
+        if attrs.get('uncorrectable_sectors', 0) > 0:            risk = max(risk, 75)
+        if attrs.get('reallocated_sectors',    0) > 0:           risk = max(risk, 60)
+        if attrs.get('pending_sectors',        0) > 0:           risk = max(risk, 50)
+        if attrs.get('percentage_used',  0)  > 90:               risk = max(risk, 50)
+        if attrs.get('available_spare_pct', 100) < 10:           risk = max(risk, 50)
+        if isinstance(temp, (int, float)) and temp > 55:         risk = max(risk, 40)
+
+        results.append({
+            'device':          dev,
+            'model':           model,
+            'serial':          serial,
+            'capacity_bytes':  capacity,
+            'smart_ok':        smart_ok,
+            'temp_c':          temp,
+            'power_on_hours':  poh,
+            'risk_score':      risk,
+            'attributes':      attrs,
+        })
+
+    _cache.set('smart_data', results)
+    return results
+
+
+def get_history(metric: str, range_hours: int = 24, resolution: int = 60,
+                anomaly: bool = False):
     cutoff = int(time.time()) - range_hours * 3600
     query = '''
         SELECT (timestamp / ?) * ? as slot, AVG(value)
@@ -509,7 +600,40 @@ def get_history(metric: str, range_hours: int = 24, resolution: int = 60):
         c = conn.cursor()
         c.execute(query, (resolution, resolution, metric, cutoff))
         rows = c.fetchall()
-    return [{'time': row[0], 'value': round(row[1], 2)} for row in rows]
+
+    points = [{'time': row[0], 'value': round(row[1], 2)} for row in rows]
+
+    if not anomaly or len(points) < 4:
+        return points
+
+    # Rolling z-score anomaly detection (window = ⅓ of total points, min 6)
+    values = [p['value'] for p in points]
+    n = len(values)
+    window = max(6, n // 3)
+    Z_THRESHOLD = 2.5
+
+    upper_band = []
+    lower_band = []
+    anomaly_flags = []
+
+    import math
+    for i, v in enumerate(values):
+        lo = max(0, i - window // 2)
+        hi = min(n, i + window // 2)
+        win = values[lo:hi]
+        mean = sum(win) / len(win)
+        variance = sum((x - mean) ** 2 for x in win) / len(win)
+        std = math.sqrt(variance) if variance > 0 else 0.0001
+        upper_band.append(round(mean + Z_THRESHOLD * std, 2))
+        lower_band.append(round(mean - Z_THRESHOLD * std, 2))
+        anomaly_flags.append(v > mean + Z_THRESHOLD * std or v < mean - Z_THRESHOLD * std)
+
+    for i, p in enumerate(points):
+        p['upper_band'] = upper_band[i]
+        p['lower_band'] = lower_band[i]
+        p['anomaly']    = anomaly_flags[i]
+
+    return points
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────
 def audit_log(action: str, username: str, details: str = '', ip: str = ''):
@@ -545,6 +669,63 @@ def get_audit(limit: int = 100):
 
 # ── Notification Engine (Rule‑Based) ──────────────────────────────────────────
 _sent_alerts = {}
+# Tracks per-rule auto-heal state: retries, circuit breaker, trigger timestamps
+_rule_heal_state: dict = {}
+
+def _execute_heal_action(action_cfg: dict, rule_id: str) -> bool:
+    """Run the configured self-healing action. Returns True on success."""
+    atype  = action_cfg.get('type', '')
+    target = action_cfg.get('target', '').strip()
+    if not atype or not target:
+        return False
+
+    try:
+        if atype == 'run':
+            import shlex
+            cmd = shlex.split(target)
+            r = subprocess.run(cmd, timeout=60, capture_output=True)
+            ok = r.returncode == 0
+            logger.info('Heal action run %s → rc=%d', target, r.returncode)
+            return ok
+
+        elif atype == 'restart_service':
+            svc = target if target.endswith('.service') else f'{target}.service'
+            cmd = ['systemctl', 'restart', svc]
+            if os.geteuid() != 0:
+                cmd = ['sudo', '-n'] + cmd
+            r = subprocess.run(cmd, timeout=30, capture_output=True)
+            ok = r.returncode == 0
+            logger.info('Heal action restart_service %s → rc=%d', svc, r.returncode)
+            return ok
+
+        elif atype == 'restart_container':
+            if ':' in target:
+                runtime, ct = target.split(':', 1)
+            else:
+                runtime, ct = 'docker', target
+            r = subprocess.run([runtime, 'restart', ct], timeout=30, capture_output=True)
+            ok = r.returncode == 0
+            logger.info('Heal action restart_container %s via %s → rc=%d', ct, runtime, r.returncode)
+            return ok
+
+        elif atype == 'webhook':
+            cfg = read_yaml_settings()
+            hook = next((a for a in cfg.get('automations', []) if a.get('id') == target), None)
+            if not hook or not hook.get('url'):
+                logger.warning('Heal webhook: automation "%s" not found', target)
+                return False
+            req = urllib.request.Request(hook['url'], method=hook.get('method', 'POST').upper())
+            for k, v in (hook.get('headers') or {}).items():
+                req.add_header(str(k).replace('\n',''), str(v).replace('\n',''))
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                ok = 200 <= resp.getcode() < 300
+            logger.info('Heal action webhook %s → %s', target, 'ok' if ok else 'failed')
+            return ok
+
+    except Exception as e:
+        logger.error('Heal action %s/%s failed: %s', atype, target, e)
+    return False
+
 
 def _safe_eval(condition_str: str, flat_stats: dict) -> bool:
     """Safe parser for conditions like: 'cpu_percent > 90' to prevent RCE"""
@@ -594,6 +775,64 @@ def evaluate_alert_rules(stats: dict):
                 message = rule.get('message', condition)
                 channels = rule.get('channels', [])
                 _dispatch_notifications(severity, message, cfg.get('notifications', {}), channels)
+
+                # ── Self-Healing Action ───────────────────────────────────────
+                action_cfg = rule.get('action')
+                if not action_cfg or not isinstance(action_cfg, dict):
+                    continue
+
+                max_retries        = int(rule.get('max_retries', 3))
+                circuit_break_after = int(rule.get('circuit_break_after', 5))
+
+                state = _rule_heal_state.setdefault(rule_id, {
+                    'retries': 0, 'trigger_times': [], 'circuit_open': False, 'circuit_open_at': 0
+                })
+
+                # Prune trigger history older than 1 hour
+                state['trigger_times'] = [t for t in state['trigger_times'] if now - t < 3600]
+                state['trigger_times'].append(now)
+
+                # Circuit breaker: open if too many triggers in 1 hour
+                if len(state['trigger_times']) >= circuit_break_after:
+                    if not state['circuit_open']:
+                        state['circuit_open'] = True
+                        state['circuit_open_at'] = now
+                        logger.warning(
+                            'Heal circuit OPEN for rule "%s" (%d triggers/hr) — '
+                            'manual intervention required', rule_id, len(state['trigger_times'])
+                        )
+                        _dispatch_notifications(
+                            'danger',
+                            f'[Circuit Open] Rule "{rule_id}" triggered {len(state["trigger_times"])}× in 1 hour. '
+                            'Auto-healing suspended — manual intervention required.',
+                            cfg.get('notifications', {}), channels
+                        )
+                    continue  # circuit open — skip action
+
+                # Reset circuit after 1 hour of being open
+                if state['circuit_open'] and now - state['circuit_open_at'] >= 3600:
+                    state.update({'circuit_open': False, 'retries': 0, 'trigger_times': []})
+                    logger.info('Heal circuit CLOSED for rule "%s"', rule_id)
+
+                if state['circuit_open']:
+                    continue
+
+                # Retry gate
+                if state['retries'] >= max_retries:
+                    logger.warning(
+                        'Heal max_retries=%d reached for rule "%s" — skipping action', max_retries, rule_id
+                    )
+                    continue
+
+                state['retries'] += 1
+                success = _execute_heal_action(action_cfg, rule_id)
+                if success:
+                    logger.info('Heal succeeded for rule "%s" (attempt %d)', rule_id, state['retries'])
+                    state['retries'] = 0  # reset on success
+                else:
+                    logger.warning(
+                        'Heal attempt %d/%d failed for rule "%s"', state['retries'], max_retries, rule_id
+                    )
         except Exception as e:
             logger.error(f"Error evaluating rule {rule.get('id')}: {e}")
 
@@ -1420,6 +1659,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json(read_yaml_settings())
             return
 
+        if path == '/api/smart':
+            try:
+                self._json(collect_smart())
+            except Exception as e:
+                self._json({'error': str(e)}, 500)
+            return
+
         if path == '/api/cloud-remotes':
             try: self._json(get_rclone_remotes())
             except Exception: self._json({'available': False, 'remotes': []})
@@ -1455,9 +1701,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path.startswith('/api/history/'):
             metric = path[13:]
             try:
-                range_h = int(qs.get('range', ['24'])[0])
+                range_h    = int(qs.get('range',      ['24'])[0])
                 resolution = int(qs.get('resolution', ['60'])[0])
-                data = get_history(metric, range_h, resolution)
+                anomaly    = qs.get('anomaly', ['0'])[0] == '1'
+                data = get_history(metric, range_h, resolution, anomaly=anomaly)
                 self._json(data)
             except Exception as e:
                 self._json({'error': str(e)}, 500)

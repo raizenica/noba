@@ -471,6 +471,15 @@
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon" aria-hidden="true"></i>
                 <span class="card-title">Storage</span>
+                <button class="btn btn-xs btn-secondary"
+                        style="margin-right:.4rem;font-size:.7rem;padding:.15rem .4rem"
+                        @click="fetchSmartData()"
+                        :disabled="smartLoading"
+                        title="SMART disk health">
+                    <i class="fas fa-heartbeat" aria-hidden="true"></i>
+                    <span x-show="!smartLoading">SMART</span>
+                    <span x-show="smartLoading">…</span>
+                </button>
                 <button class="collapse-btn fas fa-chevron-down"
                         :class="collapsed.storage ? 'is-collapsed' : ''"
                         @click="toggleCollapse('storage')"
@@ -969,7 +978,7 @@
             <span x-text="historyMetric + ' History'"></span>
         </div>
 
-        <div class="field-2" style="margin-bottom: 1.5rem;">
+        <div class="field-2" style="margin-bottom: 1rem;">
             <div>
                 <label class="field-label">Range</label>
                 <select class="field-select" x-model="historyRange" @change="fetchHistory()">
@@ -986,6 +995,16 @@
                     <option value="3600">1 hour</option>
                 </select>
             </div>
+        </div>
+
+        <div style="margin-bottom:.8rem; display:flex; align-items:center; gap:.5rem;">
+            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.82rem;color:var(--fg-dim)">
+                <input type="checkbox"
+                       x-model="historyAnomalyEnabled"
+                       @change="fetchHistory()"
+                       style="accent-color:var(--accent)">
+                Anomaly detection (z-score bands)
+            </label>
         </div>
 
         <div style="position: relative; height: 250px; width: 100%;">
@@ -1043,6 +1062,89 @@
         </div>
         <div class="modal-footer">
             <button class="btn btn-sm" @click="showAuditModal=false">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── SMART Disk Health Modal ─────────────────────────────────────────── -->
+<div x-show="showSmartModal"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showSmartModal=false"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="smart-title"
+     x-cloak>
+    <div class="modal-box" style="max-width:680px">
+        <div class="modal-title" id="smart-title">
+            <i class="fas fa-heartbeat" style="color:var(--accent)" aria-hidden="true"></i>
+            <span>SMART Disk Health</span>
+        </div>
+
+        <template x-if="smartData.length === 0">
+            <p style="color:var(--fg-dim);text-align:center;padding:1.5rem 0">
+                No SMART data available. Ensure <code>smartctl</code> is installed and disks are accessible.
+            </p>
+        </template>
+
+        <template x-for="disk in smartData" :key="disk.device">
+            <div style="border:1px solid var(--border);border-radius:8px;padding:.8rem;margin-bottom:.7rem">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+                    <div>
+                        <strong x-text="disk.device"></strong>
+                        <span style="color:var(--fg-dim);font-size:.82rem;margin-left:.5rem" x-text="disk.model || ''"></span>
+                    </div>
+                    <template x-if="!disk.error">
+                        <span class="badge" :class="smartRiskClass(disk.risk_score)" x-text="smartRiskLabel(disk.risk_score)"></span>
+                    </template>
+                    <template x-if="disk.error">
+                        <span class="badge bd" x-text="'Error: ' + disk.error"></span>
+                    </template>
+                </div>
+                <template x-if="!disk.error">
+                    <div class="field-2" style="font-size:.82rem;gap:.4rem">
+                        <div class="row">
+                            <span class="row-label">SMART</span>
+                            <span class="badge" :class="disk.smart_ok ? 'bs' : 'bd'" x-text="disk.smart_ok ? 'PASSED' : 'FAILED'"></span>
+                        </div>
+                        <div class="row">
+                            <span class="row-label">Temperature</span>
+                            <span x-text="disk.temp_c != null ? disk.temp_c + ' °C' : '—'"></span>
+                        </div>
+                        <div class="row">
+                            <span class="row-label">Power-On Hours</span>
+                            <span x-text="formatPoh(disk.power_on_hours)"></span>
+                        </div>
+                        <div class="row" x-show="disk.attributes.reallocated_sectors != null">
+                            <span class="row-label">Reallocated Sectors</span>
+                            <span :class="disk.attributes.reallocated_sectors > 0 ? 'bd' : ''" x-text="disk.attributes.reallocated_sectors ?? '—'"></span>
+                        </div>
+                        <div class="row" x-show="disk.attributes.pending_sectors != null">
+                            <span class="row-label">Pending Sectors</span>
+                            <span :class="disk.attributes.pending_sectors > 0 ? 'bw' : ''" x-text="disk.attributes.pending_sectors ?? '—'"></span>
+                        </div>
+                        <div class="row" x-show="disk.attributes.ssd_life_left_pct != null">
+                            <span class="row-label">SSD Life Left</span>
+                            <span x-text="disk.attributes.ssd_life_left_pct + '%'"></span>
+                        </div>
+                        <div class="row" x-show="disk.attributes.available_spare_pct != null">
+                            <span class="row-label">NVMe Spare</span>
+                            <span :class="disk.attributes.available_spare_pct < 10 ? 'bd' : ''" x-text="disk.attributes.available_spare_pct + '%'"></span>
+                        </div>
+                        <div class="row" x-show="disk.attributes.percentage_used != null">
+                            <span class="row-label">NVMe % Used</span>
+                            <span :class="disk.attributes.percentage_used > 90 ? 'bd' : ''" x-text="disk.attributes.percentage_used + '%'"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </template>
+
+        <div class="modal-footer">
+            <button class="btn btn-sm btn-secondary" @click="fetchSmartData()" :disabled="smartLoading" style="margin-right:.5rem">
+                <i class="fas fa-sync-alt" aria-hidden="true"></i> Refresh
+            </button>
+            <button class="btn btn-sm" @click="showSmartModal=false">Close</button>
         </div>
     </div>
 </div>
@@ -1293,6 +1395,17 @@
                 </div>
                 <label class="toggle-item" style="margin-top:.4rem">
                     <input type="checkbox" x-model="gotifyEnabled"> Enable Gotify alerts
+                </label>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Voice Alerts</span>
+                <p style="font-size:.8rem;color:var(--fg-dim);margin:.2rem 0 .5rem">
+                    Speak critical (danger) alerts aloud using the browser's built-in speech synthesis.
+                    Requires a user gesture to activate the first time.
+                </p>
+                <label class="toggle-item">
+                    <input type="checkbox" :checked="voiceAlertsEnabled" @change="toggleVoiceAlerts()">
+                    Enable voice alerts for danger events
                 </label>
             </div>
             <div class="s-section">

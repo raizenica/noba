@@ -170,10 +170,20 @@ function dashboard() {
         showAuditModal: false,
         auditLog: [],
 
+        // History anomaly overlay
+        historyAnomalyEnabled: false,
+
+        // SMART disk health
+        smartData: [], smartLoading: false, showSmartModal: false,
+
+        // Voice alerts
+        voiceAlertsEnabled: localStorage.getItem('noba-voice-alerts') === 'true',
+
         // Internal — never overwritten by server payloads
         _es: null, _poll: null, _lastHeartbeat: 0,
         _countdownTimer: null, _reconnecting: false,
         _masonryObserver: null, _keydownHandler: null,
+        _spokenAlerts: new Set(),
 
         // ── Auth ───────────────────────────────────────────────────────────────
         authenticated: !!localStorage.getItem('noba-token'),
@@ -436,6 +446,35 @@ function dashboard() {
                 if (Object.prototype.hasOwnProperty.call(payload, key)) {
                     this[key] = payload[key];
                 }
+            }
+            // Voice alerts — speak new danger alerts once
+            if (this.voiceAlertsEnabled && window.speechSynthesis && payload.alerts) {
+                for (const alert of payload.alerts) {
+                    const key = alert.msg || alert.id || JSON.stringify(alert);
+                    if (!this._spokenAlerts.has(key) && alert.level === 'danger') {
+                        this._spokenAlerts.add(key);
+                        const utt = new SpeechSynthesisUtterance('Warning: ' + (alert.msg || alert.title || 'critical alert'));
+                        utt.rate = 0.9;
+                        utt.volume = 1;
+                        window.speechSynthesis.speak(utt);
+                    }
+                }
+                // Evict keys for alerts that have gone away to avoid the Set growing forever
+                const active = new Set((payload.alerts || []).map(a => a.msg || a.id || JSON.stringify(a)));
+                for (const k of this._spokenAlerts) {
+                    if (!active.has(k)) this._spokenAlerts.delete(k);
+                }
+            }
+        },
+
+        toggleVoiceAlerts() {
+            this.voiceAlertsEnabled = !this.voiceAlertsEnabled;
+            localStorage.setItem('noba-voice-alerts', this.voiceAlertsEnabled);
+            if (this.voiceAlertsEnabled && window.speechSynthesis) {
+                // Prime the browser's permission — must be from a user gesture
+                const utt = new SpeechSynthesisUtterance('Voice alerts enabled');
+                utt.volume = 0.5;
+                window.speechSynthesis.speak(utt);
             }
         },
 
@@ -914,9 +953,11 @@ function dashboard() {
         async fetchHistory() {
             if (!this.historyMetric) return;
             try {
-                const res = await fetch(`/api/history/${this.historyMetric}?range=${this.historyRange}&resolution=${this.historyResolution}`, {
-                    headers: { 'Authorization': 'Bearer ' + this._token() }
-                });
+                const anomalyParam = this.historyAnomalyEnabled ? '&anomaly=1' : '';
+                const res = await fetch(
+                    `/api/history/${this.historyMetric}?range=${this.historyRange}&resolution=${this.historyResolution}${anomalyParam}`,
+                    { headers: { 'Authorization': 'Bearer ' + this._token() } }
+                );
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 this.historyData = await res.json();
                 this.$nextTick(() => this.renderHistoryChart());
@@ -929,38 +970,74 @@ function dashboard() {
             const canvas = document.getElementById('historyChart');
             if (!canvas) return;
 
-            // Destroy existing chart instance if it exists to prevent memory leaks/overlapping
             if (this.historyChart instanceof Chart) {
                 this.historyChart.destroy();
             }
 
-            const ctx = canvas.getContext('2d');
-            const times = this.historyData.map(d => new Date(d.time * 1000).toLocaleTimeString());
+            const ctx    = canvas.getContext('2d');
+            const times  = this.historyData.map(d => new Date(d.time * 1000).toLocaleTimeString());
             const values = this.historyData.map(d => d.value);
+            const hasAnomaly = this.historyAnomalyEnabled && this.historyData.length > 0 && 'upper_band' in this.historyData[0];
 
-            // Assign to a raw variable to avoid Alpine's proxy making the Chart object deeply reactive
+            const datasets = [{
+                label: this.historyMetric,
+                data: values,
+                borderColor: 'var(--accent)',
+                backgroundColor: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+                tension: 0.2,
+                fill: true,
+                pointRadius: hasAnomaly
+                    ? this.historyData.map(d => d.anomaly ? 5 : 0)
+                    : 0,
+                pointBackgroundColor: 'rgba(255,80,80,0.9)',
+            }];
+
+            if (hasAnomaly) {
+                datasets.push({
+                    label: 'Upper band',
+                    data: this.historyData.map(d => d.upper_band),
+                    borderColor: 'rgba(255,160,50,0.45)',
+                    borderDash: [4, 4],
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0.2,
+                });
+                datasets.push({
+                    label: 'Lower band',
+                    data: this.historyData.map(d => d.lower_band),
+                    borderColor: 'rgba(255,160,50,0.45)',
+                    borderDash: [4, 4],
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    fill: '-1',  // fill between upper and lower band
+                    backgroundColor: 'rgba(255,160,50,0.06)',
+                    tension: 0.2,
+                });
+            }
+
             let newChart = new Chart(ctx, {
                 type: 'line',
-                data: {
-                    labels: times,
-                    datasets: [{
-                        label: this.historyMetric,
-                        data: values,
-                        borderColor: 'var(--accent)',
-                                     backgroundColor: 'color-mix(in srgb, var(--accent) 10%, transparent)',
-                                     tension: 0.2, // Smoother line
-                                     fill: true
-                    }]
-                },
+                data: { labels: times, datasets },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: false, // Now safely contained by the HTML wrapper
+                    maintainAspectRatio: false,
                     scales: {
-                        y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
-                                     x: { grid: { display: false } }
+                        y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' } },
+                        x: { grid: { display: false } }
                     },
-                    plugins: { legend: { display: false } },
-                    animation: { duration: 0 } // Disable animation for snappier modal loads
+                    plugins: {
+                        legend: { display: hasAnomaly },
+                        tooltip: {
+                            callbacks: {
+                                afterLabel: (ctx) => {
+                                    const d = this.historyData[ctx.dataIndex];
+                                    return d && d.anomaly ? '⚠ Anomaly detected' : '';
+                                }
+                            }
+                        }
+                    },
+                    animation: { duration: 0 }
                 }
             });
 
@@ -1045,6 +1122,41 @@ function dashboard() {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+        },
+
+        async fetchSmartData() {
+            this.smartLoading = true;
+            try {
+                const res = await fetch('/api/smart', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() }
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.smartData = await res.json();
+                this.showSmartModal = true;
+            } catch (e) {
+                this.addToast('Failed to load SMART data: ' + e.message, 'error');
+            } finally {
+                this.smartLoading = false;
+            }
+        },
+
+        smartRiskClass(score) {
+            if (score >= 75) return 'bd';
+            if (score >= 40) return 'bw';
+            return 'bs';
+        },
+
+        smartRiskLabel(score) {
+            if (score >= 75) return 'Critical';
+            if (score >= 40) return 'Warning';
+            return 'Healthy';
+        },
+
+        formatPoh(hours) {
+            if (!hours) return '—';
+            const d = Math.floor(hours / 24);
+            const h = hours % 24;
+            return d > 0 ? `${d}d ${h}h` : `${h}h`;
         },
 
         async uploadConfigRestore(event) {
