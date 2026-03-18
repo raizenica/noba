@@ -113,7 +113,16 @@ def load_users():
                     parts = line.split(':', 2)
                     if len(parts) == 3: new_db[parts[0]] = (parts[1], parts[2])
         except Exception as e: logger.error("Failed to load users: %s", e)
-    with users_db_lock: users_db = new_db
+
+    with users_db_lock:
+        users_db = new_db
+
+    # BOOTSTRAP: If no users exist (fresh install), create a default admin
+    if not users_db:
+        with users_db_lock:
+            users_db['admin'] = (_pbkdf2_hash('admin'), 'admin')
+        save_users()
+        logger.info("Created default admin user.")
 
 def save_users():
     with users_db_lock:
