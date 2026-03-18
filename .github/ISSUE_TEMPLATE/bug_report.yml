@@ -1,0 +1,123 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as possible.
+        Before submitting, check the [Troubleshooting Guide](../../docs/troubleshooting.md) and search existing issues.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: I checked the troubleshooting guide
+          required: true
+        - label: I am running a recent version of NOBA (`noba --version` or check the server log)
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of NOBA is affected?
+      options:
+        - Web Dashboard (UI)
+        - Backend Server (server.py)
+        - Automation Scripts (backup, disk, cloud, etc.)
+        - Installer (install.sh)
+        - Systemd Timers
+        - Docker / Container
+        - CLI (noba wrapper)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "When I click X, Y happens instead of Z."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to reproduce the behaviour.
+      placeholder: |
+        1. Go to Settings → Integrations
+        2. Enter Pi-hole URL
+        3. Click Apply & Save
+        4. See error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+      description: What actually happened? Include any error messages.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: |
+        Paste relevant log output here. Run with `--verbose` where available.
+        Server log: `tail -100 ~/.local/share/noba-web-server.log`
+        Docker: `docker logs noba-dashboard`
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: NOBA Version
+      description: Output of `noba --version` or the version shown in the server log at startup.
+      placeholder: "e.g. 1.11.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment Method
+      options:
+        - Docker / Docker Compose
+        - Bare-metal (native install)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, distro version, Python version, browser.
+      placeholder: |
+        OS: Fedora 40
+        Python: 3.12.3
+        Browser: Firefox 127 (if UI issue)
+        Docker version: 26.1.4 (if applicable)
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional Context
+      description: Anything else that might help (screenshots, config snippets with secrets redacted, etc.)

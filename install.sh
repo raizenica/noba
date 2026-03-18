@@ -53,6 +53,7 @@ Options:
       --skip-deps        Skip dependency installation
       --no-completion    Skip shell completion setup
       --no-systemd       Skip systemd unit installation and reload
+  -y, --auto-approve     Auto-approve all prompts (unattended/CI install)
   -u, --uninstall        Remove a previously installed suite (reads manifest)
   -n, --dry-run          Show what would be done without making changes
   -h, --help             Show this message
@@ -84,6 +85,7 @@ SKIP_DEPS=false
 UNINSTALL=false
 NO_COMPLETION=false
 NO_SYSTEMD=false
+AUTO_APPROVE=false
 USER_EMAIL="${EMAIL:-}"
 
 MANIFEST_FILE="${MANIFEST_FILE:-$HOME/.local/share/noba-install.manifest}"
@@ -197,24 +199,37 @@ install_deps() {
     require_cmd curl
 
     local deps=()
+    local _confirm_dnf=()
+    local _confirm_apt=()
+    local _confirm_pacman=()
+    local _confirm_zypper=()
+    local _confirm_apk=()
+    if [[ "$AUTO_APPROVE" == true ]]; then
+        _confirm_dnf=(-y)
+        _confirm_apt=(-y)
+        _confirm_pacman=(--noconfirm)
+        _confirm_zypper=(-y)
+        _confirm_apk=(-y)
+    fi
+
     case "$OS_ID" in
         fedora|nobara|rhel|centos|rocky|almalinux)
             deps=(rsync rclone msmtp ImageMagick yq jq dialog psmisc lm_sensors lsof python3)
             if [[ "$DRY_RUN" == true ]]; then
-                dry "Would run: sudo dnf install -y ${deps[*]}"
+                dry "Would run: sudo dnf install ${_confirm_dnf[*]:-} ${deps[*]}"
             else
                 say "Installing via dnf..."
-                sudo dnf install -y "${deps[@]}"
+                sudo dnf install "${_confirm_dnf[@]}" "${deps[@]}"
             fi
             ;;
         debian|ubuntu|linuxmint|pop|kali)
             deps=(rsync msmtp imagemagick jq dialog psmisc lm-sensors lsof python3)
             if [[ "$DRY_RUN" == true ]]; then
-                dry "Would run: sudo apt install -y ${deps[*]}"
+                dry "Would run: sudo apt install ${_confirm_apt[*]:-} ${deps[*]}"
             else
                 say "Installing via apt..."
                 sudo apt-get update -qq
-                sudo apt-get install -y "${deps[@]}"
+                sudo apt-get install "${_confirm_apt[@]}" "${deps[@]}"
                 if ! command -v rclone &>/dev/null; then
                     say_warn "Installing rclone via remote script (review recommended)."
                     if [[ "$DRY_RUN" == true ]]; then
@@ -242,19 +257,41 @@ install_deps() {
         arch|manjaro|endeavouros|garuda)
             deps=(rsync rclone msmtp imagemagick yq jq dialog psmisc lm_sensors lsof python3)
             if [[ "$DRY_RUN" == true ]]; then
-                dry "Would run: sudo pacman -S --noconfirm ${deps[*]}"
+                dry "Would run: sudo pacman -Sy ${_confirm_pacman[*]:-} ${deps[*]}"
             else
                 say "Installing via pacman..."
-                sudo pacman -Sy --noconfirm "${deps[@]}"
+                sudo pacman -Sy "${_confirm_pacman[@]:---noconfirm}" "${deps[@]}"
             fi
             ;;
         opensuse*|sles)
             deps=(rsync rclone msmtp ImageMagick yq jq dialog psmisc sensors lsof python3)
             if [[ "$DRY_RUN" == true ]]; then
-                dry "Would run: sudo zypper install -y ${deps[*]}"
+                dry "Would run: sudo zypper install ${_confirm_zypper[*]:-} ${deps[*]}"
             else
                 say "Installing via zypper..."
-                sudo zypper install -y "${deps[@]}"
+                sudo zypper install "${_confirm_zypper[@]}" "${deps[@]}"
+            fi
+            ;;
+        alpine)
+            deps=(rsync rclone msmtp imagemagick yq jq dialog procps lm_sensors lsof python3 bash)
+            if [[ "$DRY_RUN" == true ]]; then
+                dry "Would run: sudo apk add ${_confirm_apk[*]:-} ${deps[*]}"
+            else
+                say "Installing via apk..."
+                sudo apk add "${_confirm_apk[@]}" "${deps[@]}" || true
+            fi
+            ;;
+        void)
+            deps=(rsync rclone msmtp ImageMagick yq jq dialog psmisc lm_sensors lsof python3)
+            if [[ "$DRY_RUN" == true ]]; then
+                dry "Would run: sudo xbps-install -Sy ${deps[*]}"
+            else
+                say "Installing via xbps-install..."
+                if [[ "$AUTO_APPROVE" == true ]]; then
+                    sudo xbps-install -Sy "${deps[@]}"
+                else
+                    sudo xbps-install -S "${deps[@]}"
+                fi
             fi
             ;;
         *)
@@ -359,6 +396,7 @@ while [[ $# -gt 0 ]]; do
            --skip-deps)    SKIP_DEPS=true;           shift   ;;
            --no-completion)NO_COMPLETION=true;       shift   ;;
            --no-systemd)   NO_SYSTEMD=true;          shift   ;;
+        -y|--auto-approve) AUTO_APPROVE=true;        shift   ;;
         -u|--uninstall)    UNINSTALL=true;           shift   ;;
         -n|--dry-run)      DRY_RUN=true;             shift   ;;
         -h|--help)         show_help ;;

@@ -118,6 +118,18 @@ def _pbkdf2_hash(password: str, salt: str | None = None) -> str:
 
 def _valid_username(name: str) -> bool: return bool(_USERNAME_RE.match(name))
 
+_PW_MIN_LEN  = int(os.environ.get('NOBA_PW_MIN_LEN', 8))
+
+def _check_password_strength(password: str) -> str | None:
+    """Return an error message if the password fails strength requirements, else None."""
+    if len(password) < _PW_MIN_LEN:
+        return f"Password must be at least {_PW_MIN_LEN} characters"
+    if not re.search(r'[A-Z]', password):
+        return "Password must contain at least one uppercase letter"
+    if not re.search(r'[0-9!@#$%^&*()_+\-=\[\]{};\'":,.<>?/\\|`~]', password):
+        return "Password must contain at least one digit or special character"
+    return None
+
 def load_users():
     global users_db
     new_db = {}
@@ -127,8 +139,16 @@ def load_users():
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith('#'): continue
-                    parts = line.split(':', 2)
-                    if len(parts) == 3: new_db[parts[0]] = (parts[1], parts[2])
+                    # Format: username:hashval:role
+                    # hashval may itself contain colons (pbkdf2:salt:hexhash), so
+                    # split at the first colon for the username and rsplit at the
+                    # last colon for the role — leaving the full hash in the middle.
+                    user_rest = line.split(':', 1)
+                    if len(user_rest) != 2: continue
+                    uname, rest = user_rest
+                    hash_role = rest.rsplit(':', 1)
+                    if len(hash_role) != 2: continue
+                    new_db[uname] = (hash_role[0], hash_role[1])
         except Exception as e: logger.error("Failed to load users: %s", e)
     with users_db_lock: users_db = new_db
 
@@ -1558,6 +1578,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if not _valid_username(new_username) or new_role not in VALID_ROLES:
                     self._json({'error': 'Invalid username or role'}, 400)
                     return
+                pw_err = _check_password_strength(password)
+                if pw_err:
+                    self._json({'error': pw_err}, 400)
+                    return
                 with users_db_lock:
                     if new_username in users_db:
                         self._json({'error': 'User already exists'}, 409)
@@ -1582,6 +1606,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
             if action == 'change_password':
                 target, password = body.get('username', '').strip(), body.get('password', '')
+                pw_err = _check_password_strength(password)
+                if pw_err:
+                    self._json({'error': pw_err}, 400)
+                    return
                 with users_db_lock:
                     if target not in users_db:
                         self._json({'error': 'User not found'}, 404)
