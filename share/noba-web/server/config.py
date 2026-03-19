@@ -29,6 +29,7 @@ TOKEN_TTL_H           = 24
 STATS_INTERVAL        = 5
 NOTIFICATION_COOLDOWN = 300
 HISTORY_RETENTION_DAYS = int(os.environ.get("NOBA_HISTORY_DAYS", 30))
+AUDIT_RETENTION_DAYS   = int(os.environ.get("NOBA_AUDIT_DAYS",   90))
 _WORKER_THREADS        = int(os.environ.get("NOBA_WORKER_THREADS", 24))
 _PW_MIN_LEN            = int(os.environ.get("NOBA_PW_MIN_LEN", 8))
 

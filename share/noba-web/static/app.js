@@ -43,23 +43,24 @@ function dashboard() {
         'alertRules',
     ];
 
-    /** Keys that live in localStorage as a local mirror (excludes complex objects
-     * that go to the server only).                                              */
+    /** Keys that live in localStorage as a local mirror.
+     * Secrets/tokens are intentionally excluded — they are loaded from the
+     * backend via fetchSettings() after login and kept in memory only.        */
     const LS_SCALAR_KEYS = [
-        'piholeUrl', 'piholeToken', 'monitoredServices', 'radarIps',
-        'bookmarksStr', 'plexUrl', 'plexToken', 'kumaUrl', 'bmcMap',
+        'piholeUrl', 'monitoredServices', 'radarIps',
+        'bookmarksStr', 'plexUrl', 'kumaUrl', 'bmcMap',
         'wanTestIp', 'lanTestIp',
-        'truenasUrl', 'truenasKey',
-        'radarrUrl',  'radarrKey',
-        'sonarrUrl',  'sonarrKey',
+        'truenasUrl',
+        'radarrUrl',
+        'sonarrUrl',
         'qbitUrl',    'qbitUser',
-        // NOTE: qbitPass is intentionally written to localStorage below but
-        //       flagged here — consider moving to sessionStorage for better
-        //       security; it is included for parity with the original behaviour.
-        'qbitPass',
         'proxmoxUrl', 'proxmoxUser', 'proxmoxTokenName',
-        // proxmoxTokenValue is kept server-side only (like API keys)
     ];
+
+    // One-time migration: remove any legacy credential keys left in localStorage.
+    ['noba-pihole-tok', 'noba-plex-tok', 'noba-truenas-key',
+     'noba-radarr-key', 'noba-sonarr-key', 'noba-qbit-pass']
+        .forEach(k => localStorage.removeItem(k));
 
     /**
      * Keys that the server is allowed to push via SSE / refreshStats.
@@ -102,12 +103,12 @@ function dashboard() {
 
         // ── Core integration settings ──────────────────────────────────────────
         piholeUrl:         localStorage.getItem('noba-pihole')       || '',
-        piholeToken:       localStorage.getItem('noba-pihole-tok')   || '',
+        piholeToken:       '',   // sensitive — loaded from backend after login
         bookmarksStr:      localStorage.getItem('noba-bookmarks')    || DEF_BOOKMARKS,
         monitoredServices: localStorage.getItem('noba-services')     || 'sshd, docker, NetworkManager',
         radarIps:          localStorage.getItem('noba-radar')        || '192.168.1.1, 1.1.1.1, 8.8.8.8',
         plexUrl:           localStorage.getItem('noba-plex-url')     || '',
-        plexToken:         localStorage.getItem('noba-plex-tok')     || '',
+        plexToken:         '',   // sensitive — loaded from backend after login
         kumaUrl:           localStorage.getItem('noba-kuma-url')     || '',
         bmcMap:            localStorage.getItem('noba-bmc-map')      || '',
         wanTestIp:         localStorage.getItem('noba-wan-ip')       || '8.8.8.8',
@@ -115,14 +116,14 @@ function dashboard() {
 
         // ── TrueNAS / Download integrations ───────────────────────────────────
         truenasUrl: localStorage.getItem('noba-truenas-url') || '',
-        truenasKey: localStorage.getItem('noba-truenas-key') || '',
+        truenasKey: '',   // sensitive — loaded from backend after login
         radarrUrl:  localStorage.getItem('noba-radarr-url')  || '',
-        radarrKey:  localStorage.getItem('noba-radarr-key')  || '',
+        radarrKey:  '',   // sensitive — loaded from backend after login
         sonarrUrl:  localStorage.getItem('noba-sonarr-url')  || '',
-        sonarrKey:  localStorage.getItem('noba-sonarr-key')  || '',
+        sonarrKey:  '',   // sensitive — loaded from backend after login
         qbitUrl:    localStorage.getItem('noba-qbit-url')    || '',
         qbitUser:   localStorage.getItem('noba-qbit-user')   || '',
-        qbitPass:   localStorage.getItem('noba-qbit-pass')   || '',
+        qbitPass:   '',   // sensitive — loaded from backend after login
 
         // ── Proxmox VE ─────────────────────────────────────────────────────────
         proxmoxUrl:        localStorage.getItem('noba-pmx-url')       || '',

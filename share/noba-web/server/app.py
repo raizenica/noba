@@ -58,6 +58,7 @@ def _cleanup_loop() -> None:
         if _prune_counter >= 12:
             _prune_counter = 0
             db.prune_history()
+            db.prune_audit()
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────

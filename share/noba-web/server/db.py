@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import datetime
 
-from .config import HISTORY_DB, HISTORY_RETENTION_DAYS
+from .config import AUDIT_RETENTION_DAYS, HISTORY_DB, HISTORY_RETENTION_DAYS
 
 logger = logging.getLogger("noba")
 
@@ -124,6 +124,21 @@ class Database:
                         logger.info("History DB vacuumed")
         except Exception as e:
             logger.error("prune_history failed: %s", e)
+
+    def prune_audit(self) -> None:
+        cutoff = int(time.time()) - AUDIT_RETENTION_DAYS * 86400
+        try:
+            with self._lock:
+                with self._connect() as conn:
+                    stale = conn.execute(
+                        "SELECT COUNT(*) FROM audit WHERE timestamp < ?", (cutoff,)
+                    ).fetchone()[0]
+                    if stale == 0:
+                        return
+                    conn.execute("DELETE FROM audit WHERE timestamp < ?", (cutoff,))
+                    logger.info("Audit pruned: %d rows older than %d days", stale, AUDIT_RETENTION_DAYS)
+        except Exception as e:
+            logger.error("prune_audit failed: %s", e)
 
     # ── Audit ─────────────────────────────────────────────────────────────────
     def audit_log(self, action: str, username: str, details: str = "", ip: str = "") -> None:

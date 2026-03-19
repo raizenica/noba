@@ -90,8 +90,14 @@ class UserStore:
         with self._lock:
             self._db = new_db
         if not self._db:
-            self.add("admin", pbkdf2_hash("admin"), "admin")
-            logger.info("Created default admin user.")
+            default_pass = secrets.token_urlsafe(12)
+            self.add("admin", pbkdf2_hash(default_pass), "admin")
+            logger.warning("=" * 60)
+            logger.warning("FIRST RUN: Created default admin user.")
+            logger.warning("  Username : admin")
+            logger.warning("  Password : %s", default_pass)
+            logger.warning("  Change this password immediately via Settings → Users.")
+            logger.warning("=" * 60)
 
     def save(self) -> None:
         tmp = USER_DB + ".tmp"
