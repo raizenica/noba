@@ -2410,5 +2410,106 @@ function actionsMixin() {
                 if (res.ok) this.systemInfo = await res.json();
             } catch { /* silent */ }
         },
+
+        // ── Ops Center ─────────────────────────────────────────────────────
+
+        async fetchDiskIntelligence() {
+            this.diskIntelLoading = true;
+            try {
+                const res = await fetch('/api/disks/intelligence', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.diskIntelligence = await res.json();
+            } catch (e) {
+                this.addToast('Failed to fetch disk intelligence: ' + e.message, 'error');
+            } finally { this.diskIntelLoading = false; }
+        },
+
+        async fetchConfigChangelog() {
+            this.changelogLoading = true;
+            try {
+                const res = await fetch('/api/config/changelog', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.configChangelog = await res.json();
+            } catch { /* silent */ }
+            finally { this.changelogLoading = false; }
+        },
+
+        async fetchSyncStatus() {
+            this.syncLoading = true;
+            try {
+                const res = await fetch('/api/sites/sync-status', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.syncStatus = await res.json();
+            } catch { /* silent */ }
+            finally { this.syncLoading = false; }
+        },
+
+        async runRecovery(action, params = {}) {
+            if (!confirm(`Run recovery action: ${action}?`)) return;
+            this.recoveryLoading = true;
+            this.recoveryResult = '';
+            try {
+                const res = await fetch(`/api/recovery/${action}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params),
+                });
+                const data = await res.json();
+                this.recoveryResult = data.status === 'ok' ? 'Success' : `Error: ${data.error || 'Unknown'}`;
+                this.addToast(this.recoveryResult, data.status === 'ok' ? 'success' : 'error');
+            } catch (e) {
+                this.recoveryResult = 'Failed: ' + e.message;
+                this.addToast(this.recoveryResult, 'error');
+            } finally { this.recoveryLoading = false; }
+        },
+
+        async runInfluxQuery() {
+            if (!this.influxQuery.trim()) return;
+            this.influxLoading = true;
+            try {
+                const res = await fetch('/api/influxdb/query', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: this.influxQuery }),
+                });
+                if (res.ok) {
+                    this.influxResults = await res.json();
+                    this.$nextTick(() => this.renderInfluxChart());
+                } else {
+                    const err = await res.json().catch(() => ({}));
+                    this.addToast('Query failed: ' + (err.detail || 'error'), 'error');
+                }
+            } catch (e) { this.addToast('InfluxDB error: ' + e.message, 'error'); }
+            finally { this.influxLoading = false; }
+        },
+
+        renderInfluxChart() {
+            const canvas = document.getElementById('influx-chart');
+            if (!canvas || !this.influxResults.length) return;
+            if (this._influxChart instanceof Chart) this._influxChart.destroy();
+            const keys = Object.keys(this.influxResults[0]);
+            const timeKey = keys.find(k => k.includes('time')) || keys[0];
+            const valKey = keys.find(k => k.includes('value') || k === '_value') || keys[1];
+            const labels = this.influxResults.map(r => { try { return new Date(r[timeKey]).toLocaleTimeString(); } catch { return r[timeKey]; } });
+            const values = this.influxResults.map(r => parseFloat(r[valKey]) || 0);
+            this._influxChart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: { labels, datasets: [{ label: valKey, data: values, borderColor: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(), borderWidth: 1.5, pointRadius: 0, fill: false }] },
+                options: { responsive: true, animation: { duration: 0 } },
+            });
+        },
+
+        async fetchBlastRadius(node) {
+            try {
+                const res = await fetch(`/api/services/dependencies/blast-radius?node=${encodeURIComponent(node)}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) return await res.json();
+            } catch { /* silent */ }
+            return null;
+        },
     };
 }

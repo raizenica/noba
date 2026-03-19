@@ -79,6 +79,9 @@ function dashboard() {
         'rssTriggers',
         // Scrutiny
         'scrutinyUrl',
+        // Ops Center
+        'piholePassword', 'siteMap', 'siteNames', 'frigateUrl',
+        'serviceDependencies', 'influxdbUrl', 'influxdbToken', 'influxdbOrg',
     ];
 
     /** Keys that live in localStorage as a local mirror.
@@ -163,6 +166,7 @@ function dashboard() {
         'k8s', 'gitea', 'gitlab', 'github', 'paperless', 'vaultwarden',
         'weather', 'certExpiry', 'domainExpiry', 'vpn',
         'dockerUpdates', 'devicePresence', 'energy', 'scrutiny',
+        'tailscale', 'frigate',
     ]);
 
     const DEF_VIS = {
@@ -181,6 +185,7 @@ function dashboard() {
         weather: true, certExpiry: true, vpn: true,
         lidarr: true, readarr: true, bazarr: true,
         dockerUpdates: true, devicePresence: true, scrutiny: true,
+        tailscale: true, frigate: true, recovery: true,
     };
 
     const DEF_BOOKMARKS = 'Router|http://192.168.1.1|fa-network-wired, Pi-hole|http://pi.hole/admin|fa-shield-alt';
@@ -345,6 +350,23 @@ function dashboard() {
         paperlessToken:  '',  // sensitive
         vaultwardenUrl:  localStorage.getItem('noba-vaultwarden-url')  || '',
         vaultwardenToken:'',  // sensitive
+
+        // ── Ops Center ────────────────────────────────────────────────────────
+        piholePassword: '',  // sensitive
+        siteMap: {}, siteNames: {siteA: 'Site A', siteB: 'Site B'},
+        selectedSite: 'all',
+        frigateUrl: localStorage.getItem('noba-frigate-url') || '',
+        serviceDependencies: '',
+        influxdbUrl: localStorage.getItem('noba-influxdb-url') || '',
+        influxdbToken: '',  // sensitive
+        influxdbOrg: '',
+        scrutinyUrl: localStorage.getItem('noba-scrutiny-url') || '',
+        showTailscaleModal: false,
+        showDiskIntelModal: false, diskIntelligence: [], diskIntelLoading: false,
+        showInfluxModal: false, influxQuery: '', influxResults: [], influxLoading: false,
+        showSyncModal: false, syncStatus: null, syncLoading: false,
+        showChangelogModal: false, configChangelog: [], changelogLoading: false,
+        recoveryLoading: false, recoveryResult: '',
 
         // ── Live data ──────────────────────────────────────────────────────────
         timestamp: '--:--', uptime: '--', loadavg: '--', memory: '--',
@@ -786,6 +808,12 @@ function dashboard() {
         _stopCountdown() {
             clearInterval(this._countdownTimer);
             this._countdownTimer = null;
+        },
+
+        _isVisibleForSite(cardKey) {
+            if (this.selectedSite === 'all' || !this.siteMap || Object.keys(this.siteMap).length === 0) return true;
+            const site = this.siteMap[cardKey];
+            return !site || site === this.selectedSite;
         },
 
         _buildQueryParams() {

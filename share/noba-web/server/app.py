@@ -309,12 +309,25 @@ def api_settings_get(auth=Depends(_get_auth)):
 @app.post("/api/settings")
 async def api_settings_post(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
+    ip = _client_ip(request)
     body = await _read_body(request)
+    # Diff old vs new for changelog — only compare keys the frontend actually sent
+    old_settings = read_yaml_settings()
+    changed = []
+    for k in body:
+        ov = old_settings.get(k)
+        nv = body.get(k)
+        if ov != nv:
+            is_secret = any(s in k.lower() for s in ("token", "key", "pass", "secret"))
+            changed.append({"key": k, "old": "***" if is_secret else str(ov)[:80],
+                            "new": "***" if is_secret else str(nv)[:80]})
     ok = write_yaml_settings(body)
     if not ok:
-        db.audit_log("settings_update", username, "Settings update failed", _client_ip(request))
+        db.audit_log("settings_update", username, "Settings update failed", ip)
         raise HTTPException(500, "Failed to write settings")
-    db.audit_log("settings_update", username, "Updated web settings", _client_ip(request))
+    if changed:
+        db.audit_log("settings_change", username, json.dumps(changed[:20]), ip)
+    db.audit_log("settings_update", username, "Updated web settings", ip)
     return {"status": "ok"}
 
 
@@ -333,6 +346,201 @@ def api_notif_test(request: Request, auth=Depends(_require_admin)):
     ).start()
     db.audit_log("test_notification", username, "Test notification triggered", _client_ip(request))
     return {"status": "ok", "message": "Notification sent"}
+
+
+# ── /api/config/changelog ────────────────────────────────────────────────────
+@app.get("/api/config/changelog")
+def api_config_changelog(auth=Depends(_require_admin)):
+    entries = db.get_audit(limit=100, action_filter="settings_change")
+    result = []
+    for e in entries:
+        details = e.get("details", "")
+        try:
+            changes = json.loads(details)
+        except (json.JSONDecodeError, TypeError):
+            changes = [{"key": "unknown", "old": "", "new": details}]
+        result.append({
+            "timestamp": e.get("time", ""),
+            "username": e.get("username", ""),
+            "changes": changes,
+        })
+    return result
+
+
+# ── /api/cameras/snapshot ────────────────────────────────────────────────────
+@app.get("/api/cameras/snapshot/{cam}")
+def api_camera_snapshot(cam: str, auth=Depends(_get_auth)):
+    cfg = read_yaml_settings()
+    frigate_url = cfg.get("frigateUrl", "")
+    if not frigate_url:
+        raise HTTPException(404, "Frigate not configured")
+    if not re.match(r'^[a-zA-Z0-9_-]+$', cam):
+        raise HTTPException(400, "Invalid camera name")
+    import httpx as _httpx  # noqa: PLC0415
+    try:
+        r = _httpx.get(f"{frigate_url.rstrip('/')}/api/{cam}/latest.jpg", timeout=8)
+        r.raise_for_status()
+        return Response(content=r.content, media_type="image/jpeg",
+                       headers={"Cache-Control": "no-cache, max-age=5"})
+    except Exception:
+        raise HTTPException(502, "Failed to fetch snapshot")
+
+
+# ── /api/tailscale/status ────────────────────────────────────────────────────
+@app.get("/api/tailscale/status")
+def api_tailscale_status(auth=Depends(_get_auth)):
+    from .metrics import get_tailscale_status  # noqa: PLC0415
+    return get_tailscale_status() or {"error": "Tailscale not available"}
+
+
+# ── /api/disks/intelligence ──────────────────────────────────────────────────
+@app.get("/api/disks/intelligence")
+def api_disk_intelligence(auth=Depends(_get_auth)):
+    cfg = read_yaml_settings()
+    url = cfg.get("scrutinyUrl", "")
+    if not url:
+        raise HTTPException(404, "Scrutiny not configured")
+    from .integrations import get_scrutiny_intelligence  # noqa: PLC0415
+    result = get_scrutiny_intelligence(url)
+    return result or []
+
+
+# ── /api/services/dependencies/blast-radius ──────────────────────────────────
+@app.get("/api/services/dependencies/blast-radius")
+def api_blast_radius(node: str, auth=Depends(_get_auth)):
+    cfg = read_yaml_settings()
+    deps_str = cfg.get("serviceDependencies", "")
+    if not deps_str:
+        return {"node": node, "dependents": [], "dependencies": []}
+    # Parse edges: "Plex>vnnas,Radarr>vnnas,Frigate>cam1"
+    edges = []
+    for edge in deps_str.split(","):
+        edge = edge.strip()
+        if ">" in edge:
+            src, dst = edge.split(">", 1)
+            edges.append((src.strip(), dst.strip()))
+    # Find dependents (what breaks if node goes down)
+    dependents: set[str] = set()
+    def walk_dependents(n: str) -> None:
+        for src, dst in edges:
+            if dst == n and src not in dependents:
+                dependents.add(src)
+                walk_dependents(src)
+    walk_dependents(node)
+    # Find dependencies (what node depends on)
+    dependencies: set[str] = set()
+    def walk_dependencies(n: str) -> None:
+        for src, dst in edges:
+            if src == n and dst not in dependencies:
+                dependencies.add(dst)
+                walk_dependencies(dst)
+    walk_dependencies(node)
+    return {
+        "node": node,
+        "dependents": sorted(dependents),
+        "dependencies": sorted(dependencies),
+    }
+
+
+# ── /api/recovery ────────────────────────────────────────────────────────────
+@app.post("/api/recovery/tailscale-reconnect")
+async def api_recovery_tailscale(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    ip = _client_ip(request)
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "tailscale", "up"], capture_output=True, text=True, timeout=15,
+        )
+        db.audit_log("recovery_tailscale", username, f"exit={result.returncode}", ip)
+        return {"status": "ok" if result.returncode == 0 else "error",
+                "output": result.stdout[:500], "error": result.stderr[:500]}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/api/recovery/dns-flush")
+async def api_recovery_dns(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    ip = _client_ip(request)
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "systemctl", "restart", "pihole-FTL"],
+            capture_output=True, text=True, timeout=15,
+        )
+        db.audit_log("recovery_dns_flush", username, f"exit={result.returncode}", ip)
+        return {"status": "ok" if result.returncode == 0 else "error",
+                "output": result.stdout[:500], "error": result.stderr[:500]}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/api/recovery/service-restart")
+async def api_recovery_service(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    ip = _client_ip(request)
+    body = await _read_body(request)
+    service = body.get("service", "")
+    if not service or len(service) > 256 or not re.match(r'^[a-zA-Z0-9@._-]+$', service):
+        raise HTTPException(400, "Invalid service name")
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "systemctl", "restart", service],
+            capture_output=True, text=True, timeout=30,
+        )
+        db.audit_log("recovery_service_restart", username, f"service={service} exit={result.returncode}", ip)
+        return {"status": "ok" if result.returncode == 0 else "error",
+                "service": service, "output": result.stdout[:500]}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# ── /api/influxdb/query ──────────────────────────────────────────────────────
+@app.post("/api/influxdb/query")
+async def api_influxdb_query(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    ip = _client_ip(request)
+    body = await _read_body(request)
+    query = body.get("query", "")
+    if not query:
+        raise HTTPException(400, "Query is required")
+    cfg = read_yaml_settings()
+    url = cfg.get("influxdbUrl", "")
+    token = cfg.get("influxdbToken", "")
+    org = cfg.get("influxdbOrg", "")
+    if not url or not token:
+        raise HTTPException(404, "InfluxDB not configured")
+    from .integrations import query_influxdb  # noqa: PLC0415
+    db.audit_log("influxdb_query", username, query[:200], ip)
+    result = query_influxdb(url, token, org, query)
+    if result is None:
+        raise HTTPException(502, "InfluxDB query failed")
+    return result
+
+
+# ── /api/sites/sync-status ───────────────────────────────────────────────────
+@app.get("/api/sites/sync-status")
+def api_sync_status(auth=Depends(_get_auth)):
+    cfg = read_yaml_settings()
+    site_map = cfg.get("siteMap", {})
+    if not site_map:
+        return {"services": [], "message": "No site mapping configured"}
+    # Group services by name across sites
+    from collections import defaultdict  # noqa: PLC0415
+    by_name: dict[str, dict] = defaultdict(dict)
+    for svc_key, site in site_map.items():
+        by_name[svc_key][site] = "configured"
+    # Get live stats to check actual status
+    stats = bg_collector.get() or {}
+    services = []
+    for svc_key in sorted(by_name.keys()):
+        sites = by_name[svc_key]
+        live_data = stats.get(svc_key)
+        services.append({
+            "key": svc_key,
+            "sites": sites,
+            "online": live_data is not None and live_data != {},
+        })
+    return {"services": services}
 
 
 # ── /api/smart ────────────────────────────────────────────────────────────────

@@ -103,6 +103,13 @@
                 <option value="nord">Nord</option>
             </select>
 
+            <select class="theme-select" x-model="selectedSite" x-show="authenticated && Object.keys(siteMap).length > 0" x-cloak style="margin-left:.4rem" title="Filter by site">
+                <option value="all">All Sites</option>
+                <template x-for="[key, name] in Object.entries(siteNames)" :key="key">
+                    <option :value="key" x-text="name"></option>
+                </template>
+            </select>
+
             <button class="icon-btn" @click="refreshStats()" title="Refresh (r)" aria-label="Refresh stats">
                 <i class="fas fa-sync" :class="refreshing ? 'fa-spin' : ''" aria-hidden="true"></i>
             </button>
@@ -114,6 +121,17 @@
 
             <button class="icon-btn" @click="showServiceMapModal=true; fetchServiceMap()" title="Service Map" x-show="authenticated" x-cloak>
                 <i class="fas fa-sitemap" aria-hidden="true"></i>
+            </button>
+
+            <button class="icon-btn" @click="showTailscaleModal=true" title="Tailscale Network" x-show="authenticated && tailscale" x-cloak>
+                <i class="fas fa-network-wired"></i>
+            </button>
+
+            <button class="icon-btn" @click="showInfluxModal=true" title="InfluxDB Query" x-show="authenticated && influxdbUrl" x-cloak>
+                <i class="fas fa-database"></i>
+            </button>
+            <button class="icon-btn" @click="showSyncModal=true; fetchSyncStatus()" title="Cross-Site Status" x-show="authenticated && Object.keys(siteMap).length > 0" x-cloak>
+                <i class="fas fa-sync"></i>
             </button>
 
             <button class="icon-btn" @click="toggleNotifCenter()" title="Notifications" style="position:relative" aria-label="Notifications">
@@ -675,6 +693,7 @@
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon" style="color:#e5c07b" aria-hidden="true"></i>
                 <span class="card-title">Disk Health</span>
+                <button class="btn btn-xs btn-secondary" style="margin-right:.4rem;font-size:.7rem;padding:.15rem .4rem" @click="showDiskIntelModal=true; fetchDiskIntelligence()" :disabled="diskIntelLoading" title="Disk predictions"><i class="fas fa-brain"></i></button>
                 <button class="collapse-btn fas fa-chevron-down"
                         :class="collapsed.scrutiny ? 'is-collapsed' : ''"
                         @click="toggleCollapse('scrutiny')"
@@ -719,6 +738,74 @@
                         </div>
                     </template>
                 </div>
+            </div>
+        </div>
+
+        <!-- ── Tailscale Network ────────────────────────────────────────── -->
+        <div class="card" data-id="card-tailscale" x-show="vis.tailscale && tailscale" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr">
+                <i class="fas fa-network-wired card-icon" style="color:#56b6c2" aria-hidden="true"></i>
+                <span class="card-title">Tailscale</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.tailscale ? 'is-collapsed' : ''" @click="toggleCollapse('tailscale')" :aria-expanded="!collapsed.tailscale" aria-controls="body-tailscale" aria-label="Toggle Tailscale"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" id="body-tailscale" x-show="!collapsed.tailscale">
+                <div class="row"><span class="row-label">Tailnet</span><span class="row-val" x-text="tailscale.tailnet || '—'"></span></div>
+                <div class="row"><span class="row-label">Nodes Online</span><span class="row-val" style="color:var(--success)" x-text="(tailscale.onlineCount||0) + '/' + (tailscale.totalCount||0)"></span></div>
+                <div style="margin-top:.5rem;max-height:150px;overflow-y:auto">
+                    <template x-for="p in (tailscale.peers||[]).filter(n=>n.online).slice(0,8)" :key="p.hostname">
+                        <div class="row" style="font-size:.75rem">
+                            <span class="row-label"><i class="fas fa-circle dot-up" style="font-size:.35rem;margin-right:4px"></i><span x-text="p.hostname"></span></span>
+                            <span class="row-val" style="opacity:.7" x-text="p.ip"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Frigate Cameras ──────────────────────────────────────────── -->
+        <div class="card" data-id="card-frigate" x-show="vis.frigate && frigateUrl && frigate" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr">
+                <i class="fas fa-video card-icon" style="color:#e06c75" aria-hidden="true"></i>
+                <span class="card-title">Cameras</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.frigate ? 'is-collapsed' : ''" @click="toggleCollapse('frigate')" :aria-expanded="!collapsed.frigate" aria-controls="body-frigate" aria-label="Toggle Cameras"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" id="body-frigate" x-show="!collapsed.frigate">
+                <div class="row"><span class="row-label">Cameras</span><span class="row-val" x-text="(frigate.onlineCount||0) + '/' + (frigate.cameraCount||0) + ' online'"></span></div>
+                <div class="row" x-show="frigate.version"><span class="row-label">Version</span><span class="row-val" x-text="frigate.version"></span></div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:.4rem;margin-top:.5rem">
+                    <template x-for="cam in (frigate.cameras||[])" :key="cam.name">
+                        <div style="position:relative;border-radius:4px;overflow:hidden;border:1px solid var(--border)">
+                            <img :src="'/api/cameras/snapshot/' + cam.name" loading="lazy" :alt="cam.name" style="width:100%;aspect-ratio:16/9;object-fit:cover;display:block" onerror="this.style.display='none'">
+                            <div style="padding:.2rem .4rem;font-size:.65rem;display:flex;justify-content:space-between;background:var(--surface-2)">
+                                <span x-text="cam.name"></span>
+                                <span :class="cam.status==='online'?'dot-up':'dot-down'" style="font-size:.4rem">●</span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Recovery Actions ─────────────────────────────────────────── -->
+        <div class="card" data-id="card-recovery" x-show="vis.recovery && userRole === 'admin'" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr">
+                <i class="fas fa-first-aid card-icon" style="color:#d19a66" aria-hidden="true"></i>
+                <span class="card-title">Recovery</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.recovery ? 'is-collapsed' : ''" @click="toggleCollapse('recovery')" :aria-expanded="!collapsed.recovery" aria-controls="body-recovery" aria-label="Toggle Recovery"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" id="body-recovery" x-show="!collapsed.recovery">
+                <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+                    <button class="btn btn-sm" @click="runRecovery('tailscale-reconnect')" :disabled="recoveryLoading"><i class="fas fa-network-wired"></i> Reconnect Tailscale</button>
+                    <button class="btn btn-sm" @click="runRecovery('dns-flush')" :disabled="recoveryLoading"><i class="fas fa-shield-alt"></i> Flush DNS</button>
+                </div>
+                <div x-data="{svcName:''}" style="margin-top:.5rem;display:flex;gap:.3rem">
+                    <input class="field-input" type="text" x-model="svcName" placeholder="service name" style="flex:1;font-size:.75rem">
+                    <button class="btn btn-sm" @click="runRecovery('service-restart',{service:svcName})" :disabled="recoveryLoading || !svcName"><i class="fas fa-redo"></i></button>
+                </div>
+                <div x-show="recoveryResult" style="margin-top:.4rem;font-size:.75rem;padding:.3rem .5rem;background:var(--surface-2);border-radius:4px" x-text="recoveryResult"></div>
             </div>
         </div>
 
@@ -2563,6 +2650,9 @@
                     <label class="toggle-item"><input type="checkbox" x-model="vis.pihole"> Pi-hole DNS</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.storage"> Storage</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.scrutiny"> Disk Health (Scrutiny)</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.tailscale"> Tailscale</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.frigate"> Cameras (Frigate)</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.recovery"> Recovery Actions</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.radar"> Network Radar</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.kuma"> Uptime Kuma</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.procs"> Resource Hogs</label>
@@ -2756,6 +2846,10 @@
                             <input id="s-pihole-tok" class="field-input" type="password" x-model="piholeToken" autocomplete="off">
                             <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
                         </div>
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-pihole-pass">Password (v6 auto-auth)</label>
+                        <div class="reveal-wrap"><input id="s-pihole-pass" class="field-input" type="password" x-model="piholePassword" placeholder="Pi-hole v6 password" autocomplete="off"><button type="button" class="reveal-btn" @click="$el.previousElementSibling.type=$el.previousElementSibling.type==='password'?'text':'password'"><i class="fas fa-eye"></i></button></div>
                     </div>
                 </div>
             </div>
@@ -3362,6 +3456,23 @@
                 </div>
             </div>
             <div class="s-section">
+                <span class="s-label">Frigate (NVR)</span>
+                <div>
+                    <label class="field-label" for="s-frigate-url">URL</label>
+                    <input id="s-frigate-url" class="field-input" type="url" x-model="frigateUrl" placeholder="http://frigate:5000">
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">InfluxDB</span>
+                <div class="field-2">
+                    <div><label class="field-label" for="s-influx-url">URL</label><input id="s-influx-url" class="field-input" type="url" x-model="influxdbUrl" placeholder="http://influxdb:8086"></div>
+                    <div><label class="field-label" for="s-influx-org">Organization</label><input id="s-influx-org" class="field-input" type="text" x-model="influxdbOrg" placeholder="my-org"></div>
+                </div>
+                <div><label class="field-label" for="s-influx-token">Token</label>
+                    <div class="reveal-wrap"><input id="s-influx-token" class="field-input" type="password" x-model="influxdbToken" autocomplete="off"><button type="button" class="reveal-btn" @click="$el.previousElementSibling.type=$el.previousElementSibling.type==='password'?'text':'password'"><i class="fas fa-eye"></i></button></div>
+                </div>
+            </div>
+            <div class="s-section">
                 <span class="s-label">SSO / OIDC</span>
                 <div class="field-2">
                     <div><label class="field-label">Provider URL</label><input class="field-input" type="url" x-model="oidcProviderUrl" placeholder="https://auth.example.com/realms/main"></div>
@@ -3814,6 +3925,7 @@
         </div>
 
         <div class="settings-footer">
+            <button class="btn btn-sm" @click="showChangelogModal=true; fetchConfigChangelog()" style="margin-right:auto"><i class="fas fa-history"></i> History</button>
             <button class="btn btn-sm" @click="showSettings=false">Cancel</button>
             <button class="btn btn-sm btn-primary" @click="applySettings()" :disabled="userRole!=='admin'" :title="userRole!=='admin'?'Admin role required':'Save and apply settings'">
                 <i class="fas fa-check" aria-hidden="true"></i> Save &amp; Apply
@@ -4705,6 +4817,162 @@
             <div class="row"><span class="row-label">Python</span><span class="row-val" x-text="systemInfo.python"></span></div>
             <div class="row"><span class="row-label">NOBA</span><span class="row-val" x-text="'v' + systemInfo.noba_version"></span></div>
         </div></template>
+    </div>
+</div>
+
+<!-- ── Tailscale Network Modal ──────────────────────────────────── -->
+<div class="modal-overlay" x-show="showTailscaleModal" x-cloak @keydown.escape.window="showTailscaleModal=false" @click.self="showTailscaleModal=false">
+    <div class="modal-box" style="max-width:800px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title"><i class="fas fa-network-wired"></i> Tailscale Network <span x-show="tailscale" style="font-size:.8rem;opacity:.7" x-text="'(' + (tailscale?.onlineCount||0) + '/' + (tailscale?.totalCount||0) + ' online)'"></span><button class="modal-close" @click="showTailscaleModal=false">&times;</button></div>
+        <div style="padding:16px">
+            <template x-if="tailscale">
+                <div>
+                    <div class="row" style="margin-bottom:.8rem"><span class="row-label">Tailnet</span><span class="row-val" x-text="tailscale.tailnet"></span></div>
+                    <div class="row" style="margin-bottom:.8rem"><span class="row-label">This Node</span><span class="row-val" x-text="(tailscale.self?.hostname||'') + ' (' + (tailscale.self?.ip||'') + ')'"></span></div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.6rem">
+                        <template x-for="p in (tailscale.peers||[]).sort((a,b)=>b.online-a.online)" :key="p.hostname">
+                            <div style="padding:.6rem;border-radius:6px;border:1px solid var(--border);background:var(--surface-2)">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">
+                                    <span style="font-weight:600;font-size:.85rem" x-text="p.hostname"></span>
+                                    <span :class="p.online?'dot-up':'dot-down'" style="font-size:.5rem">●</span>
+                                </div>
+                                <div style="font-size:.7rem;color:var(--text-muted)">
+                                    <div x-text="p.ip"></div>
+                                    <div x-text="p.os"></div>
+                                    <div x-show="p.online && p.curAddr" x-text="(p.direct?'Direct':'Relay') + ': ' + p.curAddr"></div>
+                                    <div x-show="p.subnets && p.subnets.length" x-text="'Routes: ' + (p.subnets||[]).join(', ')"></div>
+                                    <div x-show="!p.online && p.lastSeen" x-text="'Last seen: ' + new Date(p.lastSeen).toLocaleDateString()"></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+            <template x-if="!tailscale"><div class="empty-msg">Tailscale not available</div></template>
+        </div>
+    </div>
+</div>
+
+<!-- ── Disk Intelligence Modal ──────────────────────────────────── -->
+<div class="modal-overlay" x-show="showDiskIntelModal" x-cloak @keydown.escape.window="showDiskIntelModal=false" @click.self="showDiskIntelModal=false">
+    <div class="modal-box" style="max-width:900px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title"><i class="fas fa-brain"></i> Disk Intelligence<button class="modal-close" @click="showDiskIntelModal=false">&times;</button></div>
+        <div style="padding:16px">
+            <div x-show="diskIntelLoading" class="empty-msg">Analyzing SMART data...</div>
+            <template x-if="diskIntelligence.length > 0 && !diskIntelLoading">
+                <div style="overflow-x:auto">
+                    <table style="width:100%;font-size:.8rem;border-collapse:collapse">
+                        <thead><tr style="border-bottom:1px solid var(--border);text-align:left">
+                            <th style="padding:.4rem">Device</th><th style="padding:.4rem">Model</th>
+                            <th style="padding:.4rem">Risk</th><th style="padding:.4rem">Growth</th>
+                            <th style="padding:.4rem">Est. Failure</th><th style="padding:.4rem">Hours</th>
+                        </tr></thead>
+                        <tbody>
+                            <template x-for="d in diskIntelligence" :key="d.wwn">
+                                <tr style="border-bottom:1px solid var(--border)">
+                                    <td style="padding:.4rem"><span x-text="'/dev/' + d.name"></span></td>
+                                    <td style="padding:.4rem;font-size:.7rem;opacity:.8" x-text="d.model"></td>
+                                    <td style="padding:.4rem"><span class="badge" :class="d.riskScore > 50 ? 'bd' : d.riskScore > 20 ? 'bw' : 'bs'" x-text="d.riskScore + '%'"></span></td>
+                                    <td style="padding:.4rem" x-text="d.growthRate > 0 ? d.growthRate + '/mo' : 'stable'"></td>
+                                    <td style="padding:.4rem" :style="d.estimatedFailure ? 'color:var(--warning)' : ''" x-text="d.estimatedFailure || '—'"></td>
+                                    <td style="padding:.4rem" x-text="(d.powerOnHours||0).toLocaleString() + 'h'"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+
+<!-- ── InfluxDB Query Modal ─────────────────────────────────────── -->
+<div class="modal-overlay" x-show="showInfluxModal" x-cloak @keydown.escape.window="showInfluxModal=false" @click.self="showInfluxModal=false">
+    <div class="modal-box" style="max-width:900px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title"><i class="fas fa-database"></i> InfluxDB Query<button class="modal-close" @click="showInfluxModal=false">&times;</button></div>
+        <div style="padding:16px">
+            <textarea class="field-input" x-model="influxQuery" rows="4" placeholder="from(bucket:&quot;default&quot;) |> range(start: -1h) |> filter(fn: (r) => r._measurement == &quot;cpu&quot;)" style="font-family:monospace;font-size:.8rem;resize:vertical"></textarea>
+            <div style="margin-top:.5rem;display:flex;gap:.5rem">
+                <button class="btn btn-primary btn-sm" @click="runInfluxQuery()" :disabled="influxLoading || !influxQuery.trim()">
+                    <i class="fas fa-play"></i> <span x-text="influxLoading ? 'Running...' : 'Run Query'"></span>
+                </button>
+                <span style="font-size:.7rem;color:var(--text-muted);align-self:center" x-show="influxResults.length" x-text="influxResults.length + ' rows'"></span>
+            </div>
+            <div style="margin-top:.8rem"><canvas id="influx-chart" height="200"></canvas></div>
+            <div x-show="influxResults.length > 0" style="margin-top:.5rem;max-height:200px;overflow:auto;font-size:.7rem">
+                <table style="width:100%;border-collapse:collapse">
+                    <thead><tr style="border-bottom:1px solid var(--border)">
+                        <template x-for="key in Object.keys(influxResults[0]||{})" :key="key"><th style="padding:.2rem .4rem;text-align:left" x-text="key"></th></template>
+                    </tr></thead>
+                    <tbody>
+                        <template x-for="(row,i) in influxResults.slice(0,50)" :key="i">
+                            <tr style="border-bottom:1px solid var(--border)">
+                                <template x-for="key in Object.keys(influxResults[0]||{})" :key="key"><td style="padding:.2rem .4rem" x-text="row[key]"></td></template>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Config Changelog Modal ───────────────────────────────────── -->
+<div class="modal-overlay" x-show="showChangelogModal" x-cloak @keydown.escape.window="showChangelogModal=false" @click.self="showChangelogModal=false">
+    <div class="modal-box" style="max-width:700px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title"><i class="fas fa-history"></i> Config Changelog<button class="modal-close" @click="showChangelogModal=false">&times;</button></div>
+        <div style="padding:16px">
+            <div x-show="changelogLoading" class="empty-msg">Loading...</div>
+            <template x-if="configChangelog.length > 0 && !changelogLoading">
+                <div>
+                    <template x-for="entry in configChangelog" :key="entry.timestamp">
+                        <div style="margin-bottom:.8rem;padding:.5rem;border:1px solid var(--border);border-radius:4px">
+                            <div style="display:flex;justify-content:space-between;margin-bottom:.3rem;font-size:.75rem;color:var(--text-muted)">
+                                <span x-text="new Date(entry.timestamp*1000).toLocaleString()"></span>
+                                <span x-text="entry.username"></span>
+                            </div>
+                            <template x-for="c in (entry.changes||[])" :key="c.key">
+                                <div style="font-size:.75rem;padding:.15rem 0">
+                                    <span style="color:var(--accent)" x-text="c.key"></span>:
+                                    <span style="color:var(--danger);text-decoration:line-through" x-text="c.old"></span> →
+                                    <span style="color:var(--success)" x-text="c.new"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </template>
+            <div x-show="!changelogLoading && configChangelog.length === 0" class="empty-msg">No config changes recorded yet.</div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Sync Status Modal ────────────────────────────────────────── -->
+<div class="modal-overlay" x-show="showSyncModal" x-cloak @keydown.escape.window="showSyncModal=false" @click.self="showSyncModal=false">
+    <div class="modal-box" style="max-width:600px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title"><i class="fas fa-sync"></i> Cross-Site Status<button class="modal-close" @click="showSyncModal=false">&times;</button></div>
+        <div style="padding:16px">
+            <div x-show="syncLoading" class="empty-msg">Loading...</div>
+            <template x-if="syncStatus && !syncLoading">
+                <div>
+                    <template x-if="syncStatus.services && syncStatus.services.length">
+                        <table style="width:100%;font-size:.8rem;border-collapse:collapse">
+                            <thead><tr style="border-bottom:1px solid var(--border)"><th style="padding:.4rem;text-align:left">Service</th><th style="padding:.4rem">Sites</th><th style="padding:.4rem">Status</th></tr></thead>
+                            <tbody>
+                                <template x-for="s in syncStatus.services" :key="s.key">
+                                    <tr style="border-bottom:1px solid var(--border)">
+                                        <td style="padding:.4rem" x-text="s.key"></td>
+                                        <td style="padding:.4rem;font-size:.7rem" x-text="Object.entries(s.sites||{}).map(([k,v])=>k).join(', ')"></td>
+                                        <td style="padding:.4rem"><span class="badge" :class="s.online?'bs':'bd'" x-text="s.online?'online':'offline'"></span></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </template>
+                    <div x-show="syncStatus.message" class="empty-msg" x-text="syncStatus.message"></div>
+                </div>
+            </template>
+        </div>
     </div>
 </div>
 
