@@ -169,7 +169,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "$SCAN_LINES" =~ ^[0-9]+$ ]] || die "--scan-lines must be a positive integer."
+if [[ ! "$SCAN_LINES" =~ ^[0-9]+$ ]]; then
+    die "--scan-lines must be a positive integer."
+fi
 if [[ -n "$FORCE_URGENCY" ]]; then
     if [[ ! "$FORCE_URGENCY" =~ ^(low|normal|critical)$ ]]; then
         die "--urgency must be one of: low normal critical"

@@ -209,7 +209,7 @@ elif [[ "$CHECK_ALL" == true ]]; then
     done
 else
     # Just the latest
-    LATEST=$(find "$DEST" -maxdepth 1 -type d -name "????????-??????" | sort -rz | head -n 1)
+    LATEST=$(find "$DEST" -maxdepth 1 -type d -name "????????-??????" -print0 | sort -rzV | head -zn1 | tr -d '\0')
     if [[ -n "$LATEST" ]]; then
         verify_snapshot "$LATEST"
     fi

@@ -98,12 +98,13 @@ function actionsMixin() {
                         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
                         body: JSON.stringify({ service: svc.name, action, is_user: svc.is_user }),
                     });
-                    const d = await res.json();
-                    this.addToast(
-                        d.success ? `${action}: ${label}` : `Failed: ${label}`,
-                        d.success ? 'success' : 'error'
-                    );
-                    setTimeout(() => this.refreshStats(), 1200);
+                    if (res.ok) {
+                        this.addToast(`${action}: ${label}`, 'success');
+                        setTimeout(() => this.refreshStats(), 1200);
+                    } else {
+                        const d = await res.json().catch(() => ({}));
+                        this.addToast(d.detail || `Failed: ${label}`, 'error');
+                    }
                 } catch {
                     this.addToast('Service control error', 'error');
                 }
@@ -129,12 +130,13 @@ function actionsMixin() {
                         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
                         body: JSON.stringify({ id: vmId, action }),
                     });
-                    const d = await res.json();
-                    this.addToast(
-                        d.success ? `VM ${vmName}: ${action} successful` : `VM ${vmName}: ${action} failed`,
-                        d.success ? 'success' : 'error'
-                    );
-                    setTimeout(() => this.refreshStats(), 1500);
+                    if (res.ok) {
+                        this.addToast(`VM ${vmName}: ${action} successful`, 'success');
+                        setTimeout(() => this.refreshStats(), 1500);
+                    } else {
+                        const d = await res.json().catch(() => ({}));
+                        this.addToast(d.detail || `VM ${vmName}: ${action} failed`, 'error');
+                    }
                 } catch {
                     this.addToast('VM control error', 'error');
                 }
@@ -156,9 +158,12 @@ function actionsMixin() {
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
                     body: JSON.stringify({ id: actId }),
                 });
-                const d = await res.json();
-                this.addToast(d.success ? 'Webhook successful' : 'Webhook failed',
-                              d.success ? 'success' : 'error');
+                if (res.ok) {
+                    this.addToast('Webhook successful', 'success');
+                } else {
+                    const d = await res.json().catch(() => ({}));
+                    this.addToast(d.detail || 'Webhook failed', 'error');
+                }
             } catch {
                 this.addToast('Webhook error', 'error');
             }
@@ -239,12 +244,13 @@ function actionsMixin() {
                         },
                         body: JSON.stringify({ name, action }),
                     });
-                    const data = await res.json();
-                    if (data.success) {
+                    if (res.ok) {
+                        const data = await res.json();
                         this.addToast(`${label} — OK`, 'success');
                         setTimeout(() => this.refreshStats(), 1500);
                     } else {
-                        this.addToast(data.error || `${label} failed`, 'error');
+                        const data = await res.json().catch(() => ({}));
+                        this.addToast(data.detail || `${label} failed`, 'error');
                     }
                 } catch (e) {
                     this.addToast(`${label}: ${e.message}`, 'error');
@@ -384,29 +390,49 @@ function actionsMixin() {
         // ── History Export ──────────────────────────────────────────────────────
 
         /** Download the current history metric data as CSV. */
-        downloadHistoryCSV() {
+        async downloadHistoryCSV() {
             if (!this.historyMetric) return;
             const url = `/api/history/${encodeURIComponent(this.historyMetric)}/export`
                 + `?range=${this.historyRange}&resolution=${this.historyResolution}`;
-            const a = document.createElement('a');
-            a.href = url + '&token=' + encodeURIComponent(this._token());
-            a.download = `noba-${this.historyMetric}-${this.historyRange}h.csv`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            try {
+                const res = await fetch(url, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const blob = await res.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `noba-${this.historyMetric}-${this.historyRange}h.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(a.href);
+            } catch (e) {
+                this.addToast('CSV download failed: ' + e.message, 'error');
+            }
         },
 
 
         // ── Config Backup / Restore ────────────────────────────────────────────
 
         /** Download the full NOBA config as a YAML backup. */
-        downloadConfigBackup() {
-            const a = document.createElement('a');
-            a.href = '/api/config/backup?token=' + encodeURIComponent(this._token());
-            a.download = 'noba-config-backup.yaml';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+        async downloadConfigBackup() {
+            try {
+                const res = await fetch('/api/config/backup', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const blob = await res.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'noba-config-backup.yaml';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(a.href);
+            } catch (e) {
+                this.addToast('Config backup failed: ' + e.message, 'error');
+            }
         },
 
         /** Fetch SMART health data for all disks. */

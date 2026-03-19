@@ -89,6 +89,17 @@ async def lifespan(app: FastAPI):
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Noba Command Center", version=VERSION, lifespan=lifespan, docs_url=None, redoc_url=None)
 
+# ── CORS – restrict to same-origin; override via NOBA_CORS_ORIGINS env var ──
+_cors_origins = os.environ.get("NOBA_CORS_ORIGINS", "").split(",")
+_cors_origins = [o.strip() for o in _cors_origins if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins or [],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
 
 # ── Security headers middleware ───────────────────────────────────────────────
 @app.middleware("http")
@@ -101,9 +112,8 @@ async def add_security_headers(request: Request, call_next):
 
 # ── Auth dependency ───────────────────────────────────────────────────────────
 def _get_auth(request: Request) -> tuple[str, str]:
-    auth  = request.headers.get("Authorization", "")
-    token_qs = request.query_params.get("token", "")
-    username, role = authenticate(auth, token_qs)
+    auth = request.headers.get("Authorization", "")
+    username, role = authenticate(auth)
     if not username:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return username, role
@@ -138,7 +148,18 @@ async def service_worker():
     return FileResponse(_WEB_DIR / "service-worker.js", media_type="application/javascript")
 
 
-app.mount("/static", StaticFiles(directory=str(_WEB_DIR / "static")), name="static")
+class _CachedStaticFiles(StaticFiles):
+    """StaticFiles subclass that adds Cache-Control headers."""
+    async def __call__(self, scope, receive, send):
+        async def _send_with_cache(msg):
+            if msg["type"] == "http.response.start":
+                headers = dict(msg.get("headers", []))
+                headers[b"cache-control"] = b"public, max-age=3600"
+                msg["headers"] = list(headers.items())
+            await send(msg)
+        await super().__call__(scope, receive, _send_with_cache)
+
+app.mount("/static", _CachedStaticFiles(directory=str(_WEB_DIR / "static")), name="static")
 
 
 # ── /api/health ───────────────────────────────────────────────────────────────
@@ -445,7 +466,7 @@ async def api_login(request: Request):
 async def api_logout(request: Request):
     ip   = _client_ip(request)
     auth = request.headers.get("Authorization", "")
-    tok  = auth[7:] if auth.startswith("Bearer ") else request.query_params.get("token", "")
+    tok  = auth[7:] if auth.startswith("Bearer ") else ""
     if tok:
         uname, _ = token_store.validate(tok)
         if uname:
@@ -477,8 +498,8 @@ async def api_container_control(request: Request, auth=Depends(_require_admin)):
             continue
         except Exception as e:
             db.audit_log("container_control", username, f"{ct_action} {ct_name} error: {e}", ip)
-            return JSONResponse({"success": False, "error": str(e)})
-    return JSONResponse({"success": False, "error": "No container runtime found"})
+            raise HTTPException(500, f"Container control error: {e}")
+    raise HTTPException(404, "No container runtime found")
 
 
 # ── /api/truenas/vm ───────────────────────────────────────────────────────────
@@ -507,7 +528,7 @@ async def api_truenas_vm(request: Request, auth=Depends(_get_auth)):
         return {"success": success}
     except Exception as e:
         db.audit_log("vm_action", username, f"VM {vm_id} {action} failed: {e}", ip)
-        return JSONResponse({"success": False, "error": str(e)})
+        raise HTTPException(502, f"VM action failed: {e}")
 
 
 # ── /api/webhook ──────────────────────────────────────────────────────────────
@@ -540,7 +561,7 @@ async def api_webhook(request: Request, auth=Depends(_get_auth)):
         return {"success": success}
     except Exception as e:
         db.audit_log("webhook", username, f"Webhook {hook_id} failed: {e}", ip)
-        return JSONResponse({"success": False, "error": str(e)})
+        raise HTTPException(502, f"Webhook failed: {e}")
 
 
 # ── /api/run ──────────────────────────────────────────────────────────────────
@@ -646,14 +667,16 @@ async def api_cloud_test(request: Request, auth=Depends(_get_auth)):
         )
         success = r.returncode == 0
         db.audit_log("cloud_test", username, f"Remote {remote} -> {success}", ip)
-        return {"success": success, "error": err_line if not success else ""}
+        if not success:
+            raise HTTPException(422, err_line or "Remote connection failed")
+        return {"success": True}
     except subprocess.TimeoutExpired:
         db.audit_log("cloud_test", username, f"Remote {remote} timeout", ip)
-        return JSONResponse({"success": False, "error": "Connection timed out (15s)"})
+        raise HTTPException(504, "Connection timed out (15s)")
     except FileNotFoundError:
-        return JSONResponse({"success": False, "error": "rclone not found on this system"})
+        raise HTTPException(424, "rclone not found on this system")
     except Exception as e:
-        return JSONResponse({"success": False, "error": str(e)})
+        raise HTTPException(500, f"Cloud test error: {e}")
 
 
 # ── /api/service-control ──────────────────────────────────────────────────────
@@ -676,10 +699,13 @@ async def api_service_control(request: Request, auth=Depends(_get_auth)):
         r = subprocess.run(cmd, timeout=10, capture_output=True)
         success = r.returncode == 0
         db.audit_log("service_control", username, f"{action} {svc} (user={is_user}) -> {success}", ip)
-        return {"success": success, "stderr": r.stderr.decode().strip()}
+        if not success:
+            stderr = r.stderr.decode().strip()
+            raise HTTPException(422, stderr or f"systemctl {action} {svc} failed")
+        return {"success": True}
     except Exception as e:
         db.audit_log("service_control", username, f"{action} {svc} failed: {e}", ip)
-        return JSONResponse({"success": False, "error": str(e)})
+        raise HTTPException(500, f"Service control error: {e}")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

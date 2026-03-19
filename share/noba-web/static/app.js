@@ -480,8 +480,8 @@ function dashboard() {
 
             this._es.onerror = () => {
                 this._reconnecting = false;
-                this._es.close();
-                this._es = null;
+                if (this._es) { this._es.close(); this._es = null; }
+                if (this._poll) return;   // already fell back to polling
                 this.connStatus = 'polling';
                 this._startCountdown(5);
 

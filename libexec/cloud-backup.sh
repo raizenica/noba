@@ -103,24 +103,19 @@ EOF
     exit 0
 }
 
-# ── PID-file lock (reliable across all kernels) ────────────────────────────────
+# ── File lock (atomic via flock) ──────────────────────────────────────────────
+LOCK_FD=""
 acquire_lock() {
-    if [[ -f "$LOCK_FILE" ]]; then
-        local old_pid
-        old_pid=$(cat "$LOCK_FILE" 2>/dev/null || true)
-        if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
-            die "Another cloud-backup instance is already running (PID $old_pid)."
-        fi
-        log_warn "Stale lock file found (PID $old_pid gone) — removing."
-        rm -f "$LOCK_FILE"
+    exec {LOCK_FD}>"$LOCK_FILE"
+    if ! flock -n "$LOCK_FD"; then
+        die "Another cloud-backup instance is already running."
     fi
-    echo $$ > "$LOCK_FILE"
 }
 
 cleanup() {
     local exit_code=$?
-    if [[ -f "$LOCK_FILE" && "$(cat "$LOCK_FILE" 2>/dev/null)" == "$$" ]]; then
-        rm -f "$LOCK_FILE"
+    if [[ -n "$LOCK_FD" ]]; then
+        flock -u "$LOCK_FD" 2>/dev/null || true
     fi
     exit "$exit_code"
 }

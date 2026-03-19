@@ -643,7 +643,7 @@
     right: .4rem;
     background: none;
     border: none;
-    color: var(--fg2);
+    color: var(--text-muted);
     cursor: pointer;
     padding: .25rem;
     font-size: .85rem;
@@ -653,4 +653,8 @@
 .reveal-btn:hover,
 .reveal-btn:focus-visible {
     opacity: 1;
+}
+.reveal-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }

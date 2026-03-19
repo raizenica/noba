@@ -40,7 +40,7 @@ def get_pihole(url: str, token: str) -> dict | None:
             "status":  data.get("gravity", {}).get("status", "unknown"),
             "domains": f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}",
         }
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         pass
 
     # v5 legacy API
@@ -54,7 +54,7 @@ def get_pihole(url: str, token: str) -> dict | None:
             "status":  data.get("status", "enabled"),
             "domains": f"{data.get('domains_being_blocked', 0):,}",
         }
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         return None
 
 
@@ -70,7 +70,7 @@ def get_plex(url: str, token: str) -> dict | None:
         data2      = _http_get(f"{base}/activities", hdrs, timeout=3)
         activities = data2.get("MediaContainer", {}).get("size", 0)
         return {"sessions": sessions, "activities": activities, "status": "online"}
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         return {"sessions": 0, "activities": 0, "status": "offline"}
 
 
@@ -93,7 +93,7 @@ def get_kuma(url: str) -> list:
                         "status": "Up" if val == 1 else ("Pending" if val == 2 else "Down"),
                     })
         return monitors
-    except Exception:
+    except (httpx.HTTPError, ValueError):
         return []
 
 
@@ -120,10 +120,10 @@ def get_truenas(url: str, key: str) -> dict | None:
                     "name":  vm.get("name", "?"),
                     "state": vm.get("status", {}).get("state", "UNKNOWN"),
                 })
-        except Exception as e:
+        except (httpx.HTTPError, KeyError, ValueError) as e:
             logger.warning("TrueNAS VM fetch: %s", e)
         result["status"] = "online"
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         pass
     return result
 
@@ -136,7 +136,7 @@ def get_servarr(url: str, key: str) -> dict | None:
     try:
         data = _http_get(f"{url.rstrip('/')}/api/v3/queue", hdrs, timeout=3)
         return {"queue_count": data.get("totalRecords", 0), "status": "online"}
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         return {"queue_count": 0, "status": "offline"}
 
 
@@ -171,7 +171,7 @@ def get_qbit(url: str, user: str, password: str) -> dict | None:
             ),
             "status": "online",
         })
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         pass
     return result
 
@@ -211,9 +211,9 @@ def get_proxmox(url: str, user: str, token_name: str, token_value: str) -> dict 
                             "cpu":         round(vm.get("cpu", 0) * 100, 1),
                             "mem_percent": round(vm.get("mem", 0) / mmem * 100, 1),
                         })
-                except Exception:
+                except (httpx.HTTPError, KeyError, ValueError):
                     pass
         result["status"] = "online"
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         pass
     return result

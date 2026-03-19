@@ -273,13 +273,8 @@ token_store  = TokenStore()
 rate_limiter = RateLimiter()
 
 
-def authenticate(authorization: str = "", token_qs: str = "") -> tuple[str | None, str | None]:
-    """Extract and validate token from Authorization header or query string."""
-    tok = None
+def authenticate(authorization: str = "") -> tuple[str | None, str | None]:
+    """Extract and validate token from Authorization header."""
     if authorization.startswith("Bearer "):
-        tok = authorization[7:]
-    elif token_qs:
-        tok = token_qs
-    if tok:
-        return token_store.validate(tok)
+        return token_store.validate(authorization[7:])
     return None, None

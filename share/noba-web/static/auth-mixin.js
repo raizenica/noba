@@ -98,7 +98,10 @@ function authMixin() {
             const token = this._token();
             if (token) {
                 try {
-                    await fetch('/api/logout?token=' + encodeURIComponent(token), { method: 'POST' });
+                    await fetch('/api/logout', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + token },
+                    });
                 } catch { /* best-effort */ }
             }
             localStorage.removeItem('noba-token');

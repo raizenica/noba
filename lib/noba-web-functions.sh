@@ -247,10 +247,9 @@ set_password() {
     hash=$(hash_password "$password")
 
     local tmp="$auth_dir/auth.conf.tmp"
-    (
-        umask 077
-        echo "$username:$hash:admin" > "$tmp"
-    )
+    touch "$tmp"
+    chmod 600 "$tmp"
+    echo "$username:$hash:admin" > "$tmp"
     mv "$tmp" "$auth_dir/auth.conf"
 
     log_success "Credentials saved to $auth_dir/auth.conf  (PBKDF2-SHA256, 200k rounds)"
