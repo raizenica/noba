@@ -70,10 +70,14 @@
                    :class="netHealth.wan==='Up' ? 'fa-globe' : 'fa-globe-americas'"
                    :style="netHealth.wan==='Up' ? 'color:var(--success)' : 'color:var(--danger)'"
                    :aria-label="'WAN: ' + netHealth.wan"></i>
-                <span style="margin:0 .2rem; color:var(--text-muted)" aria-hidden="true">|</span>
-                <i class="fas fa-network-wired"
-                   :style="netHealth.lan==='Up' ? 'color:var(--success)' : 'color:var(--danger)'"
-                   :aria-label="'LAN: ' + netHealth.lan"></i>
+                <template x-if="netHealth.lan !== 'Down' || lanTestIp">
+                    <span>
+                        <span style="margin:0 .2rem; color:var(--text-muted)" aria-hidden="true">|</span>
+                        <i class="fas fa-network-wired"
+                           :style="netHealth.lan==='Up' ? 'color:var(--success)' : 'color:var(--danger)'"
+                           :aria-label="'LAN: ' + netHealth.lan"></i>
+                    </span>
+                </template>
                 <span x-show="netHealth.wan==='Down' && netHealth.lan==='Up'"
                       style="color:var(--warning);font-family:var(--font-ui);font-size:.7rem;font-weight:700;margin-left:.3rem">
                     LOCAL ONLY
@@ -139,6 +143,10 @@
                 <span x-show="unreadCount>0" class="notif-badge" x-text="unreadCount" x-cloak></span>
             </button>
 
+            <button class="icon-btn" @click="glanceMode = !glanceMode" :title="glanceMode ? 'Expand cards' : 'Quick glance (g)'" x-show="authenticated" x-cloak>
+                <i class="fas" :class="glanceMode ? 'fa-th-large' : 'fa-th-list'"></i>
+            </button>
+
             <button class="icon-btn" @click="_allCollapsed = !_allCollapsed; collapseAll(_allCollapsed)"
                     :title="_allCollapsed ? 'Expand all' : 'Collapse all'"
                     :aria-label="_allCollapsed ? 'Expand all cards' : 'Collapse all cards'">
@@ -169,6 +177,16 @@
             </button>
         </div>
     </header>
+
+    <div class="health-bar" x-show="authenticated" x-cloak title="Service Health">
+        <div class="health-pip" :class="(services||[]).length ? ((services||[]).every(s=>s.running) ? 'ok' : 'warn') : 'off'" title="Services"></div>
+        <div class="health-pip" :class="scrutiny ? (scrutiny.failed > 0 ? 'warn' : 'ok') : 'off'" title="Disks"></div>
+        <div class="health-pip" :class="tailscale ? (tailscale.onlineCount === tailscale.totalCount ? 'ok' : 'warn') : 'off'" title="Tailscale"></div>
+        <div class="health-pip" :class="frigateUrl && frigate ? (frigate.onlineCount > 0 ? 'ok' : 'warn') : 'off'" title="Cameras"></div>
+        <div class="health-pip" :class="radar && radar.length ? (radar.every(r=>r.status==='Up') ? 'ok' : 'warn') : 'off'" title="Network"></div>
+        <div class="health-pip" :class="piholeUrl && pihole ? 'ok' : piholeUrl ? 'warn' : 'off'" title="DNS"></div>
+        <div class="health-pip" :class="containers && containers.length ? 'ok' : 'off'" title="Containers"></div>
+    </div>
 
     <!-- Notification Center Panel -->
     <div class="notif-panel" x-show="notifCenter" x-cloak @click.outside="notifCenter=false">
@@ -216,9 +234,9 @@
     </div>
 
     <main>
-    <div class="grid" id="sortable-grid" x-cloak>
+    <div class="grid" :class="{'glance-mode': glanceMode}" id="sortable-grid" x-cloak>
 
-        <div class="card" data-id="card-core" x-show="vis.core" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card" data-id="card-core" x-show="vis.core" :data-health="(cpuPercent||0) > 90 ? 'fail' : (cpuPercent||0) > 70 ? 'warn' : 'ok'" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-microchip card-icon" aria-hidden="true"></i>
                 <span class="card-title" id="hdr-core">Core System</span>
@@ -270,6 +288,7 @@
                         <div class="spark-val" x-text="cpuPercent + '%'" aria-hidden="true"></div>
                     </div>
                 </div>
+                <div x-ref="cpuSpark" x-effect="renderSparkline($refs.cpuSpark, cpuHistory, 'var(--accent)')"></div>
                 <div class="prog" style="margin-top:.65rem">
                     <div class="prog-meta">
                         <span>MEMORY</span>
@@ -375,6 +394,7 @@
                         </div>
                     </template>
                 </div>
+                <div x-ref="netSpark" x-effect="if(netInterfaces) renderSparkline($refs.netSpark, (netInterfaces||[]).map(n=>n.rx_bytes||0).slice(-30))"></div>
             </div>
         </div>
 
@@ -689,7 +709,7 @@
         </div>
 
         <!-- ── Scrutiny (Disk SMART Health) ────────────────────────────── -->
-        <div class="card" data-id="card-scrutiny" x-show="vis.scrutiny && scrutiny" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card" data-id="card-scrutiny" x-show="vis.scrutiny && scrutiny" :data-health="scrutiny ? (scrutiny.failed > 0 ? 'fail' : scrutiny.warn > 0 ? 'warn' : 'ok') : ''" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon" style="color:#e5c07b" aria-hidden="true"></i>
                 <span class="card-title">Disk Health</span>
@@ -742,7 +762,7 @@
         </div>
 
         <!-- ── Tailscale Network ────────────────────────────────────────── -->
-        <div class="card" data-id="card-tailscale" x-show="vis.tailscale && tailscale" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card" data-id="card-tailscale" x-show="vis.tailscale && tailscale" :data-health="tailscale ? (tailscale.onlineCount === tailscale.totalCount ? 'ok' : 'warn') : ''" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-network-wired card-icon" style="color:#56b6c2" aria-hidden="true"></i>
                 <span class="card-title">Tailscale</span>
@@ -764,7 +784,7 @@
         </div>
 
         <!-- ── Frigate Cameras ──────────────────────────────────────────── -->
-        <div class="card" data-id="card-frigate" x-show="vis.frigate && frigateUrl && frigate" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card" data-id="card-frigate" x-show="vis.frigate && frigateUrl && frigate" :data-health="frigate ? (frigate.onlineCount === frigate.cameraCount ? 'ok' : 'fail') : ''" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-video card-icon" style="color:#e06c75" aria-hidden="true"></i>
                 <span class="card-title">Cameras</span>
@@ -1656,7 +1676,7 @@
             </div>
         </div>
 
-        <div class="card span-full" data-id="card-services" x-show="vis.services" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card span-full" data-id="card-services" x-show="vis.services" :data-health="(services||[]).every(s=>s.running) ? 'ok' : (services||[]).some(s=>s.running) ? 'warn' : 'fail'" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-cogs card-icon" aria-hidden="true"></i>
                 <span class="card-title">Services</span>
@@ -2774,8 +2794,17 @@
             </div>
         </div>
 
-        <div x-show="settingsTab==='integrations'" role="tabpanel">
-            <div class="s-section">
+        <div x-show="settingsTab==='integrations'" role="tabpanel" x-data="{intCat:'infra'}">
+            <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:1rem;border-bottom:1px solid var(--border);padding-bottom:.6rem">
+                <button class="btn btn-xs" :class="intCat==='infra'?'btn-primary':''" @click="intCat='infra'"><i class="fas fa-server" style="margin-right:.3rem"></i>Infrastructure</button>
+                <button class="btn btn-xs" :class="intCat==='media'?'btn-primary':''" @click="intCat='media'"><i class="fas fa-film" style="margin-right:.3rem"></i>Media</button>
+                <button class="btn btn-xs" :class="intCat==='network'?'btn-primary':''" @click="intCat='network'"><i class="fas fa-network-wired" style="margin-right:.3rem"></i>Network</button>
+                <button class="btn btn-xs" :class="intCat==='iot'?'btn-primary':''" @click="intCat='iot'"><i class="fas fa-microchip" style="margin-right:.3rem"></i>IoT & Home</button>
+                <button class="btn btn-xs" :class="intCat==='devops'?'btn-primary':''" @click="intCat='devops'"><i class="fas fa-code-branch" style="margin-right:.3rem"></i>DevOps</button>
+                <button class="btn btn-xs" :class="intCat==='notify'?'btn-primary':''" @click="intCat='notify'"><i class="fas fa-bell" style="margin-right:.3rem"></i>Notifications</button>
+                <button class="btn btn-xs" :class="intCat==='auth'?'btn-primary':''" @click="intCat='auth'"><i class="fas fa-lock" style="margin-right:.3rem"></i>Auth & Security</button>
+            </div>
+            <div class="s-section" x-show="intCat==='infra'">
                 <span class="s-label">TrueNAS SCALE Server</span>
                 <div class="field-2">
                     <div>
@@ -2791,7 +2820,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Download &amp; Media Stack</span>
                 <div class="field-2">
                     <div>
@@ -2833,7 +2862,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">Pi-hole DNS</span>
                 <div class="field-2">
                     <div>
@@ -2853,7 +2882,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Media Stack (Plex API)</span>
                 <div class="field-2">
                     <div>
@@ -2869,21 +2898,21 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='infra'">
                 <span class="s-label">Uptime Kuma (Prometheus)</span>
                 <div>
                     <label class="field-label" for="s-kuma-url">Base URL</label>
                     <input id="s-kuma-url" class="field-input" type="url" x-model="kumaUrl" placeholder="http://vnnas.example.org:3001">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='infra'">
                 <span class="s-label">Hardware Watchdog (Site B BMC Mapping)</span>
                 <div>
                     <label class="field-label" for="s-bmc-map">Map OS IP to IPMI/BMC IP</label>
                     <input id="s-bmc-map" class="field-input" type="text" x-model="bmcMap" placeholder="10.0.0.50|10.0.0.51">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='notify'">
                 <span class="s-label">Pushover Notifications</span>
                 <div class="field-2">
                     <div>
@@ -2905,7 +2934,7 @@
                     <input type="checkbox" x-model="pushoverEnabled"> Enable Pushover alerts
                 </label>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='notify'">
                 <span class="s-label">Gotify Notifications</span>
                 <div class="field-2">
                     <div>
@@ -2924,7 +2953,7 @@
                     <input type="checkbox" x-model="gotifyEnabled"> Enable Gotify alerts
                 </label>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='notify'">
                 <span class="s-label">Voice Alerts</span>
                 <p style="font-size:.8rem;color:var(--text-muted);margin:.2rem 0 .5rem">
                     Speak critical (danger) alerts aloud using the browser's built-in speech synthesis.
@@ -2935,7 +2964,7 @@
                     Enable voice alerts for danger events
                 </label>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='infra'">
                 <span class="s-label">Proxmox VE</span>
                 <div class="field-2">
                     <div>
@@ -2961,7 +2990,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">AdGuard Home</span>
                 <div class="field-2">
                     <div>
@@ -2983,7 +3012,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Jellyfin</span>
                 <div class="field-2">
                     <div>
@@ -2999,7 +3028,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='iot'">
                 <span class="s-label">Home Assistant</span>
                 <div class="field-2">
                     <div>
@@ -3015,7 +3044,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">UniFi Controller</span>
                 <div class="field-2">
                     <div>
@@ -3041,14 +3070,14 @@
                     <input id="s-unifi-site" class="field-input" type="text" x-model="unifiSite" placeholder="default" style="max-width:200px">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='infra'">
                 <span class="s-label">Speedtest Tracker</span>
                 <div>
                     <label class="field-label" for="s-speedtest-url">URL</label>
                     <input id="s-speedtest-url" class="field-input" type="url" x-model="speedtestUrl" placeholder="http://192.168.1.50:8765">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">Weather</span>
                 <div class="field-2">
                     <div>
@@ -3064,7 +3093,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Tautulli</span>
                 <div class="field-2">
                     <div>
@@ -3080,7 +3109,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Overseerr</span>
                 <div class="field-2">
                     <div>
@@ -3096,7 +3125,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Prowlarr</span>
                 <div class="field-2">
                     <div>
@@ -3112,7 +3141,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Lidarr</span>
                 <div class="field-2">
                     <div>
@@ -3128,7 +3157,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Readarr</span>
                 <div class="field-2">
                     <div>
@@ -3144,7 +3173,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='media'">
                 <span class="s-label">Bazarr</span>
                 <div class="field-2">
                     <div>
@@ -3160,7 +3189,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">Nextcloud</span>
                 <div class="field-2">
                     <div>
@@ -3182,7 +3211,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">Traefik</span>
                 <div class="field-2">
                     <div>
@@ -3195,7 +3224,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">Nginx Proxy Manager</span>
                 <div class="field-2">
                     <div>
@@ -3211,7 +3240,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">Authentik</span>
                 <div class="field-2">
                     <div>
@@ -3227,7 +3256,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='network'">
                 <span class="s-label">Cloudflare</span>
                 <div class="field-2">
                     <div>
@@ -3243,7 +3272,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='devops'">
                 <span class="s-label">OpenMediaVault</span>
                 <div class="field-2">
                     <div>
@@ -3265,7 +3294,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='devops'">
                 <span class="s-label">XCP-ng (Xen Orchestra)</span>
                 <div class="field-2">
                     <div>
@@ -3287,7 +3316,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='iot'">
                 <span class="s-label">Homebridge</span>
                 <div class="field-2">
                     <div>
@@ -3309,21 +3338,21 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='iot'">
                 <span class="s-label">Zigbee2MQTT</span>
                 <div>
                     <label class="field-label" for="s-z2m-url">URL</label>
                     <input id="s-z2m-url" class="field-input" type="url" x-model="z2mUrl" placeholder="http://z2m:8080">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='iot'">
                 <span class="s-label">ESPHome</span>
                 <div>
                     <label class="field-label" for="s-esphome-url">URL</label>
                     <input id="s-esphome-url" class="field-input" type="url" x-model="esphomeUrl" placeholder="http://esphome:6052">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='iot'">
                 <span class="s-label">UniFi Protect</span>
                 <div class="field-2">
                     <div>
@@ -3345,7 +3374,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='iot'">
                 <span class="s-label">PiKVM</span>
                 <div class="field-2">
                     <div>
@@ -3367,7 +3396,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='devops'">
                 <span class="s-label">Kubernetes</span>
                 <div class="field-2">
                     <div>
@@ -3383,7 +3412,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='devops'">
                 <span class="s-label">Gitea</span>
                 <div class="field-2">
                     <div>
@@ -3399,7 +3428,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='devops'">
                 <span class="s-label">GitLab</span>
                 <div class="field-2">
                     <div>
@@ -3415,7 +3444,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='devops'">
                 <span class="s-label">GitHub</span>
                 <div>
                     <label class="field-label" for="s-github-token">Personal Access Token</label>
@@ -3425,7 +3454,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='devops'">
                 <span class="s-label">Paperless-ngx</span>
                 <div class="field-2">
                     <div>
@@ -3441,28 +3470,28 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='devops'">
                 <span class="s-label">Vaultwarden</span>
                 <div>
                     <label class="field-label" for="s-vaultwarden-url">URL</label>
                     <input id="s-vaultwarden-url" class="field-input" type="url" x-model="vaultwardenUrl" placeholder="https://vault.example.com">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='infra'">
                 <span class="s-label">Scrutiny (Disk Health)</span>
                 <div>
                     <label class="field-label" for="s-scrutiny-url">URL</label>
                     <input id="s-scrutiny-url" class="field-input" type="url" x-model="scrutinyUrl" placeholder="http://truenas:8080">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='infra'">
                 <span class="s-label">Frigate (NVR)</span>
                 <div>
                     <label class="field-label" for="s-frigate-url">URL</label>
                     <input id="s-frigate-url" class="field-input" type="url" x-model="frigateUrl" placeholder="http://frigate:5000">
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='infra'">
                 <span class="s-label">InfluxDB</span>
                 <div class="field-2">
                     <div><label class="field-label" for="s-influx-url">URL</label><input id="s-influx-url" class="field-input" type="url" x-model="influxdbUrl" placeholder="http://influxdb:8086"></div>
@@ -3472,7 +3501,7 @@
                     <div class="reveal-wrap"><input id="s-influx-token" class="field-input" type="password" x-model="influxdbToken" autocomplete="off"><button type="button" class="reveal-btn" @click="$el.previousElementSibling.type=$el.previousElementSibling.type==='password'?'text':'password'"><i class="fas fa-eye"></i></button></div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='auth'">
                 <span class="s-label">SSO / OIDC</span>
                 <div class="field-2">
                     <div><label class="field-label">Provider URL</label><input class="field-input" type="url" x-model="oidcProviderUrl" placeholder="https://auth.example.com/realms/main"></div>
@@ -3482,7 +3511,7 @@
                     <div class="reveal-wrap"><input class="field-input" type="password" x-model="oidcClientSecret" autocomplete="off"><button type="button" class="reveal-btn" @click="$el.previousElementSibling.type=$el.previousElementSibling.type==='password'?'text':'password'"><i class="fas fa-eye"></i></button></div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='auth'">
                 <span class="s-label">LDAP / Active Directory</span>
                 <div class="field-2">
                     <div><label class="field-label">LDAP URL</label><input class="field-input" type="url" x-model="ldapUrl" placeholder="ldap://dc.example.com:389"></div>
@@ -3495,7 +3524,7 @@
                     </div>
                 </div>
             </div>
-            <div class="s-section">
+            <div class="s-section" x-show="intCat==='auth'">
                 <span class="s-label">Security &amp; Monitoring</span>
                 <div style="display:flex;flex-direction:column;gap:.7rem">
                     <div>
@@ -4755,7 +4784,7 @@
                             <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center;min-width:100px"
                                  :style="node.id==='noba' ? 'border-color:var(--accent);box-shadow:0 0 12px var(--accent-dim)' : ''">
                                 <div style="font-weight:600;font-size:.85rem" x-text="node.label"></div>
-                                <span class="badge" :class="node.status==='online'?'bs':node.status==='configured'?'bn':'bd'" x-text="node.status" style="font-size:.6rem;margin-top:4px"></span>
+                                <span class="badge" :class="(node.status==='online'||node.status==='active')?'bs':node.status==='configured'?'bn':node.status==='inactive'?'bw':'bd'" x-text="node.status" style="font-size:.6rem;margin-top:4px"></span>
                                 <div style="font-size:.6rem;color:var(--text-dim);margin-top:2px" x-text="node.type"></div>
                             </div>
                         </template>
