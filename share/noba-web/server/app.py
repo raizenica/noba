@@ -311,10 +311,10 @@ async def api_settings_post(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     ip = _client_ip(request)
     body = await _read_body(request)
-    # Diff old vs new for changelog
+    # Diff old vs new for changelog — only compare keys the frontend actually sent
     old_settings = read_yaml_settings()
     changed = []
-    for k in set(list(old_settings.keys()) + list(body.keys())):
+    for k in body:
         ov = old_settings.get(k)
         nv = body.get(k)
         if ov != nv:
@@ -326,7 +326,7 @@ async def api_settings_post(request: Request, auth=Depends(_require_admin)):
         db.audit_log("settings_update", username, "Settings update failed", ip)
         raise HTTPException(500, "Failed to write settings")
     if changed:
-        db.audit_log("settings_change", username, json.dumps(changed)[:512], ip)
+        db.audit_log("settings_change", username, json.dumps(changed[:20]), ip)
     db.audit_log("settings_update", username, "Updated web settings", ip)
     return {"status": "ok"}
 
@@ -360,7 +360,7 @@ def api_config_changelog(auth=Depends(_require_admin)):
         except (json.JSONDecodeError, TypeError):
             changes = [{"key": "unknown", "old": "", "new": details}]
         result.append({
-            "timestamp": e.get("timestamp", ""),
+            "timestamp": e.get("time", ""),
             "username": e.get("username", ""),
             "changes": changes,
         })
@@ -458,13 +458,29 @@ async def api_recovery_tailscale(request: Request, auth=Depends(_require_admin))
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/api/recovery/dns-flush")
+async def api_recovery_dns(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    ip = _client_ip(request)
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "systemctl", "restart", "pihole-FTL"],
+            capture_output=True, text=True, timeout=15,
+        )
+        db.audit_log("recovery_dns_flush", username, f"exit={result.returncode}", ip)
+        return {"status": "ok" if result.returncode == 0 else "error",
+                "output": result.stdout[:500], "error": result.stderr[:500]}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/api/recovery/service-restart")
 async def api_recovery_service(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     ip = _client_ip(request)
     body = await _read_body(request)
     service = body.get("service", "")
-    if not re.match(r'^[a-zA-Z0-9@._-]+$', service):
+    if not service or len(service) > 256 or not re.match(r'^[a-zA-Z0-9@._-]+$', service):
         raise HTTPException(400, "Invalid service name")
     try:
         result = subprocess.run(
