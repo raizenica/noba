@@ -1950,6 +1950,132 @@ async def api_container_control(request: Request, auth=Depends(_require_operator
     raise HTTPException(404, "No container runtime found")
 
 
+# ── Docker deep management ───────────────────────────────────────────────
+@app.get("/api/containers/{name}/logs")
+def api_container_logs(name: str, request: Request, auth=Depends(_require_operator)):
+    """Stream container logs (last N lines)."""
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
+        raise HTTPException(400, "Invalid container name")
+    lines = _int_param(request, "lines", 100, 1, 5000)
+    for runtime in ("docker", "podman"):
+        try:
+            r = subprocess.run([runtime, "logs", "--tail", str(lines), name],
+                             capture_output=True, text=True, timeout=10)
+            if r.returncode == 0:
+                output = strip_ansi(r.stdout + r.stderr)
+                return PlainTextResponse(output[-65536:] or "No logs.")
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, "Log fetch timed out")
+    raise HTTPException(404, "No container runtime found")
+
+
+@app.get("/api/containers/{name}/inspect")
+def api_container_inspect(name: str, auth=Depends(_require_operator)):
+    """Get detailed container info."""
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
+        raise HTTPException(400, "Invalid container name")
+    for runtime in ("docker", "podman"):
+        try:
+            r = subprocess.run([runtime, "inspect", name],
+                             capture_output=True, text=True, timeout=10)
+            if r.returncode == 0:
+                data = json.loads(r.stdout)
+                if isinstance(data, list) and data:
+                    c = data[0]
+                    config = c.get("Config", {})
+                    host_config = c.get("HostConfig", {})
+                    net = c.get("NetworkSettings", {})
+                    state = c.get("State", {})
+                    return {
+                        "name": c.get("Name", "").lstrip("/"),
+                        "image": config.get("Image", ""),
+                        "created": c.get("Created", ""),
+                        "status": state.get("Status", ""),
+                        "started_at": state.get("StartedAt", ""),
+                        "restart_count": c.get("RestartCount", 0),
+                        "env": [e.split("=", 1)[0] + "=***" for e in config.get("Env", [])],
+                        "ports": [
+                            {"container": k, "host": (v or [{}])[0].get("HostPort", "")}
+                            for k, v in (net.get("Ports") or {}).items()
+                        ],
+                        "mounts": [
+                            {"source": m.get("Source", ""), "dest": m.get("Destination", ""), "mode": m.get("Mode", "")}
+                            for m in c.get("Mounts", [])
+                        ],
+                        "networks": list((net.get("Networks") or {}).keys()),
+                        "health": state.get("Health", {}).get("Status", ""),
+                        "memory_limit": host_config.get("Memory", 0),
+                        "cpu_shares": host_config.get("CpuShares", 0),
+                        "restart_policy": host_config.get("RestartPolicy", {}).get("Name", ""),
+                        "runtime": runtime,
+                    }
+        except FileNotFoundError:
+            continue
+    raise HTTPException(404, "Container not found")
+
+
+@app.get("/api/containers/stats")
+def api_container_stats(auth=Depends(_require_operator)):
+    """Get per-container resource usage."""
+    for runtime in ("docker", "podman"):
+        try:
+            r = subprocess.run(
+                [runtime, "stats", "--no-stream", "--format",
+                 "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}"],
+                capture_output=True, text=True, timeout=10)
+            if r.returncode == 0:
+                stats = []
+                for line in r.stdout.strip().splitlines():
+                    parts = line.split("|")
+                    if len(parts) >= 7:
+                        stats.append({
+                            "name": parts[0],
+                            "cpu": parts[1].strip(),
+                            "mem_usage": parts[2].strip(),
+                            "mem_percent": parts[3].strip(),
+                            "net_io": parts[4].strip(),
+                            "block_io": parts[5].strip(),
+                            "pids": parts[6].strip(),
+                        })
+                return stats
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, "Stats fetch timed out")
+    return []
+
+
+@app.post("/api/containers/{name}/pull")
+async def api_container_pull(name: str, request: Request, auth=Depends(_require_admin)):
+    """Pull the latest image for a container."""
+    username, _ = auth
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
+        raise HTTPException(400, "Invalid container name")
+    # Get the image name from inspect
+    for runtime in ("docker", "podman"):
+        try:
+            r = subprocess.run([runtime, "inspect", "--format", "{{.Config.Image}}", name],
+                             capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                image = r.stdout.strip()
+                # Submit pull as background job
+                def make_process(_run_id: int) -> subprocess.Popen | None:
+                    return subprocess.Popen(
+                        [runtime, "pull", image],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+                run_id = job_runner.submit(make_process, trigger=f"image-pull:{image}",
+                                          triggered_by=username)
+                db.audit_log("container_pull", username, f"Pulling {image} for {name}", _client_ip(request))
+                return {"success": True, "run_id": run_id, "image": image}
+        except FileNotFoundError:
+            continue
+    raise HTTPException(404, "Container not found")
+
+
 # ── /api/truenas/vm ───────────────────────────────────────────────────────────
 @app.post("/api/truenas/vm")
 async def api_truenas_vm(request: Request, auth=Depends(_require_operator)):
@@ -2180,6 +2306,82 @@ async def api_hass_proxy(domain: str, service: str, request: Request, auth=Depen
         return {"status": "ok", "http_status": r.status_code}
     except Exception as e:
         raise HTTPException(502, f"HA service call failed: {e}")
+
+
+# ── Home Assistant deep integration ──────────────────────────────────────
+@app.get("/api/hass/entities")
+def api_hass_entities(request: Request, auth=Depends(_get_auth)):
+    """List HA entities with full state details."""
+    from .integrations import get_hass_entities
+    cfg = read_yaml_settings()
+    hass_url = cfg.get("hassUrl", "")
+    hass_token = cfg.get("hassToken", "")
+    if not hass_url or not hass_token:
+        raise HTTPException(400, "Home Assistant not configured")
+    domain = request.query_params.get("domain", "")
+    result = get_hass_entities(hass_url, hass_token, domain)
+    if result is None:
+        raise HTTPException(502, "Failed to fetch HA entities")
+    return result
+
+
+@app.get("/api/hass/services")
+def api_hass_services(auth=Depends(_get_auth)):
+    """List available HA services."""
+    from .integrations import get_hass_services
+    cfg = read_yaml_settings()
+    hass_url = cfg.get("hassUrl", "")
+    hass_token = cfg.get("hassToken", "")
+    if not hass_url or not hass_token:
+        raise HTTPException(400, "Home Assistant not configured")
+    result = get_hass_services(hass_url, hass_token)
+    if result is None:
+        raise HTTPException(502, "Failed to fetch HA services")
+    return result
+
+
+@app.post("/api/hass/toggle/{entity_id:path}")
+async def api_hass_toggle(entity_id: str, request: Request, auth=Depends(_require_operator)):
+    """Toggle a Home Assistant entity."""
+    username, _ = auth
+    cfg = read_yaml_settings()
+    hass_url = cfg.get("hassUrl", "")
+    hass_token = cfg.get("hassToken", "")
+    if not hass_url or not hass_token:
+        raise HTTPException(400, "Home Assistant not configured")
+    domain = entity_id.split(".")[0] if "." in entity_id else ""
+    if domain not in ("light", "switch", "input_boolean", "fan", "cover", "scene", "automation", "script"):
+        raise HTTPException(400, f"Cannot toggle domain: {domain}")
+    service = "toggle" if domain != "scene" else "turn_on"
+    import httpx as _httpx
+    try:
+        r = _httpx.post(f"{hass_url.rstrip('/')}/api/services/{domain}/{service}",
+                       json={"entity_id": entity_id},
+                       headers={"Authorization": f"Bearer {hass_token}"}, timeout=10)
+        db.audit_log("hass_toggle", username, f"Toggled {entity_id}", _client_ip(request))
+        return {"success": r.status_code == 200, "entity_id": entity_id}
+    except Exception as e:
+        raise HTTPException(502, f"HA toggle failed: {e}")
+
+
+@app.post("/api/hass/scene/{entity_id:path}")
+async def api_hass_scene(entity_id: str, request: Request, auth=Depends(_require_operator)):
+    """Activate a Home Assistant scene."""
+    username, _ = auth
+    cfg = read_yaml_settings()
+    hass_url = cfg.get("hassUrl", "")
+    hass_token = cfg.get("hassToken", "")
+    if not hass_url or not hass_token:
+        raise HTTPException(400, "Home Assistant not configured")
+    import httpx as _httpx
+    try:
+        r = _httpx.post(f"{hass_url.rstrip('/')}/api/services/scene/turn_on",
+                       json={"entity_id": entity_id},
+                       headers={"Authorization": f"Bearer {hass_token}"}, timeout=10)
+        db.audit_log("hass_scene", username, f"Activated {entity_id}", _client_ip(request))
+        return {"success": r.status_code == 200}
+    except Exception as e:
+        raise HTTPException(502, f"Scene activation failed: {e}")
 
 
 # ── Round 7: Notifications & Dashboards ──────────────────────────────────────
@@ -2507,6 +2709,247 @@ def api_cameras(auth=Depends(_get_auth)):
              "url": f.get("url", ""),
              "type": f.get("type", "snapshot")}
             for i, f in enumerate(feeds) if f.get("url")]
+
+
+# ── Kubernetes deep management ───────────────────────────────────────────
+@app.get("/api/k8s/namespaces")
+def api_k8s_namespaces(auth=Depends(_get_auth)):
+    """List Kubernetes namespaces."""
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}/api/v1/namespaces",
+                      headers={"Authorization": f"Bearer {token}"}, verify=False, timeout=10)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        return [{"name": ns.get("metadata", {}).get("name", ""),
+                 "status": ns.get("status", {}).get("phase", ""),
+                 "created": ns.get("metadata", {}).get("creationTimestamp", "")}
+                for ns in items]
+    except Exception as e:
+        raise HTTPException(502, f"K8s API error: {e}")
+
+
+@app.get("/api/k8s/pods")
+def api_k8s_pods(request: Request, auth=Depends(_get_auth)):
+    """List pods with details, optionally filtered by namespace."""
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    namespace = request.query_params.get("namespace", "")
+    path = f"/api/v1/namespaces/{namespace}/pods" if namespace else "/api/v1/pods"
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}{path}",
+                      headers={"Authorization": f"Bearer {token}"}, verify=False, timeout=10)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        pods = []
+        for pod in items[:200]:
+            meta = pod.get("metadata", {})
+            spec = pod.get("spec", {})
+            status = pod.get("status", {})
+            containers = []
+            for cs in status.get("containerStatuses", []):
+                containers.append({
+                    "name": cs.get("name", ""),
+                    "ready": cs.get("ready", False),
+                    "restarts": cs.get("restartCount", 0),
+                    "state": list(cs.get("state", {}).keys())[0] if cs.get("state") else "unknown",
+                    "image": cs.get("image", ""),
+                })
+            pods.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", ""),
+                "node": spec.get("nodeName", ""),
+                "phase": status.get("phase", ""),
+                "ip": status.get("podIP", ""),
+                "created": meta.get("creationTimestamp", ""),
+                "containers": containers,
+            })
+        return pods
+    except Exception as e:
+        raise HTTPException(502, f"K8s API error: {e}")
+
+
+@app.get("/api/k8s/pods/{namespace}/{name}/logs")
+def api_k8s_pod_logs(namespace: str, name: str, request: Request, auth=Depends(_require_operator)):
+    """Get pod logs."""
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    container = request.query_params.get("container", "")
+    lines = _int_param(request, "lines", 100, 1, 5000)
+    path = f"/api/v1/namespaces/{namespace}/pods/{name}/log?tailLines={lines}"
+    if container:
+        path += f"&container={container}"
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}{path}",
+                      headers={"Authorization": f"Bearer {token}"}, verify=False, timeout=15)
+        r.raise_for_status()
+        return PlainTextResponse(r.text[-65536:] or "No logs.")
+    except Exception as e:
+        raise HTTPException(502, f"K8s log fetch failed: {e}")
+
+
+@app.get("/api/k8s/deployments")
+def api_k8s_deployments(request: Request, auth=Depends(_get_auth)):
+    """List deployments with replica info."""
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    namespace = request.query_params.get("namespace", "")
+    path = f"/apis/apps/v1/namespaces/{namespace}/deployments" if namespace else "/apis/apps/v1/deployments"
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}{path}",
+                      headers={"Authorization": f"Bearer {token}"}, verify=False, timeout=10)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        return [{
+            "name": d.get("metadata", {}).get("name", ""),
+            "namespace": d.get("metadata", {}).get("namespace", ""),
+            "replicas": d.get("spec", {}).get("replicas", 0),
+            "ready": d.get("status", {}).get("readyReplicas", 0),
+            "available": d.get("status", {}).get("availableReplicas", 0),
+            "updated": d.get("status", {}).get("updatedReplicas", 0),
+        } for d in items[:100]]
+    except Exception as e:
+        raise HTTPException(502, f"K8s API error: {e}")
+
+
+@app.post("/api/k8s/deployments/{namespace}/{name}/scale")
+async def api_k8s_scale(namespace: str, name: str, request: Request, auth=Depends(_require_admin)):
+    """Scale a deployment."""
+    username, _ = auth
+    body = await _read_body(request)
+    replicas = int(body.get("replicas", 1))
+    if replicas < 0 or replicas > 100:
+        raise HTTPException(400, "Replicas must be 0-100")
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    import httpx as _httpx
+    try:
+        r = _httpx.patch(
+            f"{url.rstrip('/')}/apis/apps/v1/namespaces/{namespace}/deployments/{name}/scale",
+            json={"spec": {"replicas": replicas}},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/merge-patch+json"},
+            verify=False, timeout=10,
+        )
+        r.raise_for_status()
+        db.audit_log("k8s_scale", username, f"Scaled {namespace}/{name} to {replicas}", _client_ip(request))
+        return {"success": True, "replicas": replicas}
+    except Exception as e:
+        raise HTTPException(502, f"K8s scale failed: {e}")
+
+
+# ── Proxmox deep management ─────────────────────────────────────────────
+def _pmx_headers(cfg: dict) -> dict:
+    user = cfg.get("proxmoxUser", "")
+    user_full = user if "@" in user else f"{user}@pam"
+    tname = cfg.get("proxmoxTokenName", "")
+    tval = cfg.get("proxmoxTokenValue", "")
+    return {"Authorization": f"PVEAPIToken={user_full}!{tname}={tval}", "Accept": "application/json"}
+
+
+@app.get("/api/proxmox/nodes/{node}/vms")
+def api_pmx_node_vms(node: str, auth=Depends(_get_auth)):
+    """List VMs and containers on a Proxmox node."""
+    cfg = read_yaml_settings()
+    url = cfg.get("proxmoxUrl", "")
+    if not url:
+        raise HTTPException(400, "Proxmox not configured")
+    hdrs = _pmx_headers(cfg)
+    import httpx as _httpx
+    results = []
+    for ep, vtype in (("qemu", "qemu"), ("lxc", "lxc")):
+        try:
+            r = _httpx.get(f"{url.rstrip('/')}/api2/json/nodes/{node}/{ep}",
+                          headers=hdrs, verify=False, timeout=8)
+            r.raise_for_status()
+            for vm in r.json().get("data", [])[:50]:
+                mmem = vm.get("maxmem", 1) or 1
+                results.append({
+                    "vmid": vm.get("vmid"), "name": vm.get("name", ""),
+                    "type": vtype, "status": vm.get("status", ""),
+                    "cpu": round(vm.get("cpu", 0) * 100, 1),
+                    "mem_percent": round(vm.get("mem", 0) / mmem * 100, 1),
+                    "uptime": vm.get("uptime", 0),
+                    "disk": vm.get("disk", 0), "maxdisk": vm.get("maxdisk", 0),
+                })
+        except Exception:
+            pass
+    return results
+
+
+@app.get("/api/proxmox/nodes/{node}/vms/{vmid}/snapshots")
+def api_pmx_snapshots(node: str, vmid: int, request: Request, auth=Depends(_get_auth)):
+    """List VM snapshots."""
+    cfg = read_yaml_settings()
+    url = cfg.get("proxmoxUrl", "")
+    if not url:
+        raise HTTPException(400, "Proxmox not configured")
+    vtype = request.query_params.get("type", "qemu")
+    hdrs = _pmx_headers(cfg)
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}/api2/json/nodes/{node}/{vtype}/{vmid}/snapshot",
+                      headers=hdrs, verify=False, timeout=8)
+        r.raise_for_status()
+        return [{"name": s.get("name", ""), "description": s.get("description", ""),
+                 "snaptime": s.get("snaptime", 0), "parent": s.get("parent", "")}
+                for s in r.json().get("data", [])]
+    except Exception as e:
+        raise HTTPException(502, f"Proxmox API error: {e}")
+
+
+@app.post("/api/proxmox/nodes/{node}/vms/{vmid}/snapshot")
+async def api_pmx_create_snapshot(node: str, vmid: int, request: Request, auth=Depends(_require_admin)):
+    """Create a VM snapshot."""
+    username, _ = auth
+    body = await _read_body(request)
+    snapname = body.get("name", "").strip()
+    description = body.get("description", "")
+    vtype = body.get("type", "qemu")
+    if not snapname or not re.match(r'^[a-zA-Z0-9_-]+$', snapname):
+        raise HTTPException(400, "Invalid snapshot name")
+    cfg = read_yaml_settings()
+    url = cfg.get("proxmoxUrl", "")
+    if not url:
+        raise HTTPException(400, "Proxmox not configured")
+    hdrs = _pmx_headers(cfg)
+    import httpx as _httpx
+    try:
+        r = _httpx.post(f"{url.rstrip('/')}/api2/json/nodes/{node}/{vtype}/{vmid}/snapshot",
+                       json={"snapname": snapname, "description": description},
+                       headers=hdrs, verify=False, timeout=30)
+        r.raise_for_status()
+        db.audit_log("pmx_snapshot", username, f"Created snapshot {snapname} for {vtype}/{vmid}", _client_ip(request))
+        return {"success": True, "task": r.json().get("data", "")}
+    except Exception as e:
+        raise HTTPException(502, f"Snapshot creation failed: {e}")
+
+
+@app.get("/api/proxmox/nodes/{node}/vms/{vmid}/console")
+def api_pmx_console_url(node: str, vmid: int, request: Request, auth=Depends(_require_operator)):
+    """Get a noVNC console URL for a VM."""
+    cfg = read_yaml_settings()
+    url = cfg.get("proxmoxUrl", "")
+    if not url:
+        raise HTTPException(400, "Proxmox not configured")
+    vtype = request.query_params.get("type", "qemu")
+    # Return a link to Proxmox's built-in noVNC
+    console_url = f"{url.rstrip('/')}/?console={vtype}&vmid={vmid}&node={node}&resize=scale"
+    return {"url": console_url}
 
 
 @app.websocket("/api/terminal")

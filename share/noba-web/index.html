@@ -793,6 +793,11 @@
                         <div class="row"><span class="row-label">Automations</span><span class="row-val" x-text="hass.automations||0"></span></div>
                         <div class="row"><span class="row-label">Lights On</span><span class="row-val" x-text="hass.lights_on||0"></span></div>
                         <div class="row"><span class="row-label">Switches On</span><span class="row-val" x-text="hass.switches_on||0"></span></div>
+                        <div style="margin-top:.75rem;border-top:1px solid var(--border);padding-top:.5rem;text-align:center">
+                            <button class="btn-sm" @click="showHassModal=true; fetchHassEntities()">
+                                <i class="fas fa-list"></i> Browse Entities
+                            </button>
+                        </div>
                     </div>
                 </template>
                 <div x-show="!hass" class="empty-msg">Home Assistant data unavailable.</div>
@@ -1122,6 +1127,9 @@
                     <div class="row"><span class="row-label">Pods</span><span class="row-val" x-text="k8s.pods||0"></span></div>
                     <div class="row"><span class="row-label">Running</span><span class="row-val" x-text="k8s.running||0"></span></div>
                     <div class="row"><span class="row-label">Namespaces</span><span class="row-val" x-text="k8s.namespaces||0"></span></div>
+                    <div style="margin-top:.75rem;border-top:1px solid var(--border);padding-top:.5rem;text-align:center">
+                        <button class="btn-sm" @click="openK8sBrowser()"><i class="fas fa-dharmachakra"></i> Browse Cluster</button>
+                    </div>
                 </div></template>
                 <template x-if="!k8s"><div class="empty-msg">Kubernetes unreachable — configure in Settings.</div></template>
             </div>
@@ -1366,6 +1374,11 @@
                                 <button class="svc-btn" title="Stop"    :disabled="c.state!=='running'" @click.stop="containerAction(c.name,'stop')"    aria-label="Stop container"><i class="fas fa-stop"   aria-hidden="true"></i></button>
                                 <button class="svc-btn" title="Restart" :disabled="c.state!=='running'" @click.stop="containerAction(c.name,'restart')" aria-label="Restart container"><i class="fas fa-sync" aria-hidden="true"></i></button>
                             </div>
+                            <div style="display:flex;gap:4px;margin-left:auto" x-show="userRole!=='viewer'">
+                                <button class="svc-btn" title="Logs" @click="fetchContainerLogs(c.name)"><i class="fas fa-scroll"></i></button>
+                                <button class="svc-btn" title="Inspect" @click="fetchContainerInspect(c.name)"><i class="fas fa-info-circle"></i></button>
+                                <button class="svc-btn" title="Pull image" @click="pullContainerImage(c.name)"><i class="fas fa-download"></i></button>
+                            </div>
                         </div>
                     </template>
                 </div>
@@ -1417,6 +1430,10 @@
                                           x-text="vm.status"></span>
                                     <span x-show="vm.status==='running'" class="badge bn"
                                           style="font-size:.62rem" x-text="vm.cpu + '% cpu'"></span>
+                                    <div style="display:flex;gap:4px" x-show="userRole!=='viewer'">
+                                        <button class="svc-btn" title="Snapshots" @click="fetchPmxSnapshots(vm.node, vm.vmid, vm.type)"><i class="fas fa-camera"></i></button>
+                                        <button class="svc-btn" title="Console" @click="openPmxConsole(vm.node, vm.vmid, vm.type)"><i class="fas fa-desktop"></i></button>
+                                    </div>
                                 </div>
                             </template>
                         </div>
@@ -4045,6 +4062,159 @@
         </div>
         <div class="modal-footer">
             <button class="btn btn-sm" @click="showConfigHistory=false">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- HA Entity Browser Modal -->
+<div class="modal-overlay" x-show="showHassModal" x-cloak @keydown.escape.window="showHassModal=false">
+    <div class="modal-box" style="max-width:900px;height:80vh;display:flex;flex-direction:column">
+        <div class="modal-title">
+            <i class="fas fa-home"></i> Home Assistant Entities
+            <button class="modal-close" @click="showHassModal=false">&times;</button>
+        </div>
+        <div style="padding:8px 16px;display:flex;gap:8px;border-bottom:1px solid var(--border)">
+            <select style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px"
+                    x-model="hassDomainFilter" @change="fetchHassEntities(hassDomainFilter)">
+                <option value="">All Domains</option>
+                <template x-for="d in hassDomains" :key="d"><option :value="d" x-text="d"></option></template>
+            </select>
+            <input type="text" x-model="hassEntityFilter" placeholder="Filter entities..." style="flex:1;padding:4px 8px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:4px">
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px">
+            <template x-for="e in filteredHassEntities" :key="e.entity_id">
+                <div style="display:flex;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);gap:8px">
+                    <span style="flex:1;min-width:0">
+                        <div style="font-weight:500;font-size:.85rem" x-text="e.name"></div>
+                        <div style="font-size:.7rem;color:var(--text-dim)" x-text="e.entity_id"></div>
+                    </span>
+                    <span class="badge" :class="e.state==='on'||e.state==='home'?'bs':e.state==='off'||e.state==='not_home'?'bn':'bw'"
+                          x-text="e.state + (e.unit ? ' ' + e.unit : '')" style="min-width:60px;text-align:center"></span>
+                    <button class="svc-btn" title="Toggle"
+                            x-show="['light','switch','input_boolean','fan','cover','scene'].includes(e.domain)"
+                            @click="hassToggleEntity(e.entity_id)"
+                            x-show="userRole!=='viewer'">
+                        <i class="fas fa-power-off"></i>
+                    </button>
+                </div>
+            </template>
+            <div class="empty-msg" x-show="filteredHassEntities.length===0 && !hassEntitiesLoading">No entities found</div>
+            <div class="empty-msg" x-show="hassEntitiesLoading">Loading...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Container Logs Modal -->
+<div class="modal-overlay" x-show="showContainerLogsModal" x-cloak @keydown.escape.window="showContainerLogsModal=false">
+    <div class="modal-box" style="max-width:900px;height:80vh;display:flex;flex-direction:column">
+        <div class="modal-title">
+            <i class="fas fa-scroll"></i> <span x-text="'Logs: ' + containerLogsName"></span>
+            <button class="modal-close" @click="showContainerLogsModal=false">&times;</button>
+        </div>
+        <pre class="log-pre" style="flex:1;overflow:auto;margin:0;padding:12px;font-size:.8rem" x-text="containerLogs"></pre>
+        <div class="modal-footer">
+            <button class="btn-sm" @click="fetchContainerLogs(containerLogsName, 500)">Load 500 lines</button>
+            <button class="btn-sm" @click="fetchContainerLogs(containerLogsName, 2000)">Load 2000 lines</button>
+        </div>
+    </div>
+</div>
+
+<!-- Container Inspect Modal -->
+<div class="modal-overlay" x-show="showContainerInspectModal" x-cloak @keydown.escape.window="showContainerInspectModal=false">
+    <div class="modal-box" style="max-width:700px">
+        <div class="modal-title">
+            <i class="fas fa-info-circle"></i> Container Details
+            <button class="modal-close" @click="showContainerInspectModal=false">&times;</button>
+        </div>
+        <template x-if="containerInspect"><div style="padding:16px">
+            <div class="row"><span class="row-label">Image</span><span class="row-val" x-text="containerInspect.image"></span></div>
+            <div class="row"><span class="row-label">Status</span><span class="badge" :class="containerInspect.status==='running'?'bs':'bd'" x-text="containerInspect.status"></span></div>
+            <div class="row"><span class="row-label">Started</span><span class="row-val" x-text="containerInspect.started_at"></span></div>
+            <div class="row"><span class="row-label">Restarts</span><span class="row-val" x-text="containerInspect.restart_count"></span></div>
+            <div class="row"><span class="row-label">Health</span><span class="row-val" x-text="containerInspect.health || 'N/A'"></span></div>
+            <div class="row"><span class="row-label">Networks</span><span class="row-val" x-text="(containerInspect.networks||[]).join(', ')"></span></div>
+            <div class="row"><span class="row-label">Restart Policy</span><span class="row-val" x-text="containerInspect.restart_policy"></span></div>
+            <div style="margin-top:8px"><strong style="font-size:.8rem">Ports</strong></div>
+            <template x-for="p in containerInspect.ports||[]" :key="p.container">
+                <div class="row" style="font-size:.8rem"><span class="row-label" x-text="p.container"></span><span class="row-val" x-text="p.host ? ':'+p.host : 'none'"></span></div>
+            </template>
+            <div style="margin-top:8px"><strong style="font-size:.8rem">Mounts</strong></div>
+            <template x-for="m in containerInspect.mounts||[]" :key="m.dest">
+                <div class="row" style="font-size:.75rem"><span class="row-label" x-text="m.source"></span><span>→</span><span class="row-val" x-text="m.dest"></span></div>
+            </template>
+        </div></template>
+    </div>
+</div>
+
+<!-- Kubernetes Browser Modal -->
+<div class="modal-overlay" x-show="showK8sModal" x-cloak @keydown.escape.window="showK8sModal=false">
+    <div class="modal-box" style="max-width:1000px;height:85vh;display:flex;flex-direction:column">
+        <div class="modal-title">
+            <i class="fas fa-dharmachakra"></i> Kubernetes Browser
+            <button class="modal-close" @click="showK8sModal=false">&times;</button>
+        </div>
+        <div style="padding:8px 16px;display:flex;gap:8px;border-bottom:1px solid var(--border)">
+            <select style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px"
+                    x-model="k8sSelectedNs" @change="fetchK8sPods(k8sSelectedNs); fetchK8sDeployments(k8sSelectedNs)">
+                <option value="">All Namespaces</option>
+                <template x-for="ns in k8sNamespaces" :key="ns.name"><option :value="ns.name" x-text="ns.name"></option></template>
+            </select>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:12px 16px">
+            <h4 style="color:var(--text-muted);font-size:.8rem;margin:8px 0 4px">Deployments</h4>
+            <template x-for="d in k8sDeployments" :key="d.namespace+'/'+d.name">
+                <div style="display:flex;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);gap:8px">
+                    <span style="flex:1"><span style="color:var(--text-dim);font-size:.7rem" x-text="d.namespace+' / '"></span><span x-text="d.name"></span></span>
+                    <span class="badge" :class="d.ready===d.replicas?'bs':'bw'" x-text="d.ready+'/'+d.replicas+' ready'"></span>
+                    <button class="svc-btn" title="Scale" @click="k8sScale(d.namespace, d.name, d.replicas)" x-show="userRole==='admin'"><i class="fas fa-expand-arrows-alt"></i></button>
+                </div>
+            </template>
+            <h4 style="color:var(--text-muted);font-size:.8rem;margin:12px 0 4px">Pods</h4>
+            <template x-for="p in k8sPods" :key="p.namespace+'/'+p.name">
+                <div style="display:flex;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);gap:8px">
+                    <span style="flex:1;min-width:0">
+                        <div style="font-size:.85rem"><span style="color:var(--text-dim);font-size:.7rem" x-text="p.namespace+' / '"></span><span x-text="p.name"></span></div>
+                        <div style="font-size:.7rem;color:var(--text-dim)" x-text="'Node: '+p.node+' | IP: '+p.ip"></div>
+                    </span>
+                    <span class="badge" :class="p.phase==='Running'?'bs':p.phase==='Succeeded'?'bn':'bd'" x-text="p.phase"></span>
+                    <button class="svc-btn" title="Logs" @click="fetchK8sPodLogs(p.namespace, p.name)" x-show="userRole!=='viewer'"><i class="fas fa-scroll"></i></button>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+
+<!-- K8s Pod Logs Modal -->
+<div class="modal-overlay" x-show="showK8sPodLogsModal" x-cloak @keydown.escape.window="showK8sPodLogsModal=false">
+    <div class="modal-box" style="max-width:900px;height:70vh;display:flex;flex-direction:column">
+        <div class="modal-title">
+            <i class="fas fa-scroll"></i> <span x-text="'Pod Logs: ' + k8sPodLogsName"></span>
+            <button class="modal-close" @click="showK8sPodLogsModal=false">&times;</button>
+        </div>
+        <pre class="log-pre" style="flex:1;overflow:auto;margin:0;padding:12px;font-size:.8rem" x-text="k8sPodLogs"></pre>
+    </div>
+</div>
+
+<!-- Proxmox Snapshots Modal -->
+<div class="modal-overlay" x-show="showPmxSnapshotModal" x-cloak @keydown.escape.window="showPmxSnapshotModal=false">
+    <div class="modal-box" style="max-width:600px">
+        <div class="modal-title">
+            <i class="fas fa-camera"></i> VM Snapshots
+            <button class="modal-close" @click="showPmxSnapshotModal=false">&times;</button>
+        </div>
+        <div style="padding:16px">
+            <template x-for="s in pmxSnapshots" :key="s.name">
+                <div class="row">
+                    <span class="row-label" x-text="s.name"></span>
+                    <span class="row-val" style="font-size:.75rem;color:var(--text-muted)" x-text="s.description"></span>
+                </div>
+            </template>
+            <div class="empty-msg" x-show="pmxSnapshots.length===0 && !pmxSnapshotsLoading">No snapshots</div>
+            <div style="margin-top:12px;text-align:center" x-show="userRole==='admin'">
+                <button class="btn-sm" @click="createPmxSnapshot(pmxSelectedNode, pmxSelectedVmid, pmxSelectedType)">
+                    <i class="fas fa-plus"></i> Create Snapshot
+                </button>
+            </div>
         </div>
     </div>
 </div>

@@ -1726,5 +1726,252 @@ function actionsMixin() {
             a.download = 'noba-chart.png';
             a.click();
         },
+
+
+        // ── Home Assistant Deep Integration ──────────────────────────────────
+        hassEntities: [],
+        hassEntitiesLoading: false,
+        hassEntityFilter: '',
+        hassDomainFilter: '',
+        showHassModal: false,
+
+        async fetchHassEntities(domain) {
+            this.hassEntitiesLoading = true;
+            const qs = domain ? `?domain=${domain}` : '';
+            try {
+                const res = await fetch(`/api/hass/entities${qs}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const d = await res.json();
+                this.hassEntities = d.entities || [];
+            } catch (e) {
+                this.addToast('Failed to load HA entities: ' + e.message, 'error');
+            }
+            this.hassEntitiesLoading = false;
+        },
+
+        get filteredHassEntities() {
+            let ents = this.hassEntities;
+            if (this.hassDomainFilter) ents = ents.filter(e => e.domain === this.hassDomainFilter);
+            if (this.hassEntityFilter) {
+                const q = this.hassEntityFilter.toLowerCase();
+                ents = ents.filter(e => e.name.toLowerCase().includes(q) || e.entity_id.toLowerCase().includes(q));
+            }
+            return ents.slice(0, 100);
+        },
+
+        get hassDomains() {
+            const domains = new Set(this.hassEntities.map(e => e.domain));
+            return [...domains].sort();
+        },
+
+        async hassToggleEntity(entityId) {
+            try {
+                const res = await fetch(`/api/hass/toggle/${entityId}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.addToast(`Toggled ${entityId}`, 'success');
+                setTimeout(() => this.fetchHassEntities(this.hassDomainFilter), 1000);
+            } catch (e) {
+                this.addToast('Toggle failed: ' + e.message, 'error');
+            }
+        },
+
+
+        // ── Docker Deep Management ───────────────────────────────────────────
+        containerLogs: '',
+        containerLogsName: '',
+        containerLogsLoading: false,
+        showContainerLogsModal: false,
+        containerInspect: null,
+        showContainerInspectModal: false,
+        containerStats: [],
+        containerStatsLoading: false,
+
+        async fetchContainerLogs(name, lines) {
+            this.containerLogsName = name;
+            this.containerLogsLoading = true;
+            this.showContainerLogsModal = true;
+            try {
+                const res = await fetch(`/api/containers/${encodeURIComponent(name)}/logs?lines=${lines || 200}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                this.containerLogs = res.ok ? await res.text() : 'Failed to fetch logs.';
+            } catch (e) {
+                this.containerLogs = 'Error: ' + e.message;
+            }
+            this.containerLogsLoading = false;
+        },
+
+        async fetchContainerInspect(name) {
+            this.showContainerInspectModal = true;
+            try {
+                const res = await fetch(`/api/containers/${encodeURIComponent(name)}/inspect`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                this.containerInspect = res.ok ? await res.json() : null;
+            } catch { this.containerInspect = null; }
+        },
+
+        async fetchContainerStats() {
+            this.containerStatsLoading = true;
+            try {
+                const res = await fetch('/api/containers/stats', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                this.containerStats = res.ok ? await res.json() : [];
+            } catch { this.containerStats = []; }
+            this.containerStatsLoading = false;
+        },
+
+        async pullContainerImage(name) {
+            if (!confirm(`Pull latest image for ${name}?`)) return;
+            try {
+                const res = await fetch(`/api/containers/${encodeURIComponent(name)}/pull`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                const d = await res.json();
+                this.addToast(d.success ? `Pulling image for ${name} (run ${d.run_id})` : 'Pull failed', d.success ? 'success' : 'error');
+            } catch (e) {
+                this.addToast('Pull failed: ' + e.message, 'error');
+            }
+        },
+
+
+        // ── Kubernetes Browser ───────────────────────────────────────────────
+        k8sNamespaces: [],
+        k8sPods: [],
+        k8sDeployments: [],
+        k8sSelectedNs: '',
+        k8sLoading: false,
+        showK8sModal: false,
+        k8sPodLogs: '',
+        k8sPodLogsName: '',
+        showK8sPodLogsModal: false,
+
+        async fetchK8sNamespaces() {
+            try {
+                const res = await fetch('/api/k8s/namespaces', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.k8sNamespaces = await res.json();
+            } catch { /* silent */ }
+        },
+
+        async fetchK8sPods(namespace) {
+            this.k8sLoading = true;
+            const qs = namespace ? `?namespace=${namespace}` : '';
+            try {
+                const res = await fetch(`/api/k8s/pods${qs}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.k8sPods = await res.json();
+            } catch { /* silent */ }
+            this.k8sLoading = false;
+        },
+
+        async fetchK8sDeployments(namespace) {
+            const qs = namespace ? `?namespace=${namespace}` : '';
+            try {
+                const res = await fetch(`/api/k8s/deployments${qs}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.k8sDeployments = await res.json();
+            } catch { /* silent */ }
+        },
+
+        async fetchK8sPodLogs(namespace, name, container) {
+            this.k8sPodLogsName = `${namespace}/${name}`;
+            this.showK8sPodLogsModal = true;
+            try {
+                const qs = container ? `?container=${encodeURIComponent(container)}&lines=200` : '?lines=200';
+                const res = await fetch(`/api/k8s/pods/${namespace}/${name}/logs${qs}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                this.k8sPodLogs = res.ok ? await res.text() : 'Failed to fetch logs.';
+            } catch (e) { this.k8sPodLogs = 'Error: ' + e.message; }
+        },
+
+        async k8sScale(namespace, name, replicas) {
+            const count = prompt(`Scale ${namespace}/${name} to how many replicas?`, replicas);
+            if (count === null) return;
+            try {
+                const res = await fetch(`/api/k8s/deployments/${namespace}/${name}/scale`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ replicas: parseInt(count) }),
+                });
+                const d = await res.json();
+                this.addToast(d.success ? `Scaled to ${d.replicas} replicas` : 'Scale failed', d.success ? 'success' : 'error');
+                this.fetchK8sDeployments(namespace);
+            } catch (e) {
+                this.addToast('Scale failed: ' + e.message, 'error');
+            }
+        },
+
+        openK8sBrowser() {
+            this.showK8sModal = true;
+            this.fetchK8sNamespaces();
+            this.fetchK8sPods(this.k8sSelectedNs);
+            this.fetchK8sDeployments(this.k8sSelectedNs);
+        },
+
+
+        // ── Proxmox Deep ─────────────────────────────────────────────────────
+        pmxSnapshots: [],
+        pmxSnapshotsLoading: false,
+        showPmxSnapshotModal: false,
+        pmxSelectedNode: '',
+        pmxSelectedVmid: 0,
+        pmxSelectedType: 'qemu',
+
+        async fetchPmxSnapshots(node, vmid, vtype) {
+            this.pmxSelectedNode = node;
+            this.pmxSelectedVmid = vmid;
+            this.pmxSelectedType = vtype || 'qemu';
+            this.pmxSnapshotsLoading = true;
+            this.showPmxSnapshotModal = true;
+            try {
+                const res = await fetch(`/api/proxmox/nodes/${node}/vms/${vmid}/snapshots?type=${vtype || 'qemu'}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.pmxSnapshots = await res.json();
+            } catch { this.pmxSnapshots = []; }
+            this.pmxSnapshotsLoading = false;
+        },
+
+        async createPmxSnapshot(node, vmid, vtype) {
+            const name = prompt('Snapshot name:');
+            if (!name) return;
+            const desc = prompt('Description (optional):', '');
+            try {
+                const res = await fetch(`/api/proxmox/nodes/${node}/vms/${vmid}/snapshot`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ name, description: desc || '', type: vtype || 'qemu' }),
+                });
+                const d = await res.json();
+                this.addToast(d.success ? 'Snapshot created' : 'Snapshot failed', d.success ? 'success' : 'error');
+                this.fetchPmxSnapshots(node, vmid, vtype);
+            } catch (e) {
+                this.addToast('Snapshot failed: ' + e.message, 'error');
+            }
+        },
+
+        async openPmxConsole(node, vmid, vtype) {
+            try {
+                const res = await fetch(`/api/proxmox/nodes/${node}/vms/${vmid}/console?type=${vtype || 'qemu'}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                const d = await res.json();
+                if (d.url) window.open(d.url, '_blank');
+            } catch (e) {
+                this.addToast('Console failed: ' + e.message, 'error');
+            }
+        },
     };
 }
