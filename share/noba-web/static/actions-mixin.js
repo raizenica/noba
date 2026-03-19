@@ -400,13 +400,17 @@ function actionsMixin() {
                 });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const blob = await res.blob();
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = `noba-${this.historyMetric}-${this.historyRange}h.csv`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(a.href);
+                const objUrl = URL.createObjectURL(blob);
+                try {
+                    const a = document.createElement('a');
+                    a.href = objUrl;
+                    a.download = `noba-${this.historyMetric}-${this.historyRange}h.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                } finally {
+                    URL.revokeObjectURL(objUrl);
+                }
             } catch (e) {
                 this.addToast('CSV download failed: ' + e.message, 'error');
             }
@@ -423,13 +427,17 @@ function actionsMixin() {
                 });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const blob = await res.blob();
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = 'noba-config-backup.yaml';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(a.href);
+                const objUrl = URL.createObjectURL(blob);
+                try {
+                    const a = document.createElement('a');
+                    a.href = objUrl;
+                    a.download = 'noba-config-backup.yaml';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                } finally {
+                    URL.revokeObjectURL(objUrl);
+                }
             } catch (e) {
                 this.addToast('Config backup failed: ' + e.message, 'error');
             }

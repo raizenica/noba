@@ -165,11 +165,10 @@ def collect_system() -> dict:
     s["kernel"]   = os.uname().release
     s["hostname"]  = socket.gethostname()
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(1)
-        sock.connect(("1.1.1.1", 80))
-        s["defaultIp"] = sock.getsockname()[0]
-        sock.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(1)
+            sock.connect(("1.1.1.1", 80))
+            s["defaultIp"] = sock.getsockname()[0]
     except Exception:
         s["defaultIp"] = ""
 

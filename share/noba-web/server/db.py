@@ -142,6 +142,8 @@ class Database:
 
     # ── Audit ─────────────────────────────────────────────────────────────────
     def audit_log(self, action: str, username: str, details: str = "", ip: str = "") -> None:
+        if len(details) > 512:
+            details = details[:512] + "…"
         try:
             with self._lock:
                 with self._connect() as conn:

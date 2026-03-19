@@ -198,7 +198,8 @@ class BackgroundCollector:
             self._qs = dict(qs)
 
     def get(self) -> dict:
-        return self._latest
+        with self._lock:
+            return self._latest
 
     def start(self) -> None:
         threading.Thread(target=self._loop, daemon=True, name="stats-collector").start()
@@ -208,7 +209,9 @@ class BackgroundCollector:
             try:
                 with self._lock:
                     qs = dict(self._qs)
-                self._latest = collect_stats(qs)
+                result = collect_stats(qs)
+                with self._lock:
+                    self._latest = result
             except Exception as e:
                 logger.warning("Collector error: %s", e)
             _shutdown_flag.wait(self._interval)

@@ -259,8 +259,14 @@ class RateLimiter:
         now = datetime.now()
         with self._lock:
             cutoff = now - timedelta(seconds=self.window_s)
-            stale = [ip for ip, ts in self._attempts.items() if all(t <= cutoff for t in ts)]
-            for ip in stale:
+            to_delete = []
+            for ip, ts in self._attempts.items():
+                pruned = [t for t in ts if t > cutoff]
+                if pruned:
+                    self._attempts[ip] = pruned
+                else:
+                    to_delete.append(ip)
+            for ip in to_delete:
                 del self._attempts[ip]
             expired = [ip for ip, exp in self._lockouts.items() if exp <= now]
             for ip in expired:
