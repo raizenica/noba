@@ -422,6 +422,51 @@ def check_ip_whitelist(ip: str, read_settings_fn) -> bool:
     return ip in allowed
 
 
+# ── Permissions ──────────────────────────────────────────────────────────────
+PERMISSIONS: dict[str, frozenset[str]] = {
+    "viewer": frozenset([
+        "stats:read", "history:read", "integrations:read", "alerts:read",
+        "automations:read", "backups:read", "plugins:read", "notifications:read",
+        "dashboard:read", "dashboard:write",
+    ]),
+    "operator": frozenset([
+        "stats:read", "history:read", "integrations:read", "alerts:read",
+        "automations:read", "automations:run", "automations:write",
+        "backups:read", "backups:restore",
+        "plugins:read", "notifications:read",
+        "dashboard:read", "dashboard:write",
+        "services:control", "containers:control", "scripts:run",
+        "webhooks:trigger", "compose:control", "wol:send", "dns:toggle",
+        "hass:control",
+    ]),
+    "admin": frozenset([
+        "stats:read", "history:read", "integrations:read", "alerts:read",
+        "automations:read", "automations:run", "automations:write", "automations:delete",
+        "backups:read", "backups:restore", "backups:manage",
+        "plugins:read", "plugins:install",
+        "notifications:read", "notifications:manage",
+        "dashboard:read", "dashboard:write",
+        "services:control", "containers:control", "scripts:run",
+        "webhooks:trigger", "compose:control", "wol:send", "dns:toggle",
+        "hass:control",
+        "users:manage", "settings:write", "audit:read",
+        "api_keys:manage", "ssh_keys:manage", "terminal:access",
+        "config:backup", "config:restore",
+        "system:governor", "cloud:manage",
+    ]),
+}
+
+
+def has_permission(role: str, permission: str) -> bool:
+    """Check if a role has a specific permission."""
+    return permission in PERMISSIONS.get(role, frozenset())
+
+
+def get_permissions(role: str) -> list[str]:
+    """Get all permissions for a role."""
+    return sorted(PERMISSIONS.get(role, frozenset()))
+
+
 # ── Global singletons ─────────────────────────────────────────────────────────
 users        = UserStore()
 token_store  = TokenStore()

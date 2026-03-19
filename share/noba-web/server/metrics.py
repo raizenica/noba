@@ -816,3 +816,45 @@ def probe_game_server(host: str, port: int) -> dict:
         return {"host": host, "port": port, "status": "online", "ms": ms}
     except Exception:
         return {"host": host, "port": port, "status": "offline", "ms": 0}
+
+
+def query_source_server(host: str, port: int) -> dict:
+    """Query a Valve Source engine game server using A2S_INFO protocol."""
+    import struct  # noqa: F401
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(3)
+            # A2S_INFO request: 4 bytes header (0xFFFFFFFF) + 'T' + "Source Engine Query\0"
+            request = b'\xff\xff\xff\xff\x54Source Engine Query\x00'
+            s.sendto(request, (host, port))
+            data, _ = s.recvfrom(4096)
+            if len(data) < 6:
+                return {"host": host, "port": port, "status": "offline"}
+            # Parse response (skip 4-byte header + 1 byte type)
+            pos = 5
+            # Protocol version
+            pos += 1
+            # Server name (null-terminated string)
+            end = data.index(b'\x00', pos)
+            name = data[pos:end].decode('utf-8', errors='replace')
+            pos = end + 1
+            # Map (null-terminated)
+            end = data.index(b'\x00', pos)
+            map_name = data[pos:end].decode('utf-8', errors='replace')
+            pos = end + 1
+            # Game dir (skip)
+            end = data.index(b'\x00', pos)
+            pos = end + 1
+            # Game name (skip)
+            end = data.index(b'\x00', pos)
+            pos = end + 1
+            # Players, max players
+            players = data[pos]
+            max_players = data[pos + 1]
+            return {
+                "host": host, "port": port, "status": "online",
+                "name": name, "map": map_name,
+                "players": players, "max_players": max_players,
+            }
+    except Exception:
+        return {"host": host, "port": port, "status": "offline"}

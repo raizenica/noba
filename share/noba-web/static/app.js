@@ -380,6 +380,20 @@ function dashboard() {
         // Voice alerts
         voiceAlertsEnabled: localStorage.getItem('noba-voice-alerts') === 'true',
 
+        // Customizable keyboard shortcuts
+        keyBindings: JSON.parse(localStorage.getItem('noba-keybindings') || 'null') || {
+            refresh: 'r',
+            settings: 's',
+            shortcuts: '?',
+            terminal: 't',
+            notifications: 'n',
+            history: 'h',
+            audit: 'a',
+            filter: '/',
+        },
+        showKeybindModal: false,
+        editingBind: '',
+
         // Internal — never overwritten by server payloads
         _es: null, _poll: null, _lastHeartbeat: 0,
         _countdownTimer: null, _reconnecting: false,
@@ -570,44 +584,16 @@ function dashboard() {
             if (this._keydownHandler) {
                 document.removeEventListener('keydown', this._keydownHandler);
             }
+            const kb = this.keyBindings;
             this._keydownHandler = (e) => {
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-                if (e.key === '?' && !e.ctrlKey && !e.altKey) {
-                    e.preventDefault();
-                    this.showShortcutsModal = !this.showShortcutsModal;
-                    return;
-                }
-                if (e.key === 'n' && !this.showSettings && !this.showModal) {
-                    this.toggleNotifCenter();
-                    return;
-                }
-                if (e.key === 'h' && !this.showSettings && !this.showModal && this.authenticated) {
-                    this.showHistoryModal = true;
-                    return;
-                }
-                if (e.key === 'a' && !this.showSettings && !this.showModal && this.userRole === 'admin') {
-                    this.showAuditModal = true;
-                    this.fetchAuditLog();
-                    return;
-                }
-                if (e.key === 't' && !this.showSettings && !this.showModal && this.userRole === 'admin') {
-                    this.showTerminal = true;
-                    this.$nextTick(() => this.openTerminal());
-                    return;
-                }
-                if (e.key === '/' && !this.showSettings && !this.showModal) {
-                    e.preventDefault();
-                    const el = document.querySelector('.svc-filter');
-                    if (el) el.focus();
-                    return;
-                }
-                if (e.key === 's' && !this.showSettings && !this.showModal) {
-                    this.showSettings = true;
-                } else if (e.key === 'r' && !this.showSettings && !this.showModal && this.authenticated) {
-                    this.refreshStats();
-                } else if (e.key === 'Escape') {
-                    this.showSettings  = false;
-                    this.showModal     = false;
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+                if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+                const key = e.key;
+
+                if (key === 'Escape') {
+                    this.showSettings = false;
+                    this.showModal = false;
                     this.showPassModal = false;
                     this.showRemoveModal = false;
                     this.showHistoryModal = false;
@@ -617,11 +603,40 @@ function dashboard() {
                     this.showAutoModal = false;
                     this.showRunHistoryModal = false;
                     this.showRunDetailModal = false;
+                    this.showKeybindModal = false;
                     this.notifCenter = false;
                     if (this.showTerminal) { this.showTerminal = false; this.closeTerminal(); }
+                    return;
                 }
+
+                // Don't handle shortcuts if a modal is open
+                if (this.showSettings || this.showModal || this.showTerminal) return;
+
+                if (key === kb.shortcuts) { e.preventDefault(); this.showShortcutsModal = !this.showShortcutsModal; }
+                else if (key === kb.settings) this.showSettings = true;
+                else if (key === kb.refresh && this.authenticated) this.refreshStats();
+                else if (key === kb.notifications) this.toggleNotifCenter();
+                else if (key === kb.history && this.authenticated) { this.showHistoryModal = true; }
+                else if (key === kb.audit && this.userRole === 'admin') { this.showAuditModal = true; this.fetchAuditLog(); }
+                else if (key === kb.filter) { e.preventDefault(); const el = document.querySelector('.svc-filter'); if (el) el.focus(); }
+                else if (key === kb.terminal && this.userRole === 'admin') { this.showTerminal = true; }
             };
             document.addEventListener('keydown', this._keydownHandler);
+        },
+
+        setKeyBinding(action, newKey) {
+            this.keyBindings[action] = newKey;
+            localStorage.setItem('noba-keybindings', JSON.stringify(this.keyBindings));
+            this.initKeyboard();  // Reinitialize with new bindings
+        },
+
+        resetKeyBindings() {
+            this.keyBindings = {
+                refresh: 'r', settings: 's', shortcuts: '?', terminal: 't',
+                notifications: 'n', history: 'h', audit: 'a', filter: '/',
+            };
+            localStorage.setItem('noba-keybindings', JSON.stringify(this.keyBindings));
+            this.initKeyboard();
         },
 
         initTouch() {

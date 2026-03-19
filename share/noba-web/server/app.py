@@ -173,6 +173,17 @@ def _require_admin(request: Request) -> tuple[str, str]:
     return username, role
 
 
+def _require_permission(permission: str):
+    """Create a dependency that checks a specific permission."""
+    def checker(request: Request) -> tuple[str, str]:
+        username, role = _get_auth(request)
+        from .auth import has_permission  # noqa: PLC0415
+        if not has_permission(role, permission):
+            raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
+        return username, role
+    return checker
+
+
 def _client_ip(request: Request) -> str:
     if TRUST_PROXY:
         forwarded = request.headers.get("X-Forwarded-For")
@@ -221,7 +232,15 @@ def api_health():
 @app.get("/api/me")
 def api_me(auth=Depends(_get_auth)):
     username, role = auth
-    return {"username": username, "role": role}
+    from .auth import get_permissions  # noqa: PLC0415
+    return {"username": username, "role": role, "permissions": get_permissions(role)}
+
+
+@app.get("/api/permissions")
+def api_permissions(auth=Depends(_get_auth)):
+    """List all available permissions and which roles have them."""
+    from .auth import PERMISSIONS  # noqa: PLC0415
+    return {role: sorted(perms) for role, perms in PERMISSIONS.items()}
 
 
 # ── /api/plugins ─────────────────────────────────────────────────────────────
@@ -2276,6 +2295,38 @@ def api_anomaly_report(request: Request, auth=Depends(_get_auth)):
     }
 
 
+@app.post("/api/reports/custom")
+async def api_custom_report(request: Request, auth=Depends(_get_auth)):
+    """Generate a custom report from a template definition."""
+    body = await _read_body(request)
+    metrics = body.get("metrics", ["cpu_percent", "mem_percent"])
+    range_h = int(body.get("range_hours", 24))
+    title = body.get("title", "Custom Report")
+
+    report_data = {}
+    for metric in metrics:
+        if metric not in HISTORY_METRICS:
+            continue
+        points = db.get_history(metric, range_hours=range_h, resolution=3600)
+        if points:
+            values = [p["value"] for p in points]
+            report_data[metric] = {
+                "avg": round(sum(values) / len(values), 2),
+                "max": round(max(values), 2),
+                "min": round(min(values), 2),
+                "current": round(values[-1], 2) if values else 0,
+                "points": len(values),
+                "data": [{"time": p["time"], "value": p["value"]} for p in points],
+            }
+
+    return {
+        "title": title,
+        "range_hours": range_h,
+        "generated_at": datetime.now().isoformat(),
+        "metrics": report_data,
+    }
+
+
 @app.get("/api/grafana/dashboard")
 def api_grafana_template(auth=Depends(_get_auth)):
     """Return a Grafana dashboard JSON template for NOBA metrics."""
@@ -2427,7 +2478,7 @@ async def api_compose_action(project: str, action: str, request: Request, auth=D
 
 @app.get("/api/game-servers")
 def api_game_servers(auth=Depends(_get_auth)):
-    from .metrics import probe_game_server
+    from .metrics import probe_game_server, query_source_server
     cfg = read_yaml_settings()
     servers = cfg.get("gameServers", [])
     results = []
@@ -2435,8 +2486,12 @@ def api_game_servers(auth=Depends(_get_auth)):
         host = s.get("host", "")
         port = int(s.get("port", 0))
         name = s.get("name", f"{host}:{port}")
+        protocol = s.get("protocol", "tcp")
         if host and port:
-            result = probe_game_server(host, port)
+            if protocol == "source":
+                result = query_source_server(host, port)
+            else:
+                result = probe_game_server(host, port)
             result["name"] = name
             results.append(result)
     return results
