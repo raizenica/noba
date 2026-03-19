@@ -148,7 +148,7 @@ class JobRunner:
                     remaining = JOB_MAX_OUTPUT - total
                     output_buf.append(decoded[:remaining])
                     output_buf.append("\n[output truncated]\n")
-                    total = JOB_MAX_OUTPUT
+                    break
 
             # Wait for completion with timeout
             try:

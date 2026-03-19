@@ -446,7 +446,7 @@ def api_run_status(auth=Depends(_get_auth)):
 # ── /api/runs — job run history & details ────────────────────────────────────
 @app.get("/api/runs")
 def api_runs(request: Request, auth=Depends(_get_auth)):
-    limit = int(request.query_params.get("limit", "50"))
+    limit = _int_param(request, "limit", 50, 1, 500)
     status = request.query_params.get("status")
     auto_id = request.query_params.get("automation_id")
     trigger_prefix = request.query_params.get("trigger_prefix")

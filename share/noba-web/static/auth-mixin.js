@@ -124,6 +124,21 @@ function authMixin() {
             }
             this.authenticated = false;
             this.connStatus    = 'offline';
+            this.runningScript = false;
+            this.activeRunId   = null;
+            // Close all modals
+            this.showModal = false;
+            this.showAutoModal = false;
+            this.showRunHistoryModal = false;
+            this.showRunDetailModal = false;
+            this.showHistoryModal = false;
+            this.showAuditModal = false;
+            this.showSmartModal = false;
+            this.showConfirmModal = false;
+            this.showShortcutsModal = false;
+            this.showSessionsModal = false;
+            // Cancel speech synthesis
+            if (window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch {} }
             this._stopCountdown();
             if (this._es)   { this._es.close();           this._es   = null; }
             if (this._poll) { clearInterval(this._poll);  this._poll = null; }

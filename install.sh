@@ -528,7 +528,7 @@ if [[ -d "$server_pkg_src" ]]; then
     fi
 fi
 
-for f in style.css app.js auth-mixin.js actions-mixin.js favicon.ico icon-192.png icon-512.png; do
+for f in style.css app.js auth-mixin.js actions-mixin.js favicon.ico; do
     src="$SCRIPT_DIR/share/noba-web/static/$f"
     dst="$LIBEXEC_DIR/web/static/$f"
     if [[ -f "$src" ]]; then

@@ -30,6 +30,7 @@ class Database:
             self._conn = sqlite3.connect(self._path, check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
+            self._conn.execute("PRAGMA busy_timeout=5000;")
         return self._conn
 
     def _init_schema(self) -> None:
