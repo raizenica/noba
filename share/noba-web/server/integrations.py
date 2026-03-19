@@ -1105,3 +1105,61 @@ def get_weather(api_key: str, city: str) -> dict | None:
         }
     except (httpx.HTTPError, KeyError, ValueError):
         return None
+
+
+# ── Scrutiny ────────────────────────────────────────────────────────────────
+def get_scrutiny(url: str) -> dict | None:
+    """Fetch disk health summary from a Scrutiny instance."""
+    if not url:
+        return None
+    try:
+        base = url.rstrip("/")
+        data = _http_get(f"{base}/api/summary", timeout=10)
+        summary = data.get("data", {}).get("summary", {})
+        if not summary:
+            return None
+        device_list = []
+        healthy = 0
+        failed = 0
+        warn = 0
+        total_capacity = 0
+        max_temp = 0
+        # device_status: 0=passed, 1=warn, 2=failed, 3=unknown
+        for _wwn, info in summary.items():
+            dev = info.get("device", {})
+            smart = info.get("smart", {})
+            status = dev.get("device_status", 3)
+            if status == 0:
+                healthy += 1
+            elif status == 1:
+                warn += 1
+            else:
+                failed += 1
+            temp = smart.get("temp") or 0
+            hours = smart.get("power_on_hours") or 0
+            cap = dev.get("capacity") or 0
+            total_capacity += cap
+            if temp > max_temp:
+                max_temp = temp
+            device_list.append({
+                "name": dev.get("device_name", ""),
+                "model": dev.get("model_name", ""),
+                "serial": dev.get("serial_number", ""),
+                "status": status,
+                "temperature": temp,
+                "capacity": cap,
+                "powerOnHours": hours,
+                "protocol": dev.get("device_protocol", ""),
+            })
+        device_list.sort(key=lambda d: d["name"])
+        return {
+            "devices": len(summary),
+            "healthy": healthy,
+            "failed": failed,
+            "warn": warn,
+            "totalCapacityBytes": total_capacity,
+            "maxTemp": max_temp,
+            "device_list": device_list,
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None

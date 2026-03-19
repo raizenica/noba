@@ -97,6 +97,8 @@ def read_yaml_settings() -> dict:
         "paperlessUrl": "", "paperlessToken": "",
         "vaultwardenUrl": "", "vaultwardenToken": "",
         "wolDevices": [], "gameServers": [], "composeProjects": [],
+        # Disk health
+        "scrutinyUrl": "",
         # RSS triggers
         "rssTriggers": [],
     }

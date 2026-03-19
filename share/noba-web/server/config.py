@@ -87,6 +87,8 @@ WEB_KEYS = frozenset([
     "paperlessUrl", "paperlessToken",
     "vaultwardenUrl", "vaultwardenToken",
     "wolDevices", "gameServers", "composeProjects",
+    # Disk health
+    "scrutinyUrl",
     # RSS triggers
     "rssTriggers",
 ])

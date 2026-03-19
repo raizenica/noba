@@ -77,6 +77,8 @@ function dashboard() {
         'wolDevices', 'gameServers', 'composeProjects',
         // RSS triggers
         'rssTriggers',
+        // Scrutiny
+        'scrutinyUrl',
     ];
 
     /** Keys that live in localStorage as a local mirror.
@@ -160,7 +162,7 @@ function dashboard() {
         'homebridge', 'z2m', 'esphome', 'unifiProtect', 'pikvm',
         'k8s', 'gitea', 'gitlab', 'github', 'paperless', 'vaultwarden',
         'weather', 'certExpiry', 'domainExpiry', 'vpn',
-        'dockerUpdates', 'devicePresence', 'energy',
+        'dockerUpdates', 'devicePresence', 'energy', 'scrutiny',
     ]);
 
     const DEF_VIS = {
@@ -178,7 +180,7 @@ function dashboard() {
         paperless: true, vaultwarden: true,
         weather: true, certExpiry: true, vpn: true,
         lidarr: true, readarr: true, bazarr: true,
-        dockerUpdates: true, devicePresence: true,
+        dockerUpdates: true, devicePresence: true, scrutiny: true,
     };
 
     const DEF_BOOKMARKS = 'Router|http://192.168.1.1|fa-network-wired, Pi-hole|http://pi.hole/admin|fa-shield-alt';

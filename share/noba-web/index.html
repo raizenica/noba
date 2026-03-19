@@ -670,6 +670,58 @@
             </div>
         </div>
 
+        <!-- ── Scrutiny (Disk SMART Health) ────────────────────────────── -->
+        <div class="card" data-id="card-scrutiny" x-show="vis.scrutiny && scrutiny" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr">
+                <i class="fas fa-hdd card-icon" style="color:#e5c07b" aria-hidden="true"></i>
+                <span class="card-title">Disk Health</span>
+                <button class="collapse-btn fas fa-chevron-down"
+                        :class="collapsed.scrutiny ? 'is-collapsed' : ''"
+                        @click="toggleCollapse('scrutiny')"
+                        :aria-expanded="!collapsed.scrutiny"
+                        aria-controls="body-scrutiny"
+                        aria-label="Toggle Disk Health"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" id="body-scrutiny" x-show="!collapsed.scrutiny">
+                <div class="row">
+                    <span class="row-label">Disks</span>
+                    <span class="row-val" x-text="scrutiny.devices"></span>
+                </div>
+                <div class="row">
+                    <span class="row-label">Healthy</span>
+                    <span class="row-val" style="color:var(--success)" x-text="scrutiny.healthy"></span>
+                </div>
+                <div class="row" x-show="scrutiny.warn > 0">
+                    <span class="row-label">Warning</span>
+                    <span class="row-val" style="color:var(--warning)" x-text="scrutiny.warn"></span>
+                </div>
+                <div class="row" x-show="scrutiny.failed > 0">
+                    <span class="row-label">Failed</span>
+                    <span class="row-val" style="color:var(--danger)" x-text="scrutiny.failed"></span>
+                </div>
+                <div class="row">
+                    <span class="row-label">Total Capacity</span>
+                    <span class="row-val" x-text="((scrutiny.totalCapacityBytes||0)/1e12).toFixed(1) + ' TB'"></span>
+                </div>
+                <div class="row">
+                    <span class="row-label">Max Temp</span>
+                    <span class="row-val" :style="(scrutiny.maxTemp||0) > 50 ? 'color:var(--danger)' : ''" x-text="(scrutiny.maxTemp||0) + '°C'"></span>
+                </div>
+                <div style="margin-top:.6rem;max-height:200px;overflow-y:auto">
+                    <template x-for="d in (scrutiny.device_list||[])" :key="d.serial || d.name">
+                        <div class="row" style="font-size:.75rem">
+                            <span class="row-label">
+                                <i class="fas fa-circle" style="font-size:.4rem;margin-right:4px" :style="d.status===0?'color:var(--success)':d.status===1?'color:var(--warning)':'color:var(--danger)'" aria-hidden="true"></i>
+                                <span x-text="'/dev/' + d.name"></span>
+                            </span>
+                            <span class="row-val" style="font-size:.65rem;opacity:.8" x-text="d.model + (d.temperature ? ' · ' + d.temperature + '°C' : '')"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
         <!-- ── Disk I/O ──────────────────────────────────────────────────── -->
         <div class="card" data-id="card-diskio" x-show="vis.diskIo" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
@@ -2510,6 +2562,7 @@
                     <label class="toggle-item"><input type="checkbox" x-model="vis.battery"> Power State</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.pihole"> Pi-hole DNS</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.storage"> Storage</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.scrutiny"> Disk Health (Scrutiny)</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.radar"> Network Radar</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.kuma"> Uptime Kuma</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.procs"> Resource Hogs</label>
@@ -3299,6 +3352,13 @@
                 <div>
                     <label class="field-label" for="s-vaultwarden-url">URL</label>
                     <input id="s-vaultwarden-url" class="field-input" type="url" x-model="vaultwardenUrl" placeholder="https://vault.example.com">
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Scrutiny (Disk Health)</span>
+                <div>
+                    <label class="field-label" for="s-scrutiny-url">URL</label>
+                    <input id="s-scrutiny-url" class="field-input" type="url" x-model="scrutinyUrl" placeholder="http://truenas:8080">
                 </div>
             </div>
             <div class="s-section">
