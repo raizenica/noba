@@ -87,6 +87,8 @@ WEB_KEYS = frozenset([
     "paperlessUrl", "paperlessToken",
     "vaultwardenUrl", "vaultwardenToken",
     "wolDevices", "gameServers", "composeProjects",
+    # RSS triggers
+    "rssTriggers",
 ])
 _NOTIF_WEB_KEYS = frozenset([
     "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",

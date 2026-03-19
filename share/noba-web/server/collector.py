@@ -12,7 +12,8 @@ from .metrics import (
     collect_system, collect_hardware, collect_storage, collect_network,
     get_cpu_percent, get_cpu_history, get_service_status, ping_host, get_containers,
     collect_disk_io, collect_per_interface_net,
-    check_cert_expiry, check_domain_expiry, get_vpn_status,
+    check_cert_expiry, check_device_presence, check_domain_expiry, get_vpn_status,
+    check_docker_updates,
 )
 from .integrations import (
     get_pihole, get_plex, get_kuma, get_truenas, get_servarr, get_qbit, get_proxmox,
@@ -32,6 +33,8 @@ logger = logging.getLogger("noba")
 _pool = ThreadPoolExecutor(max_workers=_WORKER_THREADS, thread_name_prefix="noba-worker")
 
 _shutdown_flag = threading.Event()
+_docker_update_cycle = 0
+_docker_update_lock = threading.Lock()
 
 
 def get_shutdown_flag() -> threading.Event:
@@ -145,6 +148,7 @@ def collect_stats(qs: dict) -> dict:
     weather_city = cfg.get("weatherCity", "")
     cert_hosts   = [h.strip() for h in cfg.get("certHosts", "").split(",") if h.strip()]
     domain_list  = [d.strip() for d in cfg.get("domainList", "").split(",") if d.strip()]
+    presence_ips = [x.strip() for x in cfg.get("devicePresenceIps", "").split(",") if x.strip()]
 
     bmc_list = []
     for entry in bmc_map:
@@ -208,6 +212,16 @@ def collect_stats(qs: dict) -> dict:
     cert_fut    = _pool.submit(check_cert_expiry, cert_hosts) if cert_hosts else None
     domain_fut  = _pool.submit(check_domain_expiry, domain_list) if domain_list else None
     vpn_fut     = _pool.submit(get_vpn_status)
+    presence_fut = _pool.submit(check_device_presence, presence_ips) if presence_ips else None
+
+    # Docker image update check — only every 5th cycle to avoid registry spam
+    global _docker_update_cycle
+    docker_upd_fut = None
+    with _docker_update_lock:
+        _docker_update_cycle += 1
+        if _docker_update_cycle >= 5:
+            _docker_update_cycle = 0
+            docker_upd_fut = _pool.submit(check_docker_updates)
 
     # ── Collect service status results ────────────────────────────────────────
     services = []
@@ -310,6 +324,8 @@ def collect_stats(qs: dict) -> dict:
     stats["certExpiry"]     = _get(cert_fut, default=[])
     stats["domainExpiry"]   = _get(domain_fut, default=[])
     stats["vpn"]            = _get(vpn_fut)
+    stats["dockerUpdates"]  = _get(docker_upd_fut, default=[])
+    stats["devicePresence"] = _get(presence_fut, default=[])
 
     stats.update(collect_disk_io())
     stats.update(collect_per_interface_net())

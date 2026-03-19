@@ -75,6 +75,8 @@ function dashboard() {
         'paperlessUrl', 'paperlessToken',
         'vaultwardenUrl', 'vaultwardenToken',
         'wolDevices', 'gameServers', 'composeProjects',
+        // RSS triggers
+        'rssTriggers',
     ];
 
     /** Keys that live in localStorage as a local mirror.
@@ -158,6 +160,7 @@ function dashboard() {
         'homebridge', 'z2m', 'esphome', 'unifiProtect', 'pikvm',
         'k8s', 'gitea', 'gitlab', 'github', 'paperless', 'vaultwarden',
         'weather', 'certExpiry', 'domainExpiry', 'vpn',
+        'dockerUpdates', 'devicePresence',
     ]);
 
     const DEF_VIS = {
@@ -266,7 +269,7 @@ function dashboard() {
         rcloneAvailable: null, rcloneVersion: '', cloudTestResults: {},
 
         // ── Round 1: Automation ──────────────────────────────────────────────
-        maintenanceWindows: [], fsTriggers: [],
+        maintenanceWindows: [], fsTriggers: [], rssTriggers: [],
 
         // ── Round 2: Monitoring ──────────────────────────────────────────────
         weatherApiKey: '', weatherCity: '', certHosts: '', domainList: '',
@@ -363,9 +366,10 @@ function dashboard() {
         k8s: null, gitea: null, gitlab: null, github: null,
         paperless: null, vaultwarden: null,
         weather: null, certExpiry: [], domainExpiry: [], vpn: null,
+        dockerUpdates: [], devicePresence: [],
 
         // ── App state ──────────────────────────────────────────────────────────
-        showSettings: false, refreshing: false,
+        showSettings: false, showTerminal: false, refreshing: false,
         showShortcutsModal: false,
         showSessionsModal: false,
         sessionList: [],
@@ -382,6 +386,7 @@ function dashboard() {
         _masonryObserver: null, _keydownHandler: null,
         _logTimer: null, _cloudTimer: null, _heartbeatTimer: null,
         _spokenAlerts: new Set(),
+        _termSocket: null, _term: null, _termResizeObserver: null,
 
         // FIXED: plain object instead of Set so Alpine reactivity works correctly
         _dismissedAlerts: {},
@@ -456,6 +461,7 @@ function dashboard() {
             try { this.initKeyboard();  } catch (e) { console.warn('Keyboard init skipped', e); }
             try { this.initMasonry();   } catch (e) { console.warn('Masonry init skipped', e); }
             try { this.initTouch();     } catch (e) { console.warn('Touch init skipped', e); }
+            this.$watch('showTerminal', (val) => { if (val) this.openTerminal(); });
 
             if (!this.authenticated) return;
 
@@ -573,6 +579,11 @@ function dashboard() {
                     this.fetchAuditLog();
                     return;
                 }
+                if (e.key === 't' && !this.showSettings && !this.showModal && this.userRole === 'admin') {
+                    this.showTerminal = true;
+                    this.$nextTick(() => this.openTerminal());
+                    return;
+                }
                 if (e.key === '/' && !this.showSettings && !this.showModal) {
                     e.preventDefault();
                     const el = document.querySelector('.svc-filter');
@@ -596,6 +607,7 @@ function dashboard() {
                     this.showRunHistoryModal = false;
                     this.showRunDetailModal = false;
                     this.notifCenter = false;
+                    if (this.showTerminal) { this.showTerminal = false; this.closeTerminal(); }
                 }
             };
             document.addEventListener('keydown', this._keydownHandler);
@@ -1032,6 +1044,102 @@ function dashboard() {
                 });
             } catch { /* silent */ }
             this.fetchNotifications();
+        },
+
+
+        // ── 7. Terminal ─────────────────────────────────────────────────────────
+
+        /** Open xterm.js terminal via WebSocket */
+        async openTerminal() {
+            if (this._term) return;
+            // Load xterm.js dynamically from CDN
+            if (!window.Terminal) {
+                await new Promise((resolve, reject) => {
+                    const link = document.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.href = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css';
+                    document.head.appendChild(link);
+                    const script = document.createElement('script');
+                    script.src = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js';
+                    script.onload = resolve;
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
+                // Also load fit addon
+                await new Promise((resolve, reject) => {
+                    const script = document.createElement('script');
+                    script.src = 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js';
+                    script.onload = resolve;
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
+            }
+            await this.$nextTick();
+            const container = document.getElementById('terminal-container');
+            if (!container) return;
+
+            const term = new window.Terminal({
+                cursorBlink: true,
+                fontSize: 14,
+                fontFamily: 'JetBrains Mono, monospace',
+                theme: {
+                    background: '#1a1b26',
+                    foreground: '#c0caf5',
+                    cursor: '#c0caf5',
+                },
+            });
+            const fitAddon = new window.FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(container);
+            fitAddon.fit();
+
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${proto}//${location.host}/api/terminal?token=${this._token()}`);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                // Send initial size
+                ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+            };
+            ws.onmessage = (e) => {
+                const data = e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data;
+                term.write(data);
+            };
+            ws.onclose = () => {
+                term.write('\r\n\x1b[31m[Session ended]\x1b[0m\r\n');
+            };
+
+            term.onData((data) => {
+                if (ws.readyState === WebSocket.OPEN) ws.send(data);
+            });
+            term.onResize(({ cols, rows }) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+                }
+            });
+
+            // Handle container resize
+            const ro = new ResizeObserver(() => fitAddon.fit());
+            ro.observe(container);
+
+            this._term = term;
+            this._termSocket = ws;
+            this._termResizeObserver = ro;
+        },
+
+        closeTerminal() {
+            if (this._termSocket) {
+                this._termSocket.close();
+                this._termSocket = null;
+            }
+            if (this._term) {
+                this._term.dispose();
+                this._term = null;
+            }
+            if (this._termResizeObserver) {
+                this._termResizeObserver.disconnect();
+                this._termResizeObserver = null;
+            }
         },
 
     };

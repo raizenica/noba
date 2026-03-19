@@ -100,6 +100,11 @@
                 <i class="fas" :class="_allCollapsed ? 'fa-expand-alt' : 'fa-compress-alt'" aria-hidden="true"></i>
             </button>
 
+            <button class="icon-btn" @click="showTerminal=true" title="Terminal"
+                    x-show="userRole==='admin'" x-cloak aria-label="Open terminal">
+                <i class="fas fa-terminal" aria-hidden="true"></i>
+            </button>
+
             <button class="icon-btn"
                     @click="showSettings=true; settingsTab='visibility'"
                     title="Settings (s)"
@@ -1147,6 +1152,80 @@
             </div>
         </div>
 
+        <!-- ── Docker Updates ──────────────────────────────────────────────── -->
+        <div class="card" data-id="card-docker-updates" x-show="dockerUpdates && dockerUpdates.length > 0">
+            <div class="card-hdr"><i class="fas fa-box-open card-icon"></i><span class="card-title">Docker Updates</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.dockerUpdates?'is-collapsed':''" @click="toggleCollapse('dockerUpdates')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.dockerUpdates">
+                <template x-for="c in (dockerUpdates||[]).filter(u => u.has_update)" :key="c.name">
+                    <div class="row">
+                        <span class="row-label" x-text="c.name"></span>
+                        <span class="badge bw">Update available</span>
+                    </div>
+                </template>
+                <div class="empty-msg" x-show="!(dockerUpdates||[]).some(u => u.has_update)">All images up to date</div>
+            </div>
+        </div>
+
+        <!-- ── Device Presence ─────────────────────────────────────────────── -->
+        <div class="card" data-id="card-device-presence" x-show="devicePresence && devicePresence.length > 0">
+            <div class="card-hdr"><i class="fas fa-mobile-alt card-icon"></i><span class="card-title">Device Presence</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.devicePresence?'is-collapsed':''" @click="toggleCollapse('devicePresence')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.devicePresence">
+                <template x-for="d in devicePresence" :key="d.ip">
+                    <div class="row">
+                        <span class="row-label" x-text="d.name || d.ip"></span>
+                        <span class="badge" :class="d.status==='online'?'bs':'bd'" x-text="d.status"></span>
+                        <span x-show="d.ms > 0" class="row-val" x-text="d.ms + 'ms'" style="margin-left:auto;font-size:.75rem;color:var(--text-dim)"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ── Lidarr ──────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-lidarr" x-show="vis.lidarr && lidarrUrl">
+            <div class="card-hdr"><i class="fas fa-music card-icon"></i><span class="card-title">Lidarr</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.lidarr?'is-collapsed':''" @click="toggleCollapse('lidarr')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.lidarr">
+                <template x-if="lidarr"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="lidarr.status==='online'?'bs':'bd'" x-text="lidarr.status"></span></div>
+                    <div class="row"><span class="row-label">Queue</span><span class="row-val" x-text="lidarr.queue_count||0"></span></div>
+                </div></template>
+                <template x-if="!lidarr"><div class="empty-msg">Lidarr unreachable</div></template>
+            </div>
+        </div>
+
+        <!-- ── Readarr ─────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-readarr" x-show="vis.readarr && readarrUrl">
+            <div class="card-hdr"><i class="fas fa-book card-icon"></i><span class="card-title">Readarr</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.readarr?'is-collapsed':''" @click="toggleCollapse('readarr')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.readarr">
+                <template x-if="readarr"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="readarr.status==='online'?'bs':'bd'" x-text="readarr.status"></span></div>
+                    <div class="row"><span class="row-label">Queue</span><span class="row-val" x-text="readarr.queue_count||0"></span></div>
+                </div></template>
+                <template x-if="!readarr"><div class="empty-msg">Readarr unreachable</div></template>
+            </div>
+        </div>
+
+        <!-- ── Bazarr ──────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-bazarr" x-show="vis.bazarr && bazarrUrl">
+            <div class="card-hdr"><i class="fas fa-closed-captioning card-icon"></i><span class="card-title">Bazarr</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.bazarr?'is-collapsed':''" @click="toggleCollapse('bazarr')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.bazarr">
+                <template x-if="bazarr"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="bazarr.status==='online'?'bs':'bd'" x-text="bazarr.status"></span></div>
+                    <div class="row"><span class="row-label">Queue</span><span class="row-val" x-text="bazarr.queue_count||0"></span></div>
+                </div></template>
+                <template x-if="!bazarr"><div class="empty-msg">Bazarr unreachable</div></template>
+            </div>
+        </div>
+
         <div class="card" data-id="card-containers" x-show="vis.containers">
             <div class="card-hdr">
                 <i class="fas fa-boxes card-icon" aria-hidden="true"></i>
@@ -1638,6 +1717,34 @@
         </template>
 
     </div></main>
+
+<!-- Terminal Modal -->
+<div class="modal-overlay" x-show="showTerminal" x-cloak @keydown.escape.window="showTerminal=false">
+    <div class="modal-box" style="width:90vw;max-width:1100px;height:80vh;padding:0;display:flex;flex-direction:column">
+        <div class="modal-title" style="padding:12px 16px;flex-shrink:0">
+            <i class="fas fa-terminal"></i> Terminal
+            <button class="modal-close" @click="showTerminal=false;closeTerminal()" aria-label="Close">&times;</button>
+        </div>
+        <div id="terminal-container" style="flex:1;background:#1a1b26;overflow:hidden"></div>
+    </div>
+</div>
+
+<!-- Mobile bottom nav -->
+<nav class="mobile-nav" x-show="authenticated" x-cloak>
+    <div class="mobile-nav-item" :class="!showSettings && !showAutoModal ? 'active' : ''" @click="showSettings=false">
+        <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
+    </div>
+    <div class="mobile-nav-item" @click="showSettings=true; settingsTab='automations'">
+        <i class="fas fa-robot"></i><span>Automations</span>
+    </div>
+    <div class="mobile-nav-item" @click="toggleNotifCenter()">
+        <i class="fas fa-bell"></i><span>Alerts</span>
+    </div>
+    <div class="mobile-nav-item" @click="showSettings=true; settingsTab='visibility'">
+        <i class="fas fa-cog"></i><span>Settings</span>
+    </div>
+</nav>
+
 </div><div x-show="showHistoryModal"
      class="modal-overlay"
      style="display:none"
@@ -1686,6 +1793,9 @@
         </div>
 
         <div class="modal-footer">
+            <button class="chart-export-btn" @click="exportChart()" title="Export as PNG">
+                <i class="fas fa-download"></i> PNG
+            </button>
             <button class="btn btn-sm btn-secondary"
                     @click="downloadHistoryCSV()"
                     title="Download as CSV"
@@ -2220,6 +2330,11 @@
                     <label class="toggle-item"><input type="checkbox" x-model="vis.vaultwarden"> Vaultwarden</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.vpn"> VPN</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.certExpiry"> Cert Expiry</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.lidarr"> Lidarr</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.readarr"> Readarr</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.bazarr"> Bazarr</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.dockerUpdates"> Docker Updates</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.devicePresence"> Device Presence</label>
                 </div>
             </div>
         </div>

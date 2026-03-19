@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -78,8 +78,11 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     from .scheduler import fs_watcher
     fs_watcher.start()
+    from .scheduler import rss_watcher
+    rss_watcher.start()
     logger.info("Noba v%s started (%d plugins)", VERSION, plugin_manager.count)
     yield
+    rss_watcher.stop()
     from .scheduler import fs_watcher as _fw
     _fw.stop()
     scheduler.stop()
@@ -1913,6 +1916,74 @@ def api_prometheus(auth=Depends(_get_auth)):
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
+@app.get("/api/reports/bandwidth")
+def api_bandwidth_report(request: Request, auth=Depends(_get_auth)):
+    """Bandwidth usage report per interface over configurable period."""
+    range_h = _int_param(request, "range", 24, 1, 8760)
+    # Get net_rx and net_tx history
+    rx_points = db.get_history("net_rx_bytes", range_hours=range_h, resolution=3600)
+    tx_points = db.get_history("net_tx_bytes", range_hours=range_h, resolution=3600)
+
+    # Calculate totals (sum of hourly averages * 3600 gives approximate bytes)
+    total_rx = sum(p["value"] * 3600 for p in rx_points)
+    total_tx = sum(p["value"] * 3600 for p in tx_points)
+
+    # Format hourly breakdown
+    hourly = []
+    for rx, tx in zip(rx_points, tx_points):
+        hourly.append({
+            "time": rx["time"],
+            "rx_bps": round(rx["value"]),
+            "tx_bps": round(tx["value"]),
+        })
+
+    from .metrics import _fmt_bytes  # noqa: F811
+    return {
+        "range_hours": range_h,
+        "total_rx": _fmt_bytes(total_rx),
+        "total_tx": _fmt_bytes(total_tx),
+        "total_rx_bytes": round(total_rx),
+        "total_tx_bytes": round(total_tx),
+        "hourly": hourly,
+    }
+
+
+@app.get("/api/grafana/dashboard")
+def api_grafana_template(auth=Depends(_get_auth)):
+    """Return a Grafana dashboard JSON template for NOBA metrics."""
+    return {
+        "dashboard": {
+            "title": "NOBA System Metrics",
+            "panels": [
+                {"title": "CPU Usage", "type": "timeseries",
+                 "targets": [{"expr": "noba_cpu_percent", "legendFormat": "CPU %"}],
+                 "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}},
+                {"title": "Memory Usage", "type": "timeseries",
+                 "targets": [{"expr": "noba_mem_percent", "legendFormat": "Memory %"}],
+                 "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}},
+                {"title": "Disk Usage", "type": "bargauge",
+                 "targets": [{"expr": "noba_disk_percent", "legendFormat": "{{mount}}"}],
+                 "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}},
+                {"title": "Network I/O", "type": "timeseries",
+                 "targets": [
+                     {"expr": "noba_net_rx_bps", "legendFormat": "RX"},
+                     {"expr": "noba_net_tx_bps", "legendFormat": "TX"},
+                 ],
+                 "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}},
+                {"title": "Service Status", "type": "stat",
+                 "targets": [{"expr": "noba_service_up", "legendFormat": "{{name}}"}],
+                 "gridPos": {"x": 0, "y": 16, "w": 24, "h": 4}},
+            ],
+            "time": {"from": "now-24h", "to": "now"},
+            "refresh": "30s",
+        },
+        "datasource": {
+            "type": "prometheus",
+            "url": "http://YOUR_NOBA_HOST:8080/api/metrics/prometheus",
+        },
+    }
+
+
 @app.get("/api/plugins/available")
 def api_plugins_available(auth=Depends(_require_admin)):
     cfg = read_yaml_settings()
@@ -2041,6 +2112,18 @@ def api_game_servers(auth=Depends(_get_auth)):
             result["name"] = name
             results.append(result)
     return results
+
+
+@app.websocket("/api/terminal")
+async def ws_terminal(ws: WebSocket):
+    """WebSocket terminal — admin only."""
+    token = ws.query_params.get("token", "")
+    username, role = token_store.validate(token)
+    if not username or role != "admin":
+        await ws.close(code=4001, reason="Unauthorized")
+        return
+    from .terminal import terminal_handler
+    await terminal_handler(ws, username)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

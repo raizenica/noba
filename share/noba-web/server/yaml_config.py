@@ -97,6 +97,8 @@ def read_yaml_settings() -> dict:
         "paperlessUrl": "", "paperlessToken": "",
         "vaultwardenUrl": "", "vaultwardenToken": "",
         "wolDevices": [], "gameServers": [], "composeProjects": [],
+        # RSS triggers
+        "rssTriggers": [],
     }
     if not os.path.exists(NOBA_YAML):
         with _settings_cache_lock:

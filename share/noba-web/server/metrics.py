@@ -717,6 +717,67 @@ def send_wol(mac: str) -> bool:
 
 
 # ── Game server probe ────────────────────────────────────────────────────────
+def check_docker_updates() -> list[dict]:
+    """Check running containers for available image updates."""
+    import hashlib
+    results = []
+    # Get running containers with their image digests
+    out = _run(["docker", "ps", "--format", "{{.Names}}|{{.Image}}"], timeout=10, ignore_rc=True)
+    if not out:
+        return results
+    for line in out.splitlines():
+        if "|" not in line:
+            continue
+        name, image = line.split("|", 1)
+        try:
+            # Get local digest
+            local = _run(["docker", "image", "inspect", image, "--format", "{{.Id}}"], timeout=5)
+            # Try to get remote digest (without pulling)
+            remote = _run(["docker", "manifest", "inspect", image, "--verbose"], timeout=15, ignore_rc=True)
+            has_update = False
+            if remote and local:
+                # Simple heuristic: if manifest inspect succeeds and content differs
+                remote_hash = hashlib.md5(remote.encode()).hexdigest()[:12]  # noqa: S324
+                has_update = remote_hash not in local
+            results.append({
+                "name": name,
+                "image": image,
+                "has_update": has_update,
+            })
+        except Exception:
+            results.append({"name": name, "image": image, "has_update": False})
+    return results
+
+
+_device_presence: dict[str, dict] = {}
+_device_presence_lock = threading.Lock()
+
+
+def check_device_presence(ips: list[str]) -> list[dict]:
+    """Ping a list of IPs and track online/offline transitions."""
+    results = []
+    for ip in ips:
+        parts = ip.split("|")
+        addr = parts[0].strip()
+        name = parts[1].strip() if len(parts) > 1 else addr
+        if not validate_ip(addr):
+            continue
+        _, up, ms = ping_host(addr)
+        with _device_presence_lock:
+            prev = _device_presence.get(addr, {})
+            was_up = prev.get("up", None)
+            changed = was_up is not None and was_up != up
+            _device_presence[addr] = {"up": up, "ms": ms, "name": name, "changed": changed}
+        results.append({
+            "ip": addr,
+            "name": name,
+            "status": "online" if up else "offline",
+            "ms": ms if up else 0,
+            "changed": changed,
+        })
+    return results
+
+
 def probe_game_server(host: str, port: int) -> dict:
     try:
         t0 = time.time()
