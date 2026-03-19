@@ -495,7 +495,7 @@ fi
 # 4. Web dashboard
 header "Installing Web Dashboard"
 
-for f in server.py index.html manifest.json service-worker.js; do
+for f in server.py server_legacy.py index.html manifest.json service-worker.js; do
     src="$SCRIPT_DIR/share/noba-web/$f"
     dst="$LIBEXEC_DIR/web/$f"
     if [[ -f "$src" ]]; then
@@ -511,6 +511,22 @@ for f in server.py index.html manifest.json service-worker.js; do
         fi
     fi
 done
+
+# Install the FastAPI server package (server/ directory)
+server_pkg_src="$SCRIPT_DIR/share/noba-web/server"
+server_pkg_dst="$LIBEXEC_DIR/web/server"
+if [[ -d "$server_pkg_src" ]]; then
+    if [[ "$DRY_RUN" == true ]]; then
+        dry "install $server_pkg_src/ → $server_pkg_dst/"
+    else
+        mkdir -p "$server_pkg_dst"
+        for pyf in "$server_pkg_src"/*.py; do
+            [[ -f "$pyf" ]] || continue
+            install_file "$pyf" "$server_pkg_dst/$(basename "$pyf")" 644
+        done
+        say_ok "Web server package (FastAPI modules)"
+    fi
+fi
 
 for f in style.css app.js favicon.ico icon-192.png icon-512.png; do
     src="$SCRIPT_DIR/share/noba-web/static/$f"

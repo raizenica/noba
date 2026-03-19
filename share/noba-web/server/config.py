@@ -1,0 +1,86 @@
+"""Noba – Central configuration & constants."""
+from __future__ import annotations
+
+import os
+import sys
+
+# ── Version ───────────────────────────────────────────────────────────────────
+VERSION = "1.12.0"
+
+# ── Server ────────────────────────────────────────────────────────────────────
+PORT    = int(os.environ.get("PORT",  8080))
+HOST    = os.environ.get("HOST", "0.0.0.0")
+SSL_CERT = os.environ.get("SSL_CERT", "")
+SSL_KEY  = os.environ.get("SSL_KEY",  "")
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+SCRIPT_DIR  = os.environ.get("NOBA_SCRIPT_DIR", os.path.expanduser("~/.local/libexec/noba"))
+LOG_DIR     = os.path.expanduser("~/.local/share")
+PID_FILE    = os.environ.get("PID_FILE", "/tmp/noba-web-server.pid")
+ACTION_LOG  = os.path.join(LOG_DIR, "noba-action.log")
+AUTH_CONFIG = os.path.expanduser("~/.config/noba-web/auth.conf")
+USER_DB     = os.path.expanduser("~/.config/noba-web/users.conf")
+NOBA_YAML   = os.environ.get("NOBA_CONFIG", os.path.expanduser("~/.config/noba/config.yaml"))
+HISTORY_DB  = os.path.join(LOG_DIR, "noba-history.db")
+
+# ── Limits & tunables ────────────────────────────────────────────────────────
+MAX_BODY_BYTES        = 64 * 1024
+TOKEN_TTL_H           = 24
+STATS_INTERVAL        = 5
+NOTIFICATION_COOLDOWN = 300
+HISTORY_RETENTION_DAYS = int(os.environ.get("NOBA_HISTORY_DAYS", 30))
+AUDIT_RETENTION_DAYS   = int(os.environ.get("NOBA_AUDIT_DAYS",   90))
+_WORKER_THREADS        = int(os.environ.get("NOBA_WORKER_THREADS", 24))
+_PW_MIN_LEN            = int(os.environ.get("NOBA_PW_MIN_LEN", 8))
+
+# ── YAML config keys ─────────────────────────────────────────────────────────
+WEB_KEYS = frozenset([
+    "piholeUrl", "piholeToken", "monitoredServices", "radarIps", "bookmarksStr",
+    "plexUrl", "plexToken", "kumaUrl", "bmcMap", "truenasUrl", "truenasKey",
+    "radarrUrl", "radarrKey", "sonarrUrl", "sonarrKey", "qbitUrl", "qbitUser", "qbitPass",
+    "customActions", "automations", "wanTestIp", "lanTestIp",
+    "alertRules",
+    "proxmoxUrl", "proxmoxUser", "proxmoxTokenName", "proxmoxTokenValue",
+    "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",
+    "gotifyEnabled",   "gotifyUrl",        "gotifyAppToken",
+])
+_NOTIF_WEB_KEYS = frozenset([
+    "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",
+    "gotifyEnabled",   "gotifyUrl",        "gotifyAppToken",
+])
+
+# ── Script / action maps ─────────────────────────────────────────────────────
+SCRIPT_MAP = {
+    "backup":        "backup-to-nas.sh",
+    "cloud":         "cloud-backup.sh",
+    "verify":        "backup-verifier.sh",
+    "organize":      "organize-downloads.sh",
+    "diskcheck":     "disk-sentinel.sh",
+    "check_updates": "noba-update.sh",
+}
+ALLOWED_ACTIONS = frozenset({"start", "stop", "restart", "poweroff"})
+VALID_ROLES     = ("viewer", "admin")
+
+HISTORY_METRICS = [
+    "cpu_percent", "mem_percent", "cpu_temp", "gpu_temp",
+    "disk_percent", "ping_ms", "net_rx_bytes", "net_tx_bytes",
+]
+
+# ── Security headers ──────────────────────────────────────────────────────────
+SECURITY_HEADERS = {
+    "X-Content-Type-Options":  "nosniff",
+    "X-Frame-Options":         "SAMEORIGIN",
+    "Referrer-Policy":         "same-origin",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
+        "img-src 'self' data:; connect-src 'self' wss: ws:"
+    ),
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+}
+
+# ── Stdout buffering ──────────────────────────────────────────────────────────
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)

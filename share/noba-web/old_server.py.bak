@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Noba Command Center – Server entry point v1.12.0
+
+Runs the FastAPI application via uvicorn.
+Falls back to the legacy http.server implementation if uvicorn is unavailable.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import sys
+
+# Ensure the noba-web directory is on the path so `server.*` imports work
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+_LOG_DIR = os.path.expanduser("~/.local/share")
+os.makedirs(_LOG_DIR, exist_ok=True)
+try:
+    logging.basicConfig(
+        filename=os.path.join(_LOG_DIR, "noba-web-server.log"),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+except Exception:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+logger = logging.getLogger("noba")
+
+VERSION  = "1.12.0"
+PORT     = int(os.environ.get("PORT",  8080))
+HOST     = os.environ.get("HOST", "0.0.0.0")
+PID_FILE = os.environ.get("PID_FILE", "/tmp/noba-web-server.pid")
+SSL_CERT = os.environ.get("SSL_CERT", "")
+SSL_KEY  = os.environ.get("SSL_KEY",  "")
+
+
+def run_fastapi() -> None:
+    import uvicorn
+    from server.app import app  # noqa: F401 – registers all routes
+
+    # Change to the noba-web directory so static files resolve correctly
+    os.chdir(_HERE)
+
+    ssl_kwargs = {}
+    if SSL_CERT and SSL_KEY:
+        ssl_kwargs = {"ssl_certfile": SSL_CERT, "ssl_keyfile": SSL_KEY}
+        print(f"Noba backend v{VERSION} (HTTPS) listening on https://{HOST}:{PORT}", file=sys.stderr)
+    else:
+        print(f"Noba backend v{VERSION} listening on http://{HOST}:{PORT}", file=sys.stderr)
+
+    uvicorn.run(
+        app,
+        host=HOST,
+        port=PORT,
+        log_config=None,  # use our own logging
+        access_log=False,
+        **ssl_kwargs,
+    )
+
+
+def run_legacy() -> None:
+    logger.warning("uvicorn not available – falling back to legacy http.server")
+    import importlib.util, types
+    spec = importlib.util.spec_from_file_location("server_legacy", os.path.join(_HERE, "server_legacy.py"))
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.run_server()
+
+
+if __name__ == "__main__":
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception as e:
+        logger.warning("Could not write PID file: %s", e)
+
+    try:
+        import uvicorn  # noqa: F401
+        run_fastapi()
+    except ImportError:
+        run_legacy()
