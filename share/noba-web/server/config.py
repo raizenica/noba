@@ -89,5 +89,8 @@ SECURITY_HEADERS = {
 }
 
 # ── Stdout buffering ──────────────────────────────────────────────────────────
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except (AttributeError, OSError):
+    pass  # stdout/stderr may not be a TextIOWrapper (e.g. pytest, systemd journal)

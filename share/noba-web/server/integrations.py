@@ -147,11 +147,12 @@ def get_qbit(url: str, user: str, password: str) -> dict | None:
     base   = url.rstrip("/")
     result = {"dl_speed": 0, "up_speed": 0, "active_torrents": 0, "status": "offline"}
     try:
-        r1 = _client.post(
-            f"{base}/api/v2/auth/login",
-            data={"username": user, "password": password},
-            timeout=4,
-        )
+        # Use a separate client to avoid cookie jar contamination on the shared _client
+        with httpx.Client(timeout=4) as qclient:
+            r1 = qclient.post(
+                f"{base}/api/v2/auth/login",
+                data={"username": user, "password": password},
+            )
         cookie = r1.headers.get("set-cookie")
         if not cookie:
             return result
@@ -295,18 +296,24 @@ def get_unifi(url: str, user: str, password: str, site: str = "default"):
     try:
         base = url.rstrip("/")
         site = site or "default"
-        # Login
-        login_r = _client.post(f"{base}/api/login", json={"username": user, "password": password}, headers={"Referer": base})
-        if login_r.status_code != 200:
-            return None
-        cookies = login_r.cookies
-        # Devices
-        dev_r = _client.get(f"{base}/api/s/{site}/stat/device", cookies=cookies)
-        devices = dev_r.json().get("data", []) if dev_r.status_code == 200 else []
-        # Clients
-        sta_r = _client.get(f"{base}/api/s/{site}/stat/sta", cookies=cookies)
-        clients = sta_r.json().get("data", []) if sta_r.status_code == 200 else []
-        adopted = sum(1 for d in devices if d.get("adopted"))
+        # Login — use a separate client to avoid cookie jar contamination
+        with httpx.Client(timeout=4, verify=False) as uclient:
+            login_r = uclient.post(f"{base}/api/login", json={"username": user, "password": password}, headers={"Referer": base})
+            if login_r.status_code != 200:
+                return None
+            cookies = login_r.cookies
+            # Devices
+            dev_r = uclient.get(f"{base}/api/s/{site}/stat/device", cookies=cookies)
+            devices = dev_r.json().get("data", []) if dev_r.status_code == 200 else []
+            # Clients
+            sta_r = uclient.get(f"{base}/api/s/{site}/stat/sta", cookies=cookies)
+            clients = sta_r.json().get("data", []) if sta_r.status_code == 200 else []
+            adopted = sum(1 for d in devices if d.get("adopted"))
+            # Logout — release the session on the controller
+            try:
+                uclient.post(f"{base}/api/logout", cookies=cookies)
+            except Exception:
+                pass
         return {
             "devices": len(devices), "adopted": adopted,
             "clients": len(clients), "status": "online",

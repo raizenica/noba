@@ -75,7 +75,7 @@
             </div>
 
             <label for="theme-selector" class="sr-only">Theme</label>
-            <select id="theme-selector" class="theme-select" x-model="theme" @change="saveSettings()">
+            <select id="theme-selector" class="theme-select" x-model="theme" @change="localStorage.setItem('noba-theme', theme); if (userRole !== 'viewer') saveSettings()">
                 <option value="auto">System (Auto)</option>
                 <option value="default">Operator</option>
                 <option value="catppuccin">Catppuccin</option>
@@ -224,9 +224,9 @@
                             <span class="row-label" x-text="nic.name"></span>
                             <span class="row-val">
                                 <i class="fas fa-arrow-down" style="color:var(--accent);font-size:.55rem" aria-hidden="true"></i>
-                                <span x-text="(nic.rx_bps/1024/1024).toFixed(2) + ' MB/s'"></span>
+                                <span x-text="((nic.rx_bps||0)/1024/1024).toFixed(2) + ' MB/s'"></span>
                                 <i class="fas fa-arrow-up" style="color:var(--warning);font-size:.55rem;margin-left:.3rem" aria-hidden="true"></i>
-                                <span x-text="(nic.tx_bps/1024/1024).toFixed(2) + ' MB/s'"></span>
+                                <span x-text="((nic.tx_bps||0)/1024/1024).toFixed(2) + ' MB/s'"></span>
                             </span>
                         </div>
                     </template>
@@ -540,9 +540,9 @@
                             <span class="row-label" x-text="d.device"></span>
                             <span class="row-val" style="font-size:.72rem">
                                 <i class="fas fa-arrow-down" style="color:var(--accent);font-size:.6rem" aria-hidden="true"></i>
-                                <span x-text="(d.read_bps/1024/1024).toFixed(1) + ' MB/s'"></span>
+                                <span x-text="((d.read_bps||0)/1024/1024).toFixed(1) + ' MB/s'"></span>
                                 <i class="fas fa-arrow-up" style="color:var(--warning);font-size:.6rem;margin-left:.4rem" aria-hidden="true"></i>
-                                <span x-text="(d.write_bps/1024/1024).toFixed(1) + ' MB/s'"></span>
+                                <span x-text="((d.write_bps||0)/1024/1024).toFixed(1) + ' MB/s'"></span>
                             </span>
                         </div>
                     </template>
@@ -1157,7 +1157,7 @@
         <div class="field-2" style="margin-bottom: 1rem;">
             <div>
                 <label class="field-label">Range</label>
-                <select class="field-select" x-model="historyRange" @change="fetchHistory()">
+                <select class="field-select" x-model.number="historyRange" @change="fetchHistory()">
                     <option value="24">Last 24 hours</option>
                     <option value="168">Last 7 days</option>
                     <option value="720">Last 30 days</option>
@@ -1165,7 +1165,7 @@
             </div>
             <div>
                 <label class="field-label">Resolution</label>
-                <select class="field-select" x-model="historyResolution" @change="fetchHistory()">
+                <select class="field-select" x-model.number="historyResolution" @change="fetchHistory()">
                     <option value="60">1 minute</option>
                     <option value="300">5 minutes</option>
                     <option value="3600">1 hour</option>
@@ -2130,31 +2130,31 @@
 
 <!-- Keyboard Shortcuts Modal -->
 <div class="modal-overlay" x-show="showShortcutsModal" x-cloak @click.self="showShortcutsModal=false" @keydown.escape.window="showShortcutsModal=false">
-    <div class="modal" style="max-width:420px">
-        <div class="modal-hdr">
-            <span>Keyboard Shortcuts</span>
-            <button class="modal-close" @click="showShortcutsModal=false" aria-label="Close"><i class="fas fa-times"></i></button>
+    <div class="modal-box" style="max-width:420px">
+        <div class="modal-title">
+            <i class="fas fa-keyboard" style="color:var(--accent)" aria-hidden="true"></i> Keyboard Shortcuts
         </div>
-        <div class="modal-body" style="padding:1rem">
+        <div style="padding:1rem">
             <div style="display:grid;grid-template-columns:auto 1fr;gap:.5rem .8rem;font-size:.8rem">
-                <kbd style="background:var(--surface-2);padding:.2rem .5rem;border-radius:3px;font-family:var(--font-data);text-align:center">S</kbd><span>Toggle Settings</span>
-                <kbd style="background:var(--surface-2);padding:.2rem .5rem;border-radius:3px;font-family:var(--font-data);text-align:center">R</kbd><span>Refresh Stats</span>
-                <kbd style="background:var(--surface-2);padding:.2rem .5rem;border-radius:3px;font-family:var(--font-data);text-align:center">H</kbd><span>Open History Chart</span>
-                <kbd style="background:var(--surface-2);padding:.2rem .5rem;border-radius:3px;font-family:var(--font-data);text-align:center">Esc</kbd><span>Close Modal / Settings</span>
-                <kbd style="background:var(--surface-2);padding:.2rem .5rem;border-radius:3px;font-family:var(--font-data);text-align:center">?</kbd><span>This Help</span>
+                <kbd>S</kbd><span>Toggle Settings</span>
+                <kbd>R</kbd><span>Refresh Stats</span>
+                <kbd>Esc</kbd><span>Close Modal / Settings</span>
+                <kbd>?</kbd><span>This Help</span>
             </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showShortcutsModal=false">Close</button>
         </div>
     </div>
 </div>
 
 <!-- Sessions Modal -->
 <div class="modal-overlay" x-show="showSessionsModal" x-cloak @click.self="showSessionsModal=false" @keydown.escape.window="showSessionsModal=false">
-    <div class="modal" style="max-width:600px">
-        <div class="modal-hdr">
-            <span>Active Sessions</span>
-            <button class="modal-close" @click="showSessionsModal=false" aria-label="Close"><i class="fas fa-times"></i></button>
+    <div class="modal-box" style="max-width:600px">
+        <div class="modal-title">
+            <i class="fas fa-id-badge" style="color:var(--accent)" aria-hidden="true"></i> Active Sessions
         </div>
-        <div class="modal-body" style="padding:1rem">
+        <div style="padding:1rem">
             <div x-show="sessionList.length === 0" class="empty-msg">No active sessions.</div>
             <template x-for="s in sessionList" :key="s.prefix">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid var(--border)">
@@ -2166,6 +2166,9 @@
                     <button class="btn btn-sm btn-danger" style="width:auto" @click="revokeSession(s.prefix)">Revoke</button>
                 </div>
             </template>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showSessionsModal=false">Close</button>
         </div>
     </div>
 </div>

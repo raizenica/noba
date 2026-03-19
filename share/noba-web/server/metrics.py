@@ -122,8 +122,10 @@ _net_lock = threading.Lock()
 # ── Disk I/O / per-NIC tracking ──────────────────────────────────────────────
 _disk_io_prev: dict = {}
 _disk_io_ts: float = 0.0
+_disk_io_lock = threading.Lock()
 _pernic_prev: dict = {}
 _pernic_ts: float = 0.0
+_pernic_lock = threading.Lock()
 
 
 def get_net_io() -> tuple[float, float]:
@@ -391,18 +393,19 @@ def collect_disk_io() -> dict:
         counters = psutil.disk_io_counters(perdisk=True)
         now = time.time()
         result = []
-        if _disk_io_prev and now > _disk_io_ts:
-            dt = now - _disk_io_ts
-            for dev, c in counters.items():
-                if dev.startswith(("loop", "ram", "dm-")):
-                    continue
-                prev = _disk_io_prev.get(dev)
-                if prev:
-                    read_bps = max(0, (c.read_bytes - prev.read_bytes) / dt)
-                    write_bps = max(0, (c.write_bytes - prev.write_bytes) / dt)
-                    result.append({"device": dev, "read_bps": round(read_bps), "write_bps": round(write_bps)})
-        _disk_io_prev = counters
-        _disk_io_ts = now
+        with _disk_io_lock:
+            if _disk_io_prev and now > _disk_io_ts:
+                dt = now - _disk_io_ts
+                for dev, c in counters.items():
+                    if dev.startswith(("loop", "ram", "dm-")):
+                        continue
+                    prev = _disk_io_prev.get(dev)
+                    if prev:
+                        read_bps = max(0, (c.read_bytes - prev.read_bytes) / dt)
+                        write_bps = max(0, (c.write_bytes - prev.write_bytes) / dt)
+                        result.append({"device": dev, "read_bps": round(read_bps), "write_bps": round(write_bps)})
+            _disk_io_prev = counters
+            _disk_io_ts = now
         return {"diskIo": result}
     except Exception:
         return {"diskIo": []}
@@ -415,18 +418,19 @@ def collect_per_interface_net() -> dict:
         counters = psutil.net_io_counters(pernic=True)
         now = time.time()
         result = []
-        if _pernic_prev and now > _pernic_ts:
-            dt = now - _pernic_ts
-            for nic, c in counters.items():
-                if nic == "lo" or nic.startswith(("veth", "br-", "docker", "virbr")):
-                    continue
-                prev = _pernic_prev.get(nic)
-                if prev:
-                    rx_bps = max(0, (c.bytes_recv - prev.bytes_recv) / dt)
-                    tx_bps = max(0, (c.bytes_sent - prev.bytes_sent) / dt)
-                    result.append({"name": nic, "rx_bps": round(rx_bps), "tx_bps": round(tx_bps)})
-        _pernic_prev = counters
-        _pernic_ts = now
+        with _pernic_lock:
+            if _pernic_prev and now > _pernic_ts:
+                dt = now - _pernic_ts
+                for nic, c in counters.items():
+                    if nic == "lo" or nic.startswith(("veth", "br-", "docker", "virbr")):
+                        continue
+                    prev = _pernic_prev.get(nic)
+                    if prev:
+                        rx_bps = max(0, (c.bytes_recv - prev.bytes_recv) / dt)
+                        tx_bps = max(0, (c.bytes_sent - prev.bytes_sent) / dt)
+                        result.append({"name": nic, "rx_bps": round(rx_bps), "tx_bps": round(tx_bps)})
+            _pernic_prev = counters
+            _pernic_ts = now
         return {"netInterfaces": result}
     except Exception:
         return {"netInterfaces": []}

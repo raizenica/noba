@@ -592,7 +592,7 @@ async def api_truenas_vm(request: Request, auth=Depends(_require_operator)):
         vm_id = int(vm_id)
     except (TypeError, ValueError):
         raise HTTPException(400, "Invalid VM ID")
-    if not vm_id or action not in ALLOWED_ACTIONS:
+    if vm_id < 0 or action not in ALLOWED_ACTIONS:
         raise HTTPException(400, "Invalid request")
     cfg = read_yaml_settings()
     if not cfg.get("truenasUrl") or not cfg.get("truenasKey"):
@@ -685,7 +685,8 @@ async def api_run(request: Request, auth=Depends(_require_operator)):
 
             if script == "custom":
                 cfg = read_yaml_settings()
-                act = next((a for a in cfg.get("customActions", []) if a.get("id") == args_in), None)
+                custom_id = args_in if isinstance(args_in, str) else (safe_args[0] if safe_args else "")
+                act = next((a for a in cfg.get("customActions", []) if a.get("id") == custom_id), None)
                 if act and act.get("command"):
                     with open(ACTION_LOG, "a") as f:
                         p = subprocess.Popen(["bash", "-c", act["command"]], stdout=f, stderr=subprocess.STDOUT,

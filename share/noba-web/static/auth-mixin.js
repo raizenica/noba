@@ -83,10 +83,19 @@ function authMixin() {
                         ...(this.userRole === 'admin' ? [this.fetchUsers()] : []),
                     ]);
                     this.connectSSE();
-                    this._logTimer       = setInterval(() => this.fetchLog(), 12000);
-                    this._cloudTimer     = setInterval(() => this.fetchCloudRemotes(), 300000);
+                    if (this._logTimer) clearInterval(this._logTimer);
+                    this._logTimer = setInterval(() => {
+                        if (this.vis && this.vis.logs && !this.showSettings) this.fetchLog();
+                    }, 12000);
+                    if (this._cloudTimer) clearInterval(this._cloudTimer);
+                    this._cloudTimer = setInterval(() => this.fetchCloudRemotes(), 300000);
+                    if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
                     this._heartbeatTimer = setInterval(() => {
-                        if (this._es && this._es.readyState === 2) this.connectSSE();
+                        if (this.connStatus === 'sse' && this._lastHeartbeat &&
+                            Date.now() - this._lastHeartbeat > 15000 &&
+                            !this._reconnecting) {
+                            this.connectSSE();
+                        }
                     }, 5000);
                 } else {
                     this.loginError = data.detail || data.error || 'Login failed';
