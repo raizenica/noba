@@ -177,6 +177,8 @@ function dashboard() {
         k8s: true, gitea: true, gitlab: true, github: true,
         paperless: true, vaultwarden: true,
         weather: true, certExpiry: true, vpn: true,
+        lidarr: true, readarr: true, bazarr: true,
+        dockerUpdates: true, devicePresence: true,
     };
 
     const DEF_BOOKMARKS = 'Router|http://192.168.1.1|fa-network-wired, Pi-hole|http://pi.hole/admin|fa-shield-alt';
