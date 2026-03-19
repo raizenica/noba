@@ -4784,7 +4784,7 @@
                             <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center;min-width:100px"
                                  :style="node.id==='noba' ? 'border-color:var(--accent);box-shadow:0 0 12px var(--accent-dim)' : ''">
                                 <div style="font-weight:600;font-size:.85rem" x-text="node.label"></div>
-                                <span class="badge" :class="node.status==='online'?'bs':node.status==='configured'?'bn':'bd'" x-text="node.status" style="font-size:.6rem;margin-top:4px"></span>
+                                <span class="badge" :class="(node.status==='online'||node.status==='active')?'bs':node.status==='configured'?'bn':node.status==='inactive'?'bw':'bd'" x-text="node.status" style="font-size:.6rem;margin-top:4px"></span>
                                 <div style="font-size:.6rem;color:var(--text-dim);margin-top:2px" x-text="node.type"></div>
                             </div>
                         </template>
