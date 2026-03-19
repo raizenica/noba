@@ -43,6 +43,12 @@ WEB_KEYS = frozenset([
     "proxmoxUrl", "proxmoxUser", "proxmoxTokenName", "proxmoxTokenValue",
     "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",
     "gotifyEnabled",   "gotifyUrl",        "gotifyAppToken",
+    "adguardUrl", "adguardUser", "adguardPass",
+    "jellyfinUrl", "jellyfinKey",
+    "hassUrl", "hassToken",
+    "unifiUrl", "unifiUser", "unifiPass", "unifiSite",
+    "speedtestUrl",
+    "customMetricScripts",
 ])
 _NOTIF_WEB_KEYS = frozenset([
     "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",
@@ -59,11 +65,12 @@ SCRIPT_MAP = {
     "check_updates": "noba-update.sh",
 }
 ALLOWED_ACTIONS = frozenset({"start", "stop", "restart", "poweroff"})
-VALID_ROLES     = ("viewer", "admin")
+VALID_ROLES     = ("viewer", "operator", "admin")
 
 HISTORY_METRICS = [
     "cpu_percent", "mem_percent", "cpu_temp", "gpu_temp",
     "disk_percent", "ping_ms", "net_rx_bytes", "net_tx_bytes",
+    "disk_io_read_bps", "disk_io_write_bps", "custom_metric",
 ]
 
 # ── Security headers ──────────────────────────────────────────────────────────
@@ -82,5 +89,8 @@ SECURITY_HEADERS = {
 }
 
 # ── Stdout buffering ──────────────────────────────────────────────────────────
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except (AttributeError, OSError):
+    pass  # stdout/stderr may not be a TextIOWrapper (e.g. pytest, systemd journal)

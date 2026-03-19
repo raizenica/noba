@@ -274,7 +274,7 @@ done
 # 2. Missing required arguments (Expect Failure: 1)
 run_edge_test 1 "backup-to-nas.sh (missing --source)" ./backup-to-nas.sh --dest /tmp
 run_edge_test 1 "backup-to-nas.sh (missing --dest)" ./backup-to-nas.sh --source /tmp
-run_edge_test 1 "organize-downloads.sh (non-existent dir)" ./organize-downloads.sh --download-dir /does/not/exist
+DOWNLOAD_DIR=/does/not/exist run_edge_test 1 "organize-downloads.sh (non-existent dir)" ./organize-downloads.sh
 
 # 3. checksum.sh with many files (Expect Success: 0)
 run_edge_test 0 "checksum.sh (10 files)" ./checksum.sh "$LARGE_DIR"/*
@@ -283,7 +283,7 @@ run_edge_test 0 "checksum.sh (10 files)" ./checksum.sh "$LARGE_DIR"/*
 TEST_DOWNLOAD_DIR="/tmp/test-downloads"
 mkdir -p "$TEST_DOWNLOAD_DIR"
 cp "$TEST_SPECIAL" "$TEST_DOWNLOAD_DIR/"
-run_edge_test 0 "organize-downloads.sh (special chars)" ./organize-downloads.sh --download-dir "$TEST_DOWNLOAD_DIR" --dry-run
+DOWNLOAD_DIR="$TEST_DOWNLOAD_DIR" run_edge_test 0 "organize-downloads.sh (special chars)" ./organize-downloads.sh --dry-run
 rm -rf "$TEST_DOWNLOAD_DIR"
 
 # 5. config-check.sh with invalid YAML (Expect Failure: 1)

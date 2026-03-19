@@ -231,8 +231,8 @@ def _send_gotify(level: str, msg: str, cfg: dict) -> None:
                 "priority": 8 if level in ("danger", "critical") else 5,
             }).encode()
             req = urllib.request.Request(
-                f"{url}/message?token={token}",
-                data=payload, headers={"Content-Type": "application/json"},
+                f"{url}/message",
+                data=payload, headers={"Content-Type": "application/json", "X-Gotify-Key": token},
             )
             urllib.request.urlopen(req, timeout=5)
     except Exception as e:
@@ -401,4 +401,35 @@ def build_threshold_alerts(stats: dict, read_settings_fn) -> list:
                 alerts.append({"level": lvl, "msg": f"TrueNAS: {txt}"})
                 send_notification(lvl, f"TrueNAS: {txt}", f"tn_{txt[:20]}", read_settings_fn)
 
+    return alerts
+
+
+# ── Historical anomaly detection ─────────────────────────────────────────────
+_ANOMALY_METRICS = {
+    "cpu_percent": ("CPU", "%"),
+    "mem_percent": ("Memory", "%"),
+    "cpu_temp":    ("CPU Temp", "°C"),
+}
+
+
+def check_anomalies(db_instance, read_settings_fn) -> list:
+    """Check recent metrics against historical patterns and notify on anomalies."""
+    alerts = []
+    for metric, (label, unit) in _ANOMALY_METRICS.items():
+        try:
+            points = db_instance.get_history(metric, range_hours=6, resolution=60, anomaly=True)
+            if len(points) < 10:
+                continue
+            latest = points[-1]
+            if not latest.get("anomaly"):
+                continue
+            val = latest["value"]
+            upper = latest.get("upper_band", 0)
+            lower = latest.get("lower_band", 0)
+            direction = "above" if val > upper else "below"
+            msg = f"Anomaly: {label} {val}{unit} ({direction} normal range {lower:.0f}–{upper:.0f}{unit})"
+            alerts.append({"level": "warning", "msg": msg})
+            send_notification("warning", msg, f"anomaly_{metric}", read_settings_fn)
+        except Exception as e:
+            logger.debug("Anomaly check failed for %s: %s", metric, e)
     return alerts

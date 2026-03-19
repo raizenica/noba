@@ -119,6 +119,14 @@ _net_prev: tuple | None = None
 _net_prev_t: float | None = None
 _net_lock = threading.Lock()
 
+# ── Disk I/O / per-NIC tracking ──────────────────────────────────────────────
+_disk_io_prev: dict = {}
+_disk_io_ts: float = 0.0
+_disk_io_lock = threading.Lock()
+_pernic_prev: dict = {}
+_pernic_ts: float = 0.0
+_pernic_lock = threading.Lock()
+
 
 def get_net_io() -> tuple[float, float]:
     global _net_prev, _net_prev_t
@@ -321,6 +329,14 @@ def collect_storage() -> dict:
     return {"disks": disks, "zfs": {"pools": pools}}
 
 
+def _fmt_bytes(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024:
+            return f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}PB"
+
+
 # ── Network / processes ───────────────────────────────────────────────────────
 def collect_network() -> dict:
     rx_bps, tx_bps = get_net_io()
@@ -342,6 +358,23 @@ def collect_network() -> dict:
     except Exception:
         top_cpu = top_mem = []
 
+    # Top I/O processes
+    top_io = []
+    try:
+        io_procs = []
+        for p in psutil.process_iter(["name", "io_counters"]):
+            try:
+                io = p.info.get("io_counters")
+                if io:
+                    total = io.read_bytes + io.write_bytes
+                    if total > 0:
+                        io_procs.append({"name": p.info["name"][:20], "val": _fmt_bytes(total), "_total": total})
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        top_io = [{"name": p["name"], "val": p["val"]} for p in sorted(io_procs, key=lambda x: x["_total"], reverse=True)[:5]]
+    except Exception:
+        pass
+
     return {
         "netRx":    human_bps(rx_bps),
         "netTx":    human_bps(tx_bps),
@@ -349,7 +382,58 @@ def collect_network() -> dict:
         "netTxRaw": tx_bps,
         "topCpu":   top_cpu,
         "topMem":   top_mem,
+        "topIo":    top_io,
     }
+
+
+# ── Disk I/O ─────────────────────────────────────────────────────────────────
+def collect_disk_io() -> dict:
+    global _disk_io_prev, _disk_io_ts
+    try:
+        counters = psutil.disk_io_counters(perdisk=True)
+        now = time.time()
+        result = []
+        with _disk_io_lock:
+            if _disk_io_prev and now > _disk_io_ts:
+                dt = now - _disk_io_ts
+                for dev, c in counters.items():
+                    if dev.startswith(("loop", "ram", "dm-")):
+                        continue
+                    prev = _disk_io_prev.get(dev)
+                    if prev:
+                        read_bps = max(0, (c.read_bytes - prev.read_bytes) / dt)
+                        write_bps = max(0, (c.write_bytes - prev.write_bytes) / dt)
+                        result.append({"device": dev, "read_bps": round(read_bps), "write_bps": round(write_bps)})
+            _disk_io_prev = counters
+            _disk_io_ts = now
+        return {"diskIo": result}
+    except Exception:
+        return {"diskIo": []}
+
+
+# ── Per-interface network ────────────────────────────────────────────────────
+def collect_per_interface_net() -> dict:
+    global _pernic_prev, _pernic_ts
+    try:
+        counters = psutil.net_io_counters(pernic=True)
+        now = time.time()
+        result = []
+        with _pernic_lock:
+            if _pernic_prev and now > _pernic_ts:
+                dt = now - _pernic_ts
+                for nic, c in counters.items():
+                    if nic == "lo" or nic.startswith(("veth", "br-", "docker", "virbr")):
+                        continue
+                    prev = _pernic_prev.get(nic)
+                    if prev:
+                        rx_bps = max(0, (c.bytes_recv - prev.bytes_recv) / dt)
+                        tx_bps = max(0, (c.bytes_sent - prev.bytes_sent) / dt)
+                        result.append({"name": nic, "rx_bps": round(rx_bps), "tx_bps": round(tx_bps)})
+            _pernic_prev = counters
+            _pernic_ts = now
+        return {"netInterfaces": result}
+    except Exception:
+        return {"netInterfaces": []}
 
 
 # ── Services ──────────────────────────────────────────────────────────────────
@@ -417,8 +501,8 @@ def get_containers() -> list:
                     "id":     cid,
                     "name":   name,
                     "image":  c.get("Image", c.get("Repository", "?")).split("/")[-1][:32],
-                    "state":  (c.get("State",  c.get("Status",  "?")) or "?").lower().split()[0],
-                    "status": (c.get("Status", c.get("State",   "?")) or "?").lower().split()[0],
+                    "state":  ((c.get("State",  c.get("Status",  "?")) or "?").lower().split() or ["?"])[0],
+                    "status": ((c.get("Status", c.get("State",   "?")) or "?").lower().split() or ["?"])[0],
                 })
             return res
         except Exception:

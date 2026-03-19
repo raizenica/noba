@@ -1,51 +1,18 @@
-const CACHE_NAME = 'noba-v1';
-
-// Only strict local assets here to ensure install success
-const localUrlsToCache = [
-    '/',
-    '/index.html',
-    '/static/style.css',
-    '/static/app.js',
-    '/static/favicon.ico',
-    '/manifest.json'
-];
-
-self.addEventListener('install', event => {
-    event.waitUntil(
-        caches.open(CACHE_NAME)
-            .then(cache => cache.addAll(localUrlsToCache))
-            .then(() => self.skipWaiting())
-    );
-});
-
-self.addEventListener('activate', event => {
-    event.waitUntil(self.clients.claim());
-});
-
-self.addEventListener('fetch', event => {
-    const url = new URL(event.request.url);
-
-    // CRITICAL: Completely bypass the SW for API calls and SSE streams
-    if (url.pathname.startsWith('/api/')) {
-        return;
+{
+  "name": "NOBA Command Center",
+  "short_name": "NOBA",
+  "description": "Self-hosted server monitoring and automation dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#58a6ff",
+  "orientation": "any",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    {
+      "src": "/static/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
     }
-
-    // Bypass browser extensions
-    if (url.protocol === 'chrome-extension:') {
-        return;
-    }
-
-    event.respondWith(
-        caches.match(event.request).then(response => {
-            // Return cached version if found
-            if (response) return response;
-
-            // Otherwise fetch from network
-            return fetch(event.request).then(networkResponse => {
-                return networkResponse;
-            }).catch(err => {
-                console.warn('Network fetch failed:', err);
-            });
-        })
-    );
-});
+  ]
+}

@@ -208,6 +208,30 @@ class TokenStore:
         with self._lock:
             self._tokens.pop(token, None)
 
+    def list_sessions(self) -> list[dict]:
+        """List all active sessions (token prefix only for security)."""
+        with self._lock:
+            now = datetime.now()
+            sessions = []
+            for tok, (username, role, expires) in self._tokens.items():
+                if expires > now:
+                    sessions.append({
+                        "prefix": tok[:8] + "\u2026",
+                        "username": username,
+                        "role": role,
+                        "expires": expires.isoformat(),
+                    })
+            return sessions
+
+    def revoke_by_prefix(self, prefix: str) -> bool:
+        """Revoke a token by its first 8 characters."""
+        with self._lock:
+            for tok in list(self._tokens):
+                if tok[:8] == prefix[:8]:
+                    del self._tokens[tok]
+                    return True
+            return False
+
     def cleanup(self) -> None:
         now = datetime.now()
         with self._lock:

@@ -260,7 +260,7 @@ install_deps() {
                 dry "Would run: sudo pacman -Sy ${_confirm_pacman[*]:-} ${deps[*]}"
             else
                 say "Installing via pacman..."
-                sudo pacman -Sy "${_confirm_pacman[@]:---noconfirm}" "${deps[@]}"
+                sudo pacman -Sy ${_confirm_pacman[@]+"${_confirm_pacman[@]}"} "${deps[@]}"
             fi
             ;;
         opensuse*|sles)

@@ -59,6 +59,7 @@ done
 # Generate Digest
 # -------------------------------------------------------------------
 digest_file="/tmp/noba_digest_$(date +%s).txt"
+trap 'rm -f "$digest_file"' EXIT
 log_info "Generating daily digest..."
 
 {

@@ -33,6 +33,7 @@ from .metrics import (
     get_rclone_remotes, get_service_status, strip_ansi, validate_service_name,
 )
 from .alerts import dispatch_notifications
+from .plugins import plugin_manager
 from .yaml_config import read_yaml_settings, write_yaml_settings
 
 logger = logging.getLogger("noba")
@@ -65,15 +66,17 @@ def _cleanup_loop() -> None:
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db._init_schema()
     db.audit_log("system_start", "system", f"Noba v{VERSION} starting (FastAPI)")
     bg_collector.start()
     threading.Thread(target=_cleanup_loop, daemon=True, name="token-cleanup").start()
     # warm up psutil CPU measurement
     import psutil
     psutil.cpu_percent(interval=None)
-    logger.info("Noba v%s started", VERSION)
+    plugin_manager.discover()
+    plugin_manager.start()
+    logger.info("Noba v%s started (%d plugins)", VERSION, plugin_manager.count)
     yield
+    plugin_manager.stop()
     get_shutdown_flag().set()
     db.audit_log("system_stop", "system", "Server stopping")
     try:
@@ -133,6 +136,13 @@ def _get_auth_sse(request: Request) -> tuple[str, str]:
     return username, role
 
 
+def _require_operator(request: Request) -> tuple[str, str]:
+    username, role = _get_auth(request)
+    if role not in ("admin", "operator"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return username, role
+
+
 def _require_admin(request: Request) -> tuple[str, str]:
     username, role = _get_auth(request)
     if role != "admin":
@@ -167,9 +177,9 @@ class _CachedStaticFiles(StaticFiles):
     async def __call__(self, scope, receive, send):
         async def _send_with_cache(msg):
             if msg["type"] == "http.response.start":
-                headers = dict(msg.get("headers", []))
-                headers[b"cache-control"] = b"public, max-age=3600"
-                msg["headers"] = list(headers.items())
+                headers = [(k, v) for k, v in msg.get("headers", []) if k != b"cache-control"]
+                headers.append((b"cache-control", b"public, max-age=3600"))
+                msg["headers"] = headers
             await send(msg)
         await super().__call__(scope, receive, _send_with_cache)
 
@@ -187,6 +197,12 @@ def api_health():
 def api_me(auth=Depends(_get_auth)):
     username, role = auth
     return {"username": username, "role": role}
+
+
+# ── /api/plugins ─────────────────────────────────────────────────────────────
+@app.get("/api/plugins")
+def api_plugins(auth=Depends(_get_auth)):
+    return plugin_manager.get_all()
 
 
 # ── /api/stats ────────────────────────────────────────────────────────────────
@@ -208,7 +224,7 @@ async def api_stream(request: Request, auth=Depends(_get_auth_sse)):
     shutdown = get_shutdown_flag()
 
     async def generate():
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         first = await loop.run_in_executor(None, lambda: bg_collector.get() or collect_stats(qs))
         yield f"data: {json.dumps(first)}\n\n"
         last_hb = time.time()
@@ -240,9 +256,10 @@ async def api_settings_post(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
     ok = write_yaml_settings(body)
-    db.audit_log("settings_update", username, "Updated web settings", _client_ip(request))
     if not ok:
+        db.audit_log("settings_update", username, "Settings update failed", _client_ip(request))
         raise HTTPException(500, "Failed to write settings")
+    db.audit_log("settings_update", username, "Updated web settings", _client_ip(request))
     return {"status": "ok"}
 
 
@@ -252,12 +269,13 @@ def api_notif_test(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     cfg = read_yaml_settings()
     notif_cfg = cfg.get("notifications", {})
-    if notif_cfg:
-        threading.Thread(
-            target=dispatch_notifications,
-            args=("info", "This is a test notification from NOBA", notif_cfg, None),
-            daemon=True,
-        ).start()
+    if not notif_cfg:
+        return {"status": "ok", "message": "No notification channels configured"}
+    threading.Thread(
+        target=dispatch_notifications,
+        args=("info", "This is a test notification from NOBA", notif_cfg, None),
+        daemon=True,
+    ).start()
     db.audit_log("test_notification", username, "Test notification triggered", _client_ip(request))
     return {"status": "ok", "message": "Notification sent"}
 
@@ -314,11 +332,31 @@ def api_history_export(metric: str, request: Request, auth=Depends(_get_auth)):
     )
 
 
+# ── /api/history/{metric}/trend ──────────────────────────────────────────────
+@app.get("/api/history/{metric}/trend")
+def api_history_trend(metric: str, request: Request, auth=Depends(_get_auth)):
+    if metric not in HISTORY_METRICS:
+        raise HTTPException(400, "Unknown metric")
+    range_h = _int_param(request, "range", 168, 1, 8760)
+    project_h = _int_param(request, "project", 168, 1, 8760)
+    return db.get_trend(metric, range_hours=range_h, projection_hours=project_h)
+
+
 # ── /api/audit ────────────────────────────────────────────────────────────────
 @app.get("/api/audit")
 def api_audit(request: Request, auth=Depends(_require_admin)):
     limit = _int_param(request, "limit", 100, 1, 1000)
-    return db.get_audit(limit)
+    user_filter = request.query_params.get("user", "")
+    action_filter = request.query_params.get("action", "")
+    try:
+        from_ts = int(request.query_params.get("from", 0))
+    except (ValueError, TypeError):
+        from_ts = 0
+    try:
+        to_ts = int(request.query_params.get("to", 0))
+    except (ValueError, TypeError):
+        to_ts = 0
+    return db.get_audit(limit=limit, username_filter=user_filter, action_filter=action_filter, from_ts=from_ts, to_ts=to_ts)
 
 
 # ── /api/config/backup ────────────────────────────────────────────────────────
@@ -340,16 +378,22 @@ def api_config_backup(request: Request, auth=Depends(_require_admin)):
 @app.post("/api/config/restore")
 async def api_config_restore(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
-    content_length = int(request.headers.get("Content-Length", 0))
-    if content_length > 512 * 1024:
-        raise HTTPException(413, "Upload too large (max 512 KB)")
     raw = await request.body()
+    if len(raw) > 512 * 1024:
+        raise HTTPException(413, "Upload too large (max 512 KB)")
     if not raw:
         raise HTTPException(400, "Empty body")
     try:
-        raw.decode("utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise HTTPException(400, "Invalid file encoding (expected UTF-8 YAML)")
+    import yaml
+    try:
+        parsed = yaml.safe_load(text)
+        if not isinstance(parsed, dict):
+            raise HTTPException(400, "Config must be a YAML mapping")
+    except yaml.YAMLError as e:
+        raise HTTPException(400, f"Invalid YAML: {e}")
     os.makedirs(os.path.dirname(NOBA_YAML), exist_ok=True)
     tmp = NOBA_YAML + ".restore-tmp"
     with open(tmp, "wb") as f:
@@ -443,6 +487,25 @@ async def api_users_post(request: Request, auth=Depends(_require_admin)):
     raise HTTPException(400, "Invalid action")
 
 
+# ── /api/admin/sessions ──────────────────────────────────────────────────────
+@app.get("/api/admin/sessions")
+def api_sessions_list(auth=Depends(_require_admin)):
+    return token_store.list_sessions()
+
+
+@app.post("/api/admin/sessions/revoke")
+async def api_sessions_revoke(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    body = await _read_body(request)
+    prefix = body.get("prefix", "").replace("\u2026", "")
+    if not prefix or len(prefix) < 8:
+        raise HTTPException(400, "Invalid token prefix")
+    ok = token_store.revoke_by_prefix(prefix)
+    if ok:
+        db.audit_log("session_revoke", username, f"Revoked session {prefix}\u2026", _client_ip(request))
+    return {"success": ok}
+
+
 # ── /api/login ────────────────────────────────────────────────────────────────
 @app.post("/api/login")
 async def api_login(request: Request):
@@ -491,7 +554,7 @@ async def api_logout(request: Request):
 
 # ── /api/container-control ────────────────────────────────────────────────────
 @app.post("/api/container-control")
-async def api_container_control(request: Request, auth=Depends(_require_admin)):
+async def api_container_control(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
     body = await _read_body(request)
@@ -519,13 +582,17 @@ async def api_container_control(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/truenas/vm ───────────────────────────────────────────────────────────
 @app.post("/api/truenas/vm")
-async def api_truenas_vm(request: Request, auth=Depends(_get_auth)):
+async def api_truenas_vm(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
     body = await _read_body(request)
     vm_id  = body.get("id")
     action = body.get("action")
-    if not vm_id or action not in ALLOWED_ACTIONS:
+    try:
+        vm_id = int(vm_id)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid VM ID")
+    if vm_id < 0 or action not in ALLOWED_ACTIONS:
         raise HTTPException(400, "Invalid request")
     cfg = read_yaml_settings()
     if not cfg.get("truenasUrl") or not cfg.get("truenasKey"):
@@ -549,7 +616,7 @@ async def api_truenas_vm(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/webhook ──────────────────────────────────────────────────────────────
 @app.post("/api/webhook")
-async def api_webhook(request: Request, auth=Depends(_get_auth)):
+async def api_webhook(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
     body = await _read_body(request)
@@ -558,6 +625,8 @@ async def api_webhook(request: Request, auth=Depends(_get_auth)):
     hook = next((a for a in cfg.get("automations", []) if a.get("id") == hook_id), None)
     if not hook or not hook.get("url"):
         raise HTTPException(404, "Webhook not found in config")
+    if not hook["url"].startswith(("http://", "https://")):
+        raise HTTPException(400, "Invalid webhook URL scheme")
     import urllib.request as _ur
     try:
         method = hook.get("method", "POST").upper()
@@ -583,7 +652,7 @@ async def api_webhook(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/run ──────────────────────────────────────────────────────────────────
 @app.post("/api/run")
-async def api_run(request: Request, auth=Depends(_get_auth)):
+async def api_run(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
     body = await _read_body(request)
@@ -616,7 +685,8 @@ async def api_run(request: Request, auth=Depends(_get_auth)):
 
             if script == "custom":
                 cfg = read_yaml_settings()
-                act = next((a for a in cfg.get("customActions", []) if a.get("id") == args_in), None)
+                custom_id = args_in if isinstance(args_in, str) else (safe_args[0] if safe_args else "")
+                act = next((a for a in cfg.get("customActions", []) if a.get("id") == custom_id), None)
                 if act and act.get("command"):
                     with open(ACTION_LOG, "a") as f:
                         p = subprocess.Popen(["bash", "-c", act["command"]], stdout=f, stderr=subprocess.STDOUT,
@@ -679,7 +749,7 @@ async def api_run(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/cloud-test ───────────────────────────────────────────────────────────
 @app.post("/api/cloud-test")
-async def api_cloud_test(request: Request, auth=Depends(_get_auth)):
+async def api_cloud_test(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
     body = await _read_body(request)
@@ -710,7 +780,7 @@ async def api_cloud_test(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/service-control ──────────────────────────────────────────────────────
 @app.post("/api/service-control")
-async def api_service_control(request: Request, auth=Depends(_get_auth)):
+async def api_service_control(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
     body = await _read_body(request)
@@ -732,6 +802,8 @@ async def api_service_control(request: Request, auth=Depends(_get_auth)):
             stderr = strip_ansi(r.stderr.decode().strip())
             raise HTTPException(422, stderr or f"systemctl {action} {svc} failed")
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Service control error: %s", e)
         db.audit_log("service_control", username, f"{action} {svc} failed: {e}", ip)
@@ -740,10 +812,9 @@ async def api_service_control(request: Request, auth=Depends(_get_auth)):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def _read_body(request: Request) -> dict:
-    content_length = int(request.headers.get("Content-Length", 0))
-    if content_length > MAX_BODY_BYTES:
-        raise HTTPException(413, "Request body too large")
     raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        raise HTTPException(413, "Request body too large")
     try:
         return json.loads(raw)
     except json.JSONDecodeError:

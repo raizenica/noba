@@ -75,14 +75,28 @@ function authMixin() {
                     this.authenticated = true;
                     this.loginPassword = '';
 
+                    await this.fetchUserInfo();
                     await Promise.all([
-                        this.fetchUserInfo(),
                         this.fetchSettings(),
                         this.fetchCloudRemotes(),
                         this.fetchLog(),
+                        ...(this.userRole === 'admin' ? [this.fetchUsers()] : []),
                     ]);
-                    if (this.userRole === 'admin') await this.fetchUsers();
                     this.connectSSE();
+                    if (this._logTimer) clearInterval(this._logTimer);
+                    this._logTimer = setInterval(() => {
+                        if (this.vis && this.vis.logs && !this.showSettings) this.fetchLog();
+                    }, 12000);
+                    if (this._cloudTimer) clearInterval(this._cloudTimer);
+                    this._cloudTimer = setInterval(() => this.fetchCloudRemotes(), 300000);
+                    if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
+                    this._heartbeatTimer = setInterval(() => {
+                        if (this.connStatus === 'sse' && this._lastHeartbeat &&
+                            Date.now() - this._lastHeartbeat > 15000 &&
+                            !this._reconnecting) {
+                            this.connectSSE();
+                        }
+                    }, 5000);
                 } else {
                     this.loginError = data.detail || data.error || 'Login failed';
                 }
@@ -105,6 +119,9 @@ function authMixin() {
                 } catch { /* best-effort */ }
             }
             localStorage.removeItem('noba-token');
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({ type: 'LOGOUT' });
+            }
             this.authenticated = false;
             this.connStatus    = 'offline';
             this._stopCountdown();

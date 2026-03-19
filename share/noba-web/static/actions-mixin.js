@@ -517,5 +517,109 @@ function actionsMixin() {
                 event.target.value = '';
             }
         },
+
+
+        // ── Layout Backup / Restore ─────────────────────────────────────────
+
+        /** Export all noba- localStorage keys as a JSON file. */
+        exportLayoutJSON() {
+            const layout = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith('noba-')) {
+                    layout[key] = localStorage.getItem(key);
+                }
+            }
+            const blob = new Blob([JSON.stringify(layout, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            try {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'noba-layout-backup.json';
+                a.click();
+                this.addToast('Layout exported', 'success');
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+        },
+
+        /** Import a previously exported layout JSON file. */
+        importLayoutJSON(event) {
+            const file = event.target?.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (typeof data !== 'object' || Array.isArray(data)) {
+                        this.addToast('Invalid layout file', 'error');
+                        return;
+                    }
+                    for (const [key, value] of Object.entries(data)) {
+                        if (key.startsWith('noba-') && key !== 'noba-token') {
+                            localStorage.setItem(key, value);
+                        }
+                    }
+                    this.addToast('Layout restored — reloading\u2026', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } catch {
+                    this.addToast('Invalid JSON file', 'error');
+                }
+            };
+            reader.readAsText(file);
+        },
+
+
+        // ── Session Management ──────────────────────────────────────────────
+
+        /** Fetch active sessions (admin only). */
+        async fetchSessions() {
+            try {
+                const res = await fetch('/api/admin/sessions', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.sessionList = await res.json();
+            } catch (e) {
+                this.addToast('Failed to fetch sessions: ' + e.message, 'error');
+            }
+        },
+
+        /** Revoke a session by token prefix. */
+        async revokeSession(prefix) {
+            try {
+                const res = await fetch('/api/admin/sessions/revoke', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ prefix }),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.addToast('Session revoked', 'success');
+                await this.fetchSessions();
+            } catch (e) {
+                this.addToast('Failed to revoke session: ' + e.message, 'error');
+            }
+        },
+
+
+        // ── Filtered Audit ──────────────────────────────────────────────────
+
+        /** Fetch audit log with optional filters. */
+        async fetchFilteredAudit(userFilter, actionFilter, fromTs, toTs) {
+            try {
+                const params = new URLSearchParams();
+                if (userFilter) params.set('user', userFilter);
+                if (actionFilter) params.set('action', actionFilter);
+                if (fromTs) params.set('from', Math.floor(new Date(fromTs).getTime() / 1000));
+                if (toTs) params.set('to', Math.floor(new Date(toTs).getTime() / 1000));
+                const res = await fetch(`/api/audit?${params}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.auditLog = await res.json();
+            } catch (e) {
+                this.addToast('Failed to fetch audit log: ' + e.message, 'error');
+            }
+        },
     };
 }

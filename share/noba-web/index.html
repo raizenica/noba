@@ -35,7 +35,7 @@
         }
     </style>
 </head>
-<body x-data="dashboard()" x-init="init()" :data-theme="theme">
+<body x-data="dashboard()" x-init="init()" :data-theme="theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'nord' : 'default') : theme">
 <div class="page">
 
     <header class="header">
@@ -71,11 +71,12 @@
             <div class="user-chip" x-show="authenticated && username" x-cloak>
                 <i class="fas fa-user-circle" style="color:var(--accent);font-size:.8rem" aria-hidden="true"></i>
                 <span x-text="username" style="color:var(--text)"></span>
-                <span class="badge" :class="userRole==='admin'?'ba':'bn'" x-text="userRole"></span>
+                <span class="badge" :class="userRole==='admin'?'ba':userRole==='operator'?'bs':'bn'" x-text="userRole"></span>
             </div>
 
             <label for="theme-selector" class="sr-only">Theme</label>
-            <select id="theme-selector" class="theme-select" x-model="theme" @change="saveSettings()">
+            <select id="theme-selector" class="theme-select" x-model="theme" @change="localStorage.setItem('noba-theme', theme); if (userRole !== 'viewer') saveSettings()">
+                <option value="auto">System (Auto)</option>
                 <option value="default">Operator</option>
                 <option value="catppuccin">Catppuccin</option>
                 <option value="tokyo">Tokyo Night</option>
@@ -110,7 +111,7 @@
 
     <div class="alerts" role="alert" x-show="visibleAlerts && visibleAlerts.length > 0" x-cloak>
         <template x-for="a in visibleAlerts" :key="a.msg">
-            <div class="alert" :class="a.level">
+            <div class="alert" :class="a.level" :data-msg="a.msg" style="transition:transform .2s,opacity .2s">
                 <i class="fas" :class="a.level==='danger' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'" aria-hidden="true"></i>
                 <span x-text="a.msg" style="flex:1"></span>
                 <button class="alert-dismiss" @click="dismissAlert(a.msg)" :aria-label="'Dismiss: ' + a.msg">×</button>
@@ -217,6 +218,19 @@
                     <span class="row-label">Default IP</span>
                     <span class="row-val copy-hover" @click="copyVal(defaultIp, $event)" x-text="defaultIp || '--'" title="Copy IP" role="button" tabindex="0" @keyup.enter="copyVal(defaultIp, $event)"></span>
                 </div>
+                <div x-show="netInterfaces && netInterfaces.length > 0" style="margin-top:.5rem;padding-top:.5rem;border-top:1px dashed var(--border)">
+                    <template x-for="nic in netInterfaces" :key="nic.name">
+                        <div class="row" style="font-size:.72rem">
+                            <span class="row-label" x-text="nic.name"></span>
+                            <span class="row-val">
+                                <i class="fas fa-arrow-down" style="color:var(--accent);font-size:.55rem" aria-hidden="true"></i>
+                                <span x-text="((nic.rx_bps||0)/1024/1024).toFixed(2) + ' MB/s'"></span>
+                                <i class="fas fa-arrow-up" style="color:var(--warning);font-size:.55rem;margin-left:.3rem" aria-hidden="true"></i>
+                                <span x-text="((nic.tx_bps||0)/1024/1024).toFixed(2) + ' MB/s'"></span>
+                            </span>
+                        </div>
+                    </template>
+                </div>
             </div>
         </div>
 
@@ -271,9 +285,9 @@
                             <span class="row-label">Active Apps</span>
                             <span class="row-val" x-text="(truenas.apps || []).filter(a => a.state === 'RUNNING').length + ' / ' + (truenas.apps || []).length"></span>
                         </div>
-                        <div class="row" x-show="truenas.alerts.length > 0">
+                        <div class="row" x-show="(truenas.alerts || []).length > 0">
                             <span class="row-label">Hardware Alerts</span>
-                            <span class="badge bd" x-text="truenas.alerts.length"></span>
+                            <span class="badge bd" x-text="(truenas.alerts || []).length"></span>
                         </div>
 
                         <div x-show="truenas.vms && truenas.vms.length > 0" style="margin-top:.8rem;padding-top:.6rem;border-top:1px dashed var(--border)">
@@ -283,7 +297,7 @@
                                     <div class="ct-row" style="padding:.4rem .6rem">
                                         <div class="status-dot" :class="vm.state==='RUNNING'?'dot-up':'dot-down'" :aria-label="vm.state"></div>
                                         <span class="ct-name" x-text="vm.name"></span>
-                                        <div class="svc-btns" role="group" :aria-label="vm.name + ' controls'">
+                                        <div class="svc-btns" role="group" :aria-label="vm.name + ' controls'" x-show="userRole==='admin'||userRole==='operator'">
                                             <button class="svc-btn" title="Start" aria-label="Start VM" :disabled="vm.state==='RUNNING'" @click="vmAction(vm.id, vm.name, 'start')">
                                                 <i class="fas fa-play" aria-hidden="true"></i>
                                             </button>
@@ -511,6 +525,32 @@
             </div>
         </div>
 
+        <!-- ── Disk I/O ──────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-diskio" x-show="vis.diskIo">
+            <div class="card-hdr">
+                <i class="fas fa-hdd card-icon" aria-hidden="true"></i>
+                <span class="card-title">Disk I/O</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.diskIo?'is-collapsed':''" @click="toggleCollapse('diskIo')" :aria-expanded="!collapsed.diskIo" aria-label="Toggle Disk I/O"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.diskIo">
+                <div x-show="diskIo && diskIo.length > 0">
+                    <template x-for="d in diskIo" :key="d.device">
+                        <div class="row">
+                            <span class="row-label" x-text="d.device"></span>
+                            <span class="row-val" style="font-size:.72rem">
+                                <i class="fas fa-arrow-down" style="color:var(--accent);font-size:.6rem" aria-hidden="true"></i>
+                                <span x-text="((d.read_bps||0)/1024/1024).toFixed(1) + ' MB/s'"></span>
+                                <i class="fas fa-arrow-up" style="color:var(--warning);font-size:.6rem;margin-left:.4rem" aria-hidden="true"></i>
+                                <span x-text="((d.write_bps||0)/1024/1024).toFixed(1) + ' MB/s'"></span>
+                            </span>
+                        </div>
+                    </template>
+                </div>
+                <div x-show="!diskIo || diskIo.length === 0" class="empty-msg">No disk I/O data.</div>
+            </div>
+        </div>
+
         <div class="card" data-id="card-radar" x-show="vis.radar">
             <div class="card-hdr">
                 <i class="fas fa-satellite-dish card-icon" aria-hidden="true"></i>
@@ -594,7 +634,123 @@
                             </div>
                         </template>
                     </div>
+                    <div>
+                        <div class="proc-hdr">Top I/O</div>
+                        <template x-for="(p, i) in topIo" :key="'io-'+i">
+                            <div class="proc-row">
+                                <span class="proc-n" x-text="p.name"></span>
+                                <span class="cpu-col" x-text="p.val"></span>
+                            </div>
+                        </template>
+                    </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- ── AdGuard Home ──────────────────────────────────────────────── -->
+        <div class="card" data-id="card-adguard" x-show="vis.adguard && adguardUrl">
+            <div class="card-hdr">
+                <i class="fas fa-shield-alt card-icon" aria-hidden="true"></i>
+                <span class="card-title">AdGuard Home</span>
+                <span class="badge" :class="adguard && adguard.status==='enabled'?'bs':'bn'" x-text="adguard ? adguard.status : 'offline'" style="margin-left:auto;margin-right:.25rem"></span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.adguard?'is-collapsed':''" @click="toggleCollapse('adguard')" :aria-expanded="!collapsed.adguard" aria-label="Toggle AdGuard"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.adguard">
+                <template x-if="adguard">
+                    <div>
+                        <div class="row"><span class="row-label">DNS Queries</span><span class="row-val" x-text="(adguard.queries||0).toLocaleString()"></span></div>
+                        <div class="row"><span class="row-label">Blocked</span><span class="row-val" x-text="(adguard.blocked||0).toLocaleString()"></span></div>
+                        <div class="row"><span class="row-label">Block Rate</span><span class="row-val" x-text="(adguard.percent||0) + '%'"></span></div>
+                    </div>
+                </template>
+                <div x-show="!adguard" class="empty-msg">AdGuard data unavailable.</div>
+            </div>
+        </div>
+
+        <!-- ── Jellyfin ──────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-jellyfin" x-show="vis.jellyfin && jellyfinUrl">
+            <div class="card-hdr">
+                <i class="fas fa-film card-icon" aria-hidden="true"></i>
+                <span class="card-title">Jellyfin</span>
+                <span class="badge" :class="jellyfin && jellyfin.status==='online'?'bs':'bn'" x-text="jellyfin ? jellyfin.status : 'offline'" style="margin-left:auto;margin-right:.25rem"></span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.jellyfin?'is-collapsed':''" @click="toggleCollapse('jellyfin')" :aria-expanded="!collapsed.jellyfin" aria-label="Toggle Jellyfin"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.jellyfin">
+                <template x-if="jellyfin">
+                    <div>
+                        <div class="row"><span class="row-label">Active Streams</span><span class="row-val" x-text="jellyfin.streams||0"></span></div>
+                        <div class="row"><span class="row-label">Movies</span><span class="row-val" x-text="(jellyfin.movies||0).toLocaleString()"></span></div>
+                        <div class="row"><span class="row-label">Series</span><span class="row-val" x-text="jellyfin.series||0"></span></div>
+                        <div class="row"><span class="row-label">Episodes</span><span class="row-val" x-text="(jellyfin.episodes||0).toLocaleString()"></span></div>
+                    </div>
+                </template>
+                <div x-show="!jellyfin" class="empty-msg">Jellyfin data unavailable.</div>
+            </div>
+        </div>
+
+        <!-- ── Home Assistant ────────────────────────────────────────────── -->
+        <div class="card" data-id="card-hass" x-show="vis.hass && hassUrl">
+            <div class="card-hdr">
+                <i class="fas fa-home card-icon" aria-hidden="true"></i>
+                <span class="card-title">Home Assistant</span>
+                <span class="badge" :class="hass && hass.status==='online'?'bs':'bn'" x-text="hass ? hass.status : 'offline'" style="margin-left:auto;margin-right:.25rem"></span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.hass?'is-collapsed':''" @click="toggleCollapse('hass')" :aria-expanded="!collapsed.hass" aria-label="Toggle Home Assistant"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.hass">
+                <template x-if="hass">
+                    <div>
+                        <div class="row"><span class="row-label">Entities</span><span class="row-val" x-text="hass.entities||0"></span></div>
+                        <div class="row"><span class="row-label">Automations</span><span class="row-val" x-text="hass.automations||0"></span></div>
+                        <div class="row"><span class="row-label">Lights On</span><span class="row-val" x-text="hass.lights_on||0"></span></div>
+                        <div class="row"><span class="row-label">Switches On</span><span class="row-val" x-text="hass.switches_on||0"></span></div>
+                    </div>
+                </template>
+                <div x-show="!hass" class="empty-msg">Home Assistant data unavailable.</div>
+            </div>
+        </div>
+
+        <!-- ── UniFi Network ─────────────────────────────────────────────── -->
+        <div class="card" data-id="card-unifi" x-show="vis.unifi && unifiUrl">
+            <div class="card-hdr">
+                <i class="fas fa-wifi card-icon" aria-hidden="true"></i>
+                <span class="card-title">UniFi Network</span>
+                <span class="badge" :class="unifi && unifi.status==='online'?'bs':'bn'" x-text="unifi ? unifi.status : 'offline'" style="margin-left:auto;margin-right:.25rem"></span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.unifi?'is-collapsed':''" @click="toggleCollapse('unifi')" :aria-expanded="!collapsed.unifi" aria-label="Toggle UniFi"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.unifi">
+                <template x-if="unifi">
+                    <div>
+                        <div class="row"><span class="row-label">Devices</span><span class="row-val" x-text="(unifi.adopted||0) + ' / ' + (unifi.devices||0)"></span></div>
+                        <div class="row"><span class="row-label">Clients</span><span class="row-val" x-text="unifi.clients||0"></span></div>
+                    </div>
+                </template>
+                <div x-show="!unifi" class="empty-msg">UniFi data unavailable.</div>
+            </div>
+        </div>
+
+        <!-- ── Speedtest ─────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-speedtest" x-show="vis.speedtest && speedtestUrl">
+            <div class="card-hdr">
+                <i class="fas fa-tachometer-alt card-icon" aria-hidden="true"></i>
+                <span class="card-title">Speedtest</span>
+                <span class="badge" :class="speedtest && speedtest.status==='online'?'bs':'bn'" x-text="speedtest ? speedtest.status : 'offline'" style="margin-left:auto;margin-right:.25rem"></span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.speedtest?'is-collapsed':''" @click="toggleCollapse('speedtest')" :aria-expanded="!collapsed.speedtest" aria-label="Toggle Speedtest"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.speedtest">
+                <template x-if="speedtest">
+                    <div>
+                        <div class="row"><span class="row-label">Download</span><span class="row-val" x-text="(speedtest.download||0) + ' Mbps'"></span></div>
+                        <div class="row"><span class="row-label">Upload</span><span class="row-val" x-text="(speedtest.upload||0) + ' Mbps'"></span></div>
+                        <div class="row"><span class="row-label">Ping</span><span class="row-val" x-text="(speedtest.ping||0) + ' ms'"></span></div>
+                        <div class="row" x-show="speedtest.server"><span class="row-label">Server</span><span class="row-val" x-text="speedtest.server"></span></div>
+                    </div>
+                </template>
+                <div x-show="!speedtest" class="empty-msg">Speedtest data unavailable.</div>
             </div>
         </div>
 
@@ -619,7 +775,7 @@
                             <span class="ct-name" x-text="c.name"></span>
                             <span class="ct-img" x-text="c.image"></span>
                             <span class="badge" :class="c.state==='running'?'bs':c.state==='exited'?'bw':'bn'" x-text="c.state"></span>
-                            <div class="svc-actions" x-show="userRole==='admin'">
+                            <div class="svc-actions" x-show="userRole==='admin'||userRole==='operator'">
                                 <button class="svc-btn" title="Start"   :disabled="c.state==='running'" @click.stop="containerAction(c.name,'start')"   aria-label="Start container"><i class="fas fa-play"   aria-hidden="true"></i></button>
                                 <button class="svc-btn" title="Stop"    :disabled="c.state!=='running'" @click.stop="containerAction(c.name,'stop')"    aria-label="Stop container"><i class="fas fa-stop"   aria-hidden="true"></i></button>
                                 <button class="svc-btn" title="Restart" :disabled="c.state!=='running'" @click.stop="containerAction(c.name,'restart')" aria-label="Restart container"><i class="fas fa-sync" aria-hidden="true"></i></button>
@@ -715,7 +871,7 @@
                                 <span class="badge"
                                       :class="{'bs':s.status==='active'||s.status==='timer-active','bw':s.status==='inactive','bd':s.status==='failed'||s.status==='not-found'}"
                                       x-text="s.status==='timer-active'?'active (timer)':s.status"></span>
-                                <div class="svc-btns" role="group" :aria-label="s.name.replace('.service','') + ' controls'">
+                                <div class="svc-btns" role="group" :aria-label="s.name.replace('.service','') + ' controls'" x-show="userRole==='admin'||userRole==='operator'">
                                     <button class="svc-btn" title="Start" aria-label="Start service" :disabled="s.status==='active'||s.status==='timer-active'" @click="svcAction(s,'start')">
                                         <i class="fas fa-play" aria-hidden="true"></i>
                                     </button>
@@ -802,7 +958,9 @@
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
             <div class="card-body action-list" id="body-actions" x-show="!collapsed.actions">
-
+                <div x-show="userRole==='viewer'" class="empty-msg">Operator or admin role required.</div>
+                <template x-if="userRole==='admin'||userRole==='operator'">
+                <div>
                 <template x-for="act in customActions" :key="act.id">
                     <button class="btn btn-primary" :disabled="runningScript" @click="runScript('custom', act.id)" style="margin-bottom:.4rem">
                         <i class="fas" :class="act.icon || 'fa-play'" aria-hidden="true"></i>
@@ -936,6 +1094,8 @@
                 <button class="btn" :disabled="runningScript" @click="runScript('check_updates')">
                     <i class="fas fa-arrow-circle-up" aria-hidden="true"></i> Check Updates
                 </button>
+                </div>
+                </template>
             </div>
         </div>
 
@@ -963,6 +1123,22 @@
             </div>
         </div>
 
+        <!-- ── Plugin Cards ──────────────────────────────────────────────── -->
+        <template x-for="plug in plugins" :key="plug.id">
+            <div class="card" :data-id="'card-plugin-' + plug.id">
+                <div class="card-hdr">
+                    <i class="fas card-icon" :class="plug.icon || 'fa-puzzle-piece'" aria-hidden="true"></i>
+                    <span class="card-title" x-text="plug.name"></span>
+                    <span x-show="plug.error" class="badge bd" style="font-size:.55rem">error</span>
+                    <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+                </div>
+                <div class="card-body">
+                    <div x-show="plug.error" style="color:var(--danger);font-size:.78rem" x-text="plug.error"></div>
+                    <div x-show="plug.html && !plug.error" x-html="plug.html"></div>
+                </div>
+            </div>
+        </template>
+
     </div></main>
 </div><div x-show="showHistoryModal"
      class="modal-overlay"
@@ -981,7 +1157,7 @@
         <div class="field-2" style="margin-bottom: 1rem;">
             <div>
                 <label class="field-label">Range</label>
-                <select class="field-select" x-model="historyRange" @change="fetchHistory()">
+                <select class="field-select" x-model.number="historyRange" @change="fetchHistory()">
                     <option value="24">Last 24 hours</option>
                     <option value="168">Last 7 days</option>
                     <option value="720">Last 30 days</option>
@@ -989,7 +1165,7 @@
             </div>
             <div>
                 <label class="field-label">Resolution</label>
-                <select class="field-select" x-model="historyResolution" @change="fetchHistory()">
+                <select class="field-select" x-model.number="historyResolution" @change="fetchHistory()">
                     <option value="60">1 minute</option>
                     <option value="300">5 minutes</option>
                     <option value="3600">1 hour</option>
@@ -998,7 +1174,7 @@
         </div>
 
         <div style="margin-bottom:.8rem; display:flex; align-items:center; gap:.5rem;">
-            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.82rem;color:var(--fg-dim)">
+            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.82rem;color:var(--text-muted)">
                 <input type="checkbox"
                        x-model="historyAnomalyEnabled"
                        @change="fetchHistory()"
@@ -1035,6 +1211,16 @@
         <div class="modal-title" id="audit-title">
             <i class="fas fa-user-secret" style="color:var(--accent)" aria-hidden="true"></i>
             Audit Log
+        </div>
+        <div x-data="{ auditUser: '', auditAction: '', auditFrom: '', auditTo: '' }" style="display:flex;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap">
+            <input type="text" class="field-input" placeholder="User" x-model="auditUser" style="width:120px;padding:.3rem .5rem;font-size:.75rem">
+            <input type="text" class="field-input" placeholder="Action" x-model="auditAction" style="width:140px;padding:.3rem .5rem;font-size:.75rem">
+            <input type="date" class="field-input" x-model="auditFrom" style="width:140px;padding:.3rem .5rem;font-size:.75rem">
+            <input type="date" class="field-input" x-model="auditTo" style="width:140px;padding:.3rem .5rem;font-size:.75rem">
+            <button class="btn btn-sm" style="width:auto" @click="fetchFilteredAudit(auditUser, auditAction, auditFrom, auditTo)">
+                <i class="fas fa-filter" aria-hidden="true"></i> Filter
+            </button>
+            <button class="btn btn-sm" style="width:auto" @click="auditUser=''; auditAction=''; auditFrom=''; auditTo=''; openAuditModal()">Clear</button>
         </div>
         <div style="max-height:60vh; overflow-y:auto; border: 1px solid var(--border); border-radius: 4px; -webkit-overflow-scrolling: touch;">
             <table class="data-table">
@@ -1082,7 +1268,7 @@
         </div>
 
         <template x-if="smartData.length === 0">
-            <p style="color:var(--fg-dim);text-align:center;padding:1.5rem 0">
+            <p style="color:var(--text-muted);text-align:center;padding:1.5rem 0">
                 No SMART data available. Ensure <code>smartctl</code> is installed and disks are accessible.
             </p>
         </template>
@@ -1092,7 +1278,7 @@
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
                     <div>
                         <strong x-text="disk.device"></strong>
-                        <span style="color:var(--fg-dim);font-size:.82rem;margin-left:.5rem" x-text="disk.model || ''"></span>
+                        <span style="color:var(--text-muted);font-size:.82rem;margin-left:.5rem" x-text="disk.model || ''"></span>
                     </div>
                     <template x-if="!disk.error">
                         <span class="badge" :class="smartRiskClass(disk.risk_score)" x-text="smartRiskLabel(disk.risk_score)"></span>
@@ -1199,6 +1385,9 @@
             <button class="stab" role="tab" :aria-selected="settingsTab==='users'" :class="settingsTab==='users'?'active':''" @click="settingsTab='users'; fetchUsers()" x-show="userRole==='admin'">
                 <i class="fas fa-users" aria-hidden="true"></i> Users
             </button>
+            <button class="stab" role="tab" :aria-selected="settingsTab==='alerts'" :class="settingsTab==='alerts'?'active':''" @click="settingsTab='alerts'" x-show="userRole==='admin'||userRole==='operator'">
+                <i class="fas fa-bell" aria-hidden="true"></i> Alerts
+            </button>
             <button class="stab" role="tab" :aria-selected="settingsTab==='shortcuts'" :class="settingsTab==='shortcuts'?'active':''" @click="settingsTab='shortcuts'">
                 <i class="fas fa-keyboard" aria-hidden="true"></i> Shortcuts
             </button>
@@ -1227,6 +1416,12 @@
                     <label class="toggle-item"><input type="checkbox" x-model="vis.actions"> Quick Actions</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.bookmarks"> Homelab Links</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.proxmox"> Proxmox VE</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.adguard"> AdGuard Home</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.jellyfin"> Jellyfin</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.hass"> Home Assistant</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.unifi"> UniFi</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.speedtest"> Speedtest</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.diskIo"> Disk I/O</label>
                 </div>
             </div>
         </div>
@@ -1273,6 +1468,19 @@
                     <label class="btn btn-sm btn-secondary" style="cursor:pointer" title="Upload a previously exported config.yaml">
                         <i class="fas fa-upload" aria-hidden="true"></i> Restore config.yaml
                         <input type="file" accept=".yaml,.yml" style="display:none" @change="uploadConfigRestore($event)">
+                    </label>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Dashboard Layout Backup</span>
+                <p class="help-text" style="margin-bottom:.6rem">Export or import card positions, collapsed state, and visibility settings.</p>
+                <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+                    <button class="btn btn-sm" @click="exportLayoutJSON()">
+                        <i class="fas fa-download" aria-hidden="true"></i> Export Layout
+                    </button>
+                    <label class="btn btn-sm btn-secondary" style="cursor:pointer">
+                        <i class="fas fa-upload" aria-hidden="true"></i> Import Layout
+                        <input type="file" accept=".json" style="display:none" @change="importLayoutJSON($event)">
                     </label>
                 </div>
             </div>
@@ -1426,7 +1634,7 @@
             </div>
             <div class="s-section">
                 <span class="s-label">Voice Alerts</span>
-                <p style="font-size:.8rem;color:var(--fg-dim);margin:.2rem 0 .5rem">
+                <p style="font-size:.8rem;color:var(--text-muted);margin:.2rem 0 .5rem">
                     Speak critical (danger) alerts aloud using the browser's built-in speech synthesis.
                     Requires a user gesture to activate the first time.
                 </p>
@@ -1461,6 +1669,93 @@
                     </div>
                 </div>
             </div>
+            <div class="s-section">
+                <span class="s-label">AdGuard Home</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-adguard-url">URL</label>
+                        <input id="s-adguard-url" class="field-input" type="url" x-model="adguardUrl" placeholder="http://192.168.1.1:3000">
+                    </div>
+                    <div style="display:flex;gap:.5rem">
+                        <div style="flex:1">
+                            <label class="field-label" for="s-adguard-user">Username</label>
+                            <input id="s-adguard-user" class="field-input" type="text" x-model="adguardUser" autocomplete="username">
+                        </div>
+                        <div style="flex:1">
+                            <label class="field-label" for="s-adguard-pass">Password</label>
+                            <div class="reveal-wrap">
+                                <input id="s-adguard-pass" class="field-input" type="password" x-model="adguardPass" autocomplete="off">
+                                <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Jellyfin</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-jellyfin-url">URL</label>
+                        <input id="s-jellyfin-url" class="field-input" type="url" x-model="jellyfinUrl" placeholder="http://192.168.1.50:8096">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-jellyfin-key">API Key</label>
+                        <div class="reveal-wrap">
+                            <input id="s-jellyfin-key" class="field-input" type="password" x-model="jellyfinKey" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Home Assistant</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-hass-url">URL</label>
+                        <input id="s-hass-url" class="field-input" type="url" x-model="hassUrl" placeholder="http://192.168.1.50:8123">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-hass-token">Long-Lived Access Token</label>
+                        <div class="reveal-wrap">
+                            <input id="s-hass-token" class="field-input" type="password" x-model="hassToken" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">UniFi Controller</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-unifi-url">URL</label>
+                        <input id="s-unifi-url" class="field-input" type="url" x-model="unifiUrl" placeholder="https://192.168.1.1:8443">
+                    </div>
+                    <div style="display:flex;gap:.5rem">
+                        <div style="flex:1">
+                            <label class="field-label" for="s-unifi-user">Username</label>
+                            <input id="s-unifi-user" class="field-input" type="text" x-model="unifiUser" autocomplete="username">
+                        </div>
+                        <div style="flex:1">
+                            <label class="field-label" for="s-unifi-pass">Password</label>
+                            <div class="reveal-wrap">
+                                <input id="s-unifi-pass" class="field-input" type="password" x-model="unifiPass" autocomplete="off">
+                                <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top:.5rem">
+                    <label class="field-label" for="s-unifi-site">Site</label>
+                    <input id="s-unifi-site" class="field-input" type="text" x-model="unifiSite" placeholder="default" style="max-width:200px">
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Speedtest Tracker</span>
+                <div>
+                    <label class="field-label" for="s-speedtest-url">URL</label>
+                    <input id="s-speedtest-url" class="field-input" type="url" x-model="speedtestUrl" placeholder="http://192.168.1.50:8765">
+                </div>
+            </div>
         </div>
 
         <div x-show="settingsTab==='cloud'" role="tabpanel">
@@ -1482,6 +1777,9 @@
         <div x-show="settingsTab==='users' && userRole==='admin'" role="tabpanel">
             <div class="s-section">
                 <span class="s-label">User Management</span>
+                <button class="btn btn-sm" @click="showSessionsModal=true; fetchSessions()" style="margin-bottom:.75rem;width:auto">
+                    <i class="fas fa-key" aria-hidden="true"></i> Active Sessions
+                </button>
                 <div x-show="showAddUserForm" class="add-user-form" style="margin-bottom:1rem;border:1px solid var(--border);padding:1rem;border-radius:4px">
                     <div class="field-2">
                         <div>
@@ -1497,6 +1795,7 @@
                         <label class="field-label" for="new-role">Role</label>
                         <select id="new-role" x-model="newRole" class="theme-select">
                             <option value="viewer">viewer</option>
+                            <option value="operator">operator</option>
                             <option value="admin">admin</option>
                         </select>
                         <button class="btn btn-sm btn-primary" @click="addUser()" style="margin-left:1rem"><i class="fas fa-check" aria-hidden="true"></i> Save</button>
@@ -1534,6 +1833,168 @@
             </div>
         </div>
 
+        <!-- ── Alert Rules ──────────────────────────────────────────────── -->
+        <div x-show="settingsTab==='alerts'" role="tabpanel" x-data="{ editIdx: -1, draft: {} }">
+            <div class="s-section">
+                <span class="s-label">Alert Rules</span>
+                <p style="font-size:.78rem;color:var(--text-muted);margin-bottom:1rem">
+                    Create rules that trigger notifications and optional self-healing actions when metric conditions are met.
+                </p>
+
+                <!-- Existing rules list -->
+                <template x-for="(rule, idx) in alertRules" :key="idx">
+                    <div class="alert-rule-card" style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:.85rem 1rem;margin-bottom:.65rem">
+                        <template x-if="editIdx !== idx">
+                            <div>
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+                                    <div style="display:flex;align-items:center;gap:.5rem">
+                                        <span class="badge" :class="rule.severity==='danger'||rule.severity==='critical'?'bd':'bw'" x-text="rule.severity || 'warning'" style="font-size:.6rem"></span>
+                                        <strong style="font-size:.82rem" x-text="rule.id || 'Unnamed Rule'"></strong>
+                                    </div>
+                                    <div style="display:flex;gap:.35rem" x-show="userRole==='admin'">
+                                        <button class="btn btn-sm" style="padding:.3rem .6rem;width:auto" @click="editIdx = idx; draft = JSON.parse(JSON.stringify(rule))">
+                                            <i class="fas fa-pen" aria-hidden="true"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-danger" style="padding:.3rem .6rem;width:auto" @click="alertRules.splice(idx, 1)">
+                                            <i class="fas fa-trash" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div style="font-size:.75rem;color:var(--text-muted);font-family:var(--font-data)" x-text="rule.condition"></div>
+                                <div x-show="rule.message" style="font-size:.75rem;color:var(--text-muted);margin-top:.2rem" x-text="rule.message"></div>
+                                <div x-show="rule.action && rule.action.type" style="font-size:.7rem;color:var(--accent);margin-top:.3rem">
+                                    <i class="fas fa-wrench" aria-hidden="true" style="margin-right:.3rem"></i>
+                                    <span x-text="(rule.action?.type || '') + ': ' + (rule.action?.target || '')"></span>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- Inline edit form -->
+                        <template x-if="editIdx === idx">
+                            <div>
+                                <div class="field-2">
+                                    <div>
+                                        <label class="field-label">Rule ID</label>
+                                        <input class="field-input" x-model="draft.id" placeholder="e.g. cpu-high">
+                                    </div>
+                                    <div>
+                                        <label class="field-label">Severity</label>
+                                        <select class="field-input field-select" x-model="draft.severity">
+                                            <option value="warning">Warning</option>
+                                            <option value="danger">Danger</option>
+                                            <option value="critical">Critical</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div style="margin-bottom:.75rem">
+                                    <label class="field-label">Condition</label>
+                                    <input class="field-input" x-model="draft.condition" placeholder="e.g. cpuPercent > 90">
+                                </div>
+                                <div style="margin-bottom:.75rem">
+                                    <label class="field-label">Notification Message</label>
+                                    <input class="field-input" x-model="draft.message" placeholder="e.g. CPU usage is critically high!">
+                                </div>
+                                <div style="margin-bottom:.75rem">
+                                    <label class="field-label">Notification Channels</label>
+                                    <div class="toggle-grid">
+                                        <template x-for="ch in ['email','telegram','discord','slack','pushover','gotify']" :key="ch">
+                                            <label class="toggle-item">
+                                                <input type="checkbox" :checked="(draft.channels||[]).includes(ch)"
+                                                    @change="draft.channels = draft.channels || [];
+                                                        $event.target.checked
+                                                            ? (draft.channels.includes(ch) || draft.channels.push(ch))
+                                                            : (draft.channels = draft.channels.filter(c => c !== ch))">
+                                                <span x-text="ch" style="text-transform:capitalize"></span>
+                                            </label>
+                                        </template>
+                                    </div>
+                                </div>
+                                <div class="s-section" style="margin-top:.75rem">
+                                    <span class="s-label" style="font-size:.58rem">Self-Healing Action (optional)</span>
+                                    <div class="field-2">
+                                        <div>
+                                            <label class="field-label">Action Type</label>
+                                            <select class="field-input field-select" x-model="draft._actionType"
+                                                x-init="draft._actionType = draft.action?.type || ''"
+                                                @change="if (!$event.target.value) { delete draft.action; } else { draft.action = draft.action || {}; draft.action.type = $event.target.value; }">
+                                                <option value="">None</option>
+                                                <option value="restart_service">Restart Service</option>
+                                                <option value="restart_container">Restart Container</option>
+                                                <option value="run">Run Command</option>
+                                                <option value="webhook">Trigger Webhook</option>
+                                            </select>
+                                        </div>
+                                        <div x-show="draft._actionType">
+                                            <label class="field-label">Target</label>
+                                            <input class="field-input" x-model="draft._actionTarget"
+                                                x-init="draft._actionTarget = draft.action?.target || ''"
+                                                @input="if (draft.action) draft.action.target = $event.target.value"
+                                                :placeholder="draft._actionType==='restart_service' ? 'nginx.service' :
+                                                    draft._actionType==='restart_container' ? 'docker:myapp' :
+                                                    draft._actionType==='run' ? '/usr/local/bin/fix.sh' :
+                                                    draft._actionType==='webhook' ? 'webhook-id' : ''">
+                                        </div>
+                                    </div>
+                                    <div class="field-2" x-show="draft._actionType" style="margin-top:.5rem">
+                                        <div>
+                                            <label class="field-label">Max Retries</label>
+                                            <input class="field-input" type="number" min="1" max="10"
+                                                x-model.number="draft.max_retries" placeholder="3">
+                                        </div>
+                                        <div>
+                                            <label class="field-label">Circuit Break After</label>
+                                            <input class="field-input" type="number" min="2" max="20"
+                                                x-model.number="draft.circuit_break_after" placeholder="5">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="display:flex;gap:.4rem;justify-content:flex-end;margin-top:.75rem">
+                                    <button class="btn btn-sm" style="width:auto" @click="editIdx = -1">Cancel</button>
+                                    <button class="btn btn-sm btn-primary" style="width:auto" @click="
+                                        delete draft._actionType; delete draft._actionTarget;
+                                        if (draft.action && !draft.action.type) delete draft.action;
+                                        alertRules[idx] = draft; editIdx = -1;
+                                    "><i class="fas fa-check" aria-hidden="true"></i> Apply</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <div x-show="alertRules.length === 0" style="text-align:center;color:var(--text-muted);font-size:.8rem;padding:1.5rem 0">
+                    No alert rules configured. Click "Add Rule" to get started.
+                </div>
+
+                <button class="btn btn-sm btn-primary" style="margin-top:.5rem;width:auto" x-show="userRole==='admin'" @click="
+                    alertRules.push({
+                        id: 'rule-' + (alertRules.length + 1),
+                        condition: '',
+                        severity: 'warning',
+                        message: '',
+                        channels: [],
+                        max_retries: 3,
+                        circuit_break_after: 5
+                    });
+                    editIdx = alertRules.length - 1;
+                    draft = JSON.parse(JSON.stringify(alertRules[alertRules.length - 1]));
+                "><i class="fas fa-plus" aria-hidden="true"></i> Add Rule</button>
+            </div>
+
+            <div class="s-section">
+                <span class="s-label">Available Metrics</span>
+                <div style="font-size:.75rem;color:var(--text-muted);font-family:var(--font-data);display:flex;flex-wrap:wrap;gap:.4rem">
+                    <template x-for="m in ['cpuPercent','memPercent','cpuTemp','gpuTemp','disk_percent','ping_ms']" :key="m">
+                        <span class="badge bn" x-text="m" style="font-size:.65rem;cursor:pointer" @click="navigator.clipboard.writeText(m).catch(()=>{})"></span>
+                    </template>
+                </div>
+                <p style="font-size:.7rem;color:var(--text-muted);margin-top:.5rem">
+                    Conditions use the format: <code>metric &gt; value</code>.
+                    Supported operators: <code>&gt; &lt; &gt;= &lt;= == !=</code>.
+                    For array metrics use: <code>services[0].status</code>.
+                </p>
+            </div>
+        </div>
+
         <div x-show="settingsTab==='shortcuts'" role="tabpanel">
             <div class="s-section">
                 <span class="s-label">Keyboard Shortcuts</span>
@@ -1547,7 +2008,7 @@
 
         <div class="settings-footer">
             <button class="btn btn-sm" @click="showSettings=false">Cancel</button>
-            <button class="btn btn-sm btn-primary" @click="applySettings()">
+            <button class="btn btn-sm btn-primary" @click="applySettings()" :disabled="userRole!=='admin'" :title="userRole!=='admin'?'Admin role required':'Save and apply settings'">
                 <i class="fas fa-check" aria-hidden="true"></i> Save &amp; Apply
             </button>
         </div>
@@ -1666,6 +2127,51 @@
     </div>
 </div>
 
+
+<!-- Keyboard Shortcuts Modal -->
+<div class="modal-overlay" x-show="showShortcutsModal" x-cloak @click.self="showShortcutsModal=false" @keydown.escape.window="showShortcutsModal=false">
+    <div class="modal-box" style="max-width:420px">
+        <div class="modal-title">
+            <i class="fas fa-keyboard" style="color:var(--accent)" aria-hidden="true"></i> Keyboard Shortcuts
+        </div>
+        <div style="padding:1rem">
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:.5rem .8rem;font-size:.8rem">
+                <kbd>S</kbd><span>Toggle Settings</span>
+                <kbd>R</kbd><span>Refresh Stats</span>
+                <kbd>Esc</kbd><span>Close Modal / Settings</span>
+                <kbd>?</kbd><span>This Help</span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showShortcutsModal=false">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Sessions Modal -->
+<div class="modal-overlay" x-show="showSessionsModal" x-cloak @click.self="showSessionsModal=false" @keydown.escape.window="showSessionsModal=false">
+    <div class="modal-box" style="max-width:600px">
+        <div class="modal-title">
+            <i class="fas fa-id-badge" style="color:var(--accent)" aria-hidden="true"></i> Active Sessions
+        </div>
+        <div style="padding:1rem">
+            <div x-show="sessionList.length === 0" class="empty-msg">No active sessions.</div>
+            <template x-for="s in sessionList" :key="s.prefix">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid var(--border)">
+                    <div>
+                        <span class="badge bn" x-text="s.prefix" style="font-family:var(--font-data)"></span>
+                        <span x-text="s.username" style="margin-left:.4rem"></span>
+                        <span class="badge" :class="s.role==='admin'?'ba':'bs'" x-text="s.role" style="margin-left:.3rem"></span>
+                    </div>
+                    <button class="btn btn-sm btn-danger" style="width:auto" @click="revokeSession(s.prefix)">Revoke</button>
+                </div>
+            </template>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showSessionsModal=false">Close</button>
+        </div>
+    </div>
+</div>
 
 <div class="toasts" role="log" aria-live="polite" aria-atomic="false">
     <template x-for="t in toasts" :key="t.id">

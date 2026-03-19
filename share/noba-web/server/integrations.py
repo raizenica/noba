@@ -147,11 +147,12 @@ def get_qbit(url: str, user: str, password: str) -> dict | None:
     base   = url.rstrip("/")
     result = {"dl_speed": 0, "up_speed": 0, "active_torrents": 0, "status": "offline"}
     try:
-        r1 = _client.post(
-            f"{base}/api/v2/auth/login",
-            data={"username": user, "password": password},
-            timeout=4,
-        )
+        # Use a separate client to avoid cookie jar contamination on the shared _client
+        with httpx.Client(timeout=4) as qclient:
+            r1 = qclient.post(
+                f"{base}/api/v2/auth/login",
+                data={"username": user, "password": password},
+            )
         cookie = r1.headers.get("set-cookie")
         if not cookie:
             return result
@@ -217,3 +218,126 @@ def get_proxmox(url: str, user: str, token_name: str, token_value: str) -> dict 
     except (httpx.HTTPError, KeyError, ValueError):
         pass
     return result
+
+
+# ── AdGuard Home ─────────────────────────────────────────────────────────────
+def get_adguard(url: str, user: str, password: str):
+    if not url:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {}
+        if user:
+            import base64
+            cred = base64.b64encode(f"{user}:{password}".encode()).decode()
+            hdrs["Authorization"] = f"Basic {cred}"
+        data = _http_get(f"{base}/control/stats", hdrs)
+        if not data:
+            return None
+        queries = data.get("num_dns_queries", 0)
+        blocked = data.get("num_blocked_filtering", 0)
+        pct = round(blocked / queries * 100, 1) if queries else 0
+        return {"queries": queries, "blocked": blocked, "percent": pct, "status": "enabled"}
+    except (httpx.HTTPError, KeyError, ValueError, ZeroDivisionError):
+        return None
+
+
+# ── Jellyfin ─────────────────────────────────────────────────────────────────
+def get_jellyfin(url: str, key: str):
+    if not url or not key:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"X-Emby-Token": key}
+        sessions = _http_get(f"{base}/Sessions", hdrs)
+        counts = _http_get(f"{base}/Items/Counts", hdrs)
+        playing = sum(1 for s in (sessions or []) if s.get("NowPlayingItem"))
+        return {
+            "streams": playing,
+            "movies": (counts or {}).get("MovieCount", 0),
+            "series": (counts or {}).get("SeriesCount", 0),
+            "episodes": (counts or {}).get("EpisodeCount", 0),
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return {"streams": 0, "status": "offline"}
+
+
+# ── Home Assistant ───────────────────────────────────────────────────────────
+def get_hass(url: str, token: str):
+    if not url or not token:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"Authorization": f"Bearer {token}"}
+        states = _http_get(f"{base}/api/states", hdrs)
+        if not isinstance(states, list):
+            return None
+        domains = {}
+        for e in states:
+            d = e.get("entity_id", "").split(".")[0]
+            domains[d] = domains.get(d, 0) + 1
+        lights_on = sum(1 for e in states if e.get("entity_id", "").startswith("light.") and e.get("state") == "on")
+        switches_on = sum(1 for e in states if e.get("entity_id", "").startswith("switch.") and e.get("state") == "on")
+        automations = domains.get("automation", 0)
+        return {
+            "entities": len(states), "automations": automations,
+            "lights_on": lights_on, "switches_on": switches_on,
+            "domains": domains, "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── UniFi Controller ─────────────────────────────────────────────────────────
+def get_unifi(url: str, user: str, password: str, site: str = "default"):
+    if not url or not user:
+        return None
+    try:
+        base = url.rstrip("/")
+        site = site or "default"
+        # Login — use a separate client to avoid cookie jar contamination
+        with httpx.Client(timeout=4, verify=False) as uclient:
+            login_r = uclient.post(f"{base}/api/login", json={"username": user, "password": password}, headers={"Referer": base})
+            if login_r.status_code != 200:
+                return None
+            cookies = login_r.cookies
+            # Devices
+            dev_r = uclient.get(f"{base}/api/s/{site}/stat/device", cookies=cookies)
+            devices = dev_r.json().get("data", []) if dev_r.status_code == 200 else []
+            # Clients
+            sta_r = uclient.get(f"{base}/api/s/{site}/stat/sta", cookies=cookies)
+            clients = sta_r.json().get("data", []) if sta_r.status_code == 200 else []
+            adopted = sum(1 for d in devices if d.get("adopted"))
+            # Logout — release the session on the controller
+            try:
+                uclient.post(f"{base}/api/logout", cookies=cookies)
+            except Exception:
+                pass
+        return {
+            "devices": len(devices), "adopted": adopted,
+            "clients": len(clients), "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Speedtest Tracker ────────────────────────────────────────────────────────
+def get_speedtest(url: str):
+    if not url:
+        return None
+    try:
+        base = url.rstrip("/")
+        data = _http_get(f"{base}/api/speedtest/latest")
+        if not data or not data.get("data"):
+            return None
+        r = data["data"]
+        return {
+            "download": round(r.get("download", 0) / 1_000_000, 1),
+            "upload": round(r.get("upload", 0) / 1_000_000, 1),
+            "ping": round(r.get("ping", 0), 1),
+            "server": r.get("server_name", ""),
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError, TypeError):
+        return None
