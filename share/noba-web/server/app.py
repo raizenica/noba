@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -119,6 +120,19 @@ def _get_auth(request: Request) -> tuple[str, str]:
     return username, role
 
 
+def _get_auth_sse(request: Request) -> tuple[str, str]:
+    """Auth for SSE — also accepts token query param since EventSource can't set headers."""
+    auth = request.headers.get("Authorization", "")
+    username, role = authenticate(auth)
+    if not username:
+        tok = request.query_params.get("token", "")
+        if tok:
+            username, role = token_store.validate(tok)
+    if not username:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return username, role
+
+
 def _require_admin(request: Request) -> tuple[str, str]:
     username, role = _get_auth(request)
     if role != "admin":
@@ -188,7 +202,7 @@ def api_stats(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/stream (SSE) ────────────────────────────────────────────────────────
 @app.get("/api/stream")
-async def api_stream(request: Request, auth=Depends(_get_auth)):
+async def api_stream(request: Request, auth=Depends(_get_auth_sse)):
     qs = {k: [v] for k, v in request.query_params.items()}
     bg_collector.update_qs(qs)
     shutdown = get_shutdown_flag()
@@ -497,8 +511,9 @@ async def api_container_control(request: Request, auth=Depends(_require_admin)):
         except FileNotFoundError:
             continue
         except Exception as e:
+            logger.error("Container control error: %s", e)
             db.audit_log("container_control", username, f"{ct_action} {ct_name} error: {e}", ip)
-            raise HTTPException(500, f"Container control error: {e}")
+            raise HTTPException(500, "Container control error")
     raise HTTPException(404, "No container runtime found")
 
 
@@ -527,8 +542,9 @@ async def api_truenas_vm(request: Request, auth=Depends(_get_auth)):
         db.audit_log("vm_action", username, f"VM {vm_id} {action} {success}", ip)
         return {"success": success}
     except Exception as e:
+        logger.error("VM action failed: %s", e)
         db.audit_log("vm_action", username, f"VM {vm_id} {action} failed: {e}", ip)
-        raise HTTPException(502, f"VM action failed: {e}")
+        raise HTTPException(502, "VM action failed")
 
 
 # ── /api/webhook ──────────────────────────────────────────────────────────────
@@ -560,8 +576,9 @@ async def api_webhook(request: Request, auth=Depends(_get_auth)):
         db.audit_log("webhook", username, f"Webhook {hook_id} {success}", ip)
         return {"success": success}
     except Exception as e:
+        logger.error("Webhook %s failed: %s", hook_id, e)
         db.audit_log("webhook", username, f"Webhook {hook_id} failed: {e}", ip)
-        raise HTTPException(502, f"Webhook failed: {e}")
+        raise HTTPException(502, "Webhook failed")
 
 
 # ── /api/run ──────────────────────────────────────────────────────────────────
@@ -602,20 +619,23 @@ async def api_run(request: Request, auth=Depends(_get_auth)):
                 act = next((a for a in cfg.get("customActions", []) if a.get("id") == args_in), None)
                 if act and act.get("command"):
                     with open(ACTION_LOG, "a") as f:
-                        p = subprocess.Popen(["bash", "-c", act["command"]], stdout=f, stderr=subprocess.STDOUT)
+                        p = subprocess.Popen(["bash", "-c", act["command"]], stdout=f, stderr=subprocess.STDOUT,
+                                             start_new_session=True)
                 else:
                     with open(ACTION_LOG, "a") as f:
                         f.write(f"[ERROR] Custom action not found: {args_in}\n")
                     status = "failed"
             elif script == "speedtest":
                 with open(ACTION_LOG, "a") as f:
-                    p = subprocess.Popen(["speedtest-cli", "--simple"] + safe_args, stdout=f, stderr=subprocess.STDOUT)
+                    p = subprocess.Popen(["speedtest-cli", "--simple"] + safe_args, stdout=f, stderr=subprocess.STDOUT,
+                                         start_new_session=True)
             elif script in SCRIPT_MAP:
                 sfile = os.path.join(SCRIPT_DIR, SCRIPT_MAP[script])
                 if os.path.isfile(sfile):
                     with open(ACTION_LOG, "a") as f:
                         p = subprocess.Popen([sfile, "--verbose"] + safe_args, stdout=f,
-                                             stderr=subprocess.STDOUT, cwd=SCRIPT_DIR)
+                                             stderr=subprocess.STDOUT, cwd=SCRIPT_DIR,
+                                             start_new_session=True)
                 else:
                     with open(ACTION_LOG, "a") as f:
                         f.write(f"[ERROR] Script not found: {sfile}\n")
@@ -630,7 +650,15 @@ async def api_run(request: Request, auth=Depends(_get_auth)):
                     p.wait(timeout=300)
                     status = "done" if p.returncode == 0 else "failed"
                 except subprocess.TimeoutExpired:
-                    p.kill(); p.wait()
+                    try:
+                        os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+                        p.wait(timeout=5)
+                    except (ProcessLookupError, subprocess.TimeoutExpired):
+                        try:
+                            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        p.wait()
                     with open(ACTION_LOG, "a") as f:
                         f.write("\n[ERROR] Script timed out after 300s.\n")
                     status = "timeout"
@@ -676,7 +704,8 @@ async def api_cloud_test(request: Request, auth=Depends(_get_auth)):
     except FileNotFoundError:
         raise HTTPException(424, "rclone not found on this system")
     except Exception as e:
-        raise HTTPException(500, f"Cloud test error: {e}")
+        logger.error("Cloud test error: %s", e)
+        raise HTTPException(500, "Cloud test error")
 
 
 # ── /api/service-control ──────────────────────────────────────────────────────
@@ -700,12 +729,13 @@ async def api_service_control(request: Request, auth=Depends(_get_auth)):
         success = r.returncode == 0
         db.audit_log("service_control", username, f"{action} {svc} (user={is_user}) -> {success}", ip)
         if not success:
-            stderr = r.stderr.decode().strip()
+            stderr = strip_ansi(r.stderr.decode().strip())
             raise HTTPException(422, stderr or f"systemctl {action} {svc} failed")
         return {"success": True}
     except Exception as e:
+        logger.error("Service control error: %s", e)
         db.audit_log("service_control", username, f"{action} {svc} failed: {e}", ip)
-        raise HTTPException(500, f"Service control error: {e}")
+        raise HTTPException(500, "Service control error")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

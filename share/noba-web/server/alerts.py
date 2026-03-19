@@ -36,9 +36,9 @@ class AlertState:
 
     def heal_state(self, rule_id: str) -> dict:
         with self._lock:
-            return self._heals.setdefault(rule_id, {
+            return dict(self._heals.setdefault(rule_id, {
                 "retries": 0, "trigger_times": [], "circuit_open": False, "circuit_open_at": 0,
-            })
+            }))
 
     def update_heal(self, rule_id: str, **kwargs) -> None:
         with self._lock:
@@ -84,14 +84,17 @@ _OPS = {">": operator.gt, "<": operator.lt, ">=": operator.ge, "<=": operator.le
 def _safe_eval(condition_str: str, flat: dict) -> bool:
     s = condition_str.replace("flat['", "").replace('flat["', "").replace("']", "").replace('"]', "")
     m = re.match(r"^\s*([a-zA-Z0-9_\[\]\.]+)\s*(>|<|>=|<=|==|!=)\s*([0-9\.-]+)\s*$", s)
-    if m:
-        metric, op, val = m.groups()
-        if metric in flat:
-            try:
-                return _OPS[op](float(flat[metric]), float(val))
-            except ValueError:
-                pass
-    return False
+    if not m:
+        logger.warning("Malformed alert condition (parse failed): %s", condition_str)
+        return False
+    metric, op, val = m.groups()
+    if metric not in flat:
+        return False
+    try:
+        return _OPS[op](float(flat[metric]), float(val))
+    except (ValueError, TypeError):
+        logger.warning("Malformed alert condition (bad value): %s=%r", metric, flat[metric])
+        return False
 
 
 # ── Self-heal action executor ─────────────────────────────────────────────────

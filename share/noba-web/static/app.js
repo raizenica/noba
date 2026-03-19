@@ -80,6 +80,12 @@ function dashboard() {
     // Monotonic counter for toast IDs (avoids Date.now()+random collisions).
     let _toastSeq = 0;
 
+    /** Parse JSON from localStorage, returning {} on corrupted data. */
+    function _safeParse(raw) {
+        try { return raw ? JSON.parse(raw) : {}; }
+        catch { return {}; }
+    }
+
     // ── 1. Alpine component object ─────────────────────────────────────────────
     return {
 
@@ -89,8 +95,8 @@ function dashboard() {
 
         // ── UI & Visibility ────────────────────────────────────────────────────
         theme: autoTheme,
-        vis:   { ...DEF_VIS, ...JSON.parse(localStorage.getItem('noba-vis') || '{}') },
-        collapsed:  JSON.parse(localStorage.getItem('noba-collapsed') || '{}'),
+        vis:   { ...DEF_VIS, ..._safeParse(localStorage.getItem('noba-vis')) },
+        collapsed:  _safeParse(localStorage.getItem('noba-collapsed')),
         svcFilter:  '',
         settingsTab: 'visibility',
 
@@ -472,9 +478,9 @@ function dashboard() {
             };
 
             this._es.onmessage = (e) => {
+                this._lastHeartbeat = Date.now();
                 try {
                     this._mergeLiveData(JSON.parse(e.data));
-                    this._lastHeartbeat = Date.now();
                 } catch { /* malformed frame — ignore */ }
             };
 

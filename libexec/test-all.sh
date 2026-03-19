@@ -89,9 +89,7 @@ edge_test() {
     local expected_rc=$3
     echo -n "Edge test: $name ... "
 
-    # If expected_rc is non-zero, any non-zero exit is a PASS.
-    # If expected is 0, only 0 is a PASS.
-    if [[ ($expected_rc -eq 0 && $actual_rc -eq 0) || ($expected_rc -ne 0 && $actual_rc -ne 0) ]]; then
+    if [[ $actual_rc -eq $expected_rc ]]; then
         echo -e "${GREEN}PASS${NC}"
         PASS=$((PASS+1))
     else

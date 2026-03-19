@@ -620,9 +620,9 @@
                             <span class="ct-img" x-text="c.image"></span>
                             <span class="badge" :class="c.state==='running'?'bs':c.state==='exited'?'bw':'bn'" x-text="c.state"></span>
                             <div class="svc-actions" x-show="userRole==='admin'">
-                                <button class="svc-btn" title="Start"   @click.stop="containerAction(c.name,'start')"   aria-label="Start container"><i class="fas fa-play"   aria-hidden="true"></i></button>
-                                <button class="svc-btn" title="Stop"    @click.stop="containerAction(c.name,'stop')"    aria-label="Stop container"><i class="fas fa-stop"   aria-hidden="true"></i></button>
-                                <button class="svc-btn" title="Restart" @click.stop="containerAction(c.name,'restart')" aria-label="Restart container"><i class="fas fa-sync" aria-hidden="true"></i></button>
+                                <button class="svc-btn" title="Start"   :disabled="c.state==='running'" @click.stop="containerAction(c.name,'start')"   aria-label="Start container"><i class="fas fa-play"   aria-hidden="true"></i></button>
+                                <button class="svc-btn" title="Stop"    :disabled="c.state!=='running'" @click.stop="containerAction(c.name,'stop')"    aria-label="Stop container"><i class="fas fa-stop"   aria-hidden="true"></i></button>
+                                <button class="svc-btn" title="Restart" :disabled="c.state!=='running'" @click.stop="containerAction(c.name,'restart')" aria-label="Restart container"><i class="fas fa-sync" aria-hidden="true"></i></button>
                             </div>
                         </div>
                     </template>
@@ -834,7 +834,7 @@
                             <label class="toggle-item"><input type="checkbox" x-model="dryRun"> Dry Run</label>
                             <label class="toggle-item"><input type="checkbox" x-model="verify"> Verify</label>
                         </div>
-                        <button class="btn btn-sm btn-primary" style="width:100%" @click="
+                        <button class="btn btn-sm btn-primary" style="width:100%" :disabled="runningScript" @click="
                             let args = [];
                             if (target !== 'all') args.push('--source', target);
                             if (dryRun) args.push('--dry-run');
@@ -894,7 +894,7 @@
                         </div>
                         <div style="display:flex;gap:.4rem">
                             <button class="btn btn-sm btn-primary" style="flex:1"
-                                    :disabled="rcloneAvailable === false || !cloudRemotes || cloudRemotes.length === 0 || !selectedCloudRemote"
+                                    :disabled="runningScript || rcloneAvailable === false || !cloudRemotes || cloudRemotes.length === 0 || !selectedCloudRemote"
                                     @click="
                                         let args = [];
                                         if (selectedCloudRemote) args.push('--remote', selectedCloudRemote + ':');
@@ -921,7 +921,7 @@
                         <div style="display:flex;gap:1rem;margin-bottom:.75rem">
                             <label class="toggle-item"><input type="checkbox" x-model="dryRun"> Dry Run</label>
                         </div>
-                        <button class="btn btn-sm btn-primary" style="width:100%" @click="runScript('organize', dryRun ? '--dry-run' : ''); opt = false;">
+                        <button class="btn btn-sm btn-primary" style="width:100%" :disabled="runningScript" @click="runScript('organize', dryRun ? '--dry-run' : ''); opt = false;">
                             <i class="fas fa-play" aria-hidden="true"></i> Execute Job
                         </button>
                     </div>
