@@ -1161,54 +1161,29 @@
                         <i class="fas fa-chevron-down" style="margin-left:auto;font-size:.7rem;transition:transform .2s" :style="opt?'transform:rotate(180deg)':''" aria-hidden="true"></i>
                     </button>
                     <div class="action-opts" x-show="opt" style="display:none">
-                        <div style="margin-bottom:.75rem">
-                            <label class="field-label">Target Directory</label>
-                            <input class="field-input" type="text" x-model="downloadsDir" placeholder="/home/user/Downloads" style="font-size:.78rem">
-                        </div>
-                        <div class="field-2" style="margin-bottom:.75rem">
-                            <div>
-                                <label class="field-label">Max Depth</label>
-                                <select class="theme-select" style="width:100%" x-model.number="organizeMaxDepth">
-                                    <option value="1">1 — Top level only</option>
-                                    <option value="2">2 — One subfolder deep</option>
-                                    <option value="3">3 — Two subfolders deep</option>
-                                    <option value="5">5 — Deep scan</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="field-label">Exclude Patterns</label>
-                                <input class="field-input" type="text" x-model="organizeExclude" placeholder="*.part, *.crdownload" style="font-size:.78rem">
-                            </div>
-                        </div>
-                        <!-- Custom rules -->
-                        <div style="margin-bottom:.6rem">
-                            <label class="field-label">Custom Rules</label>
-                            <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:.4rem">
-                                <template x-for="(rule, idx) in organizeCustomRules" :key="idx">
-                                    <span class="badge bn" style="font-size:.65rem;display:inline-flex;align-items:center;gap:.3rem">
-                                        <span x-text="rule"></span>
-                                        <button style="background:none;border:none;color:var(--danger);cursor:pointer;padding:0;font-size:.7rem" @click="removeOrgRule(idx)">&times;</button>
-                                    </span>
-                                </template>
-                            </div>
-                            <div style="display:flex;gap:.3rem">
-                                <input class="field-input" type="text" x-model="newOrgRule" placeholder="ext:Category (e.g. blend:3DModels)" style="flex:1;font-size:.78rem" @keydown.enter.prevent="addOrgRule()">
-                                <button class="btn btn-sm" @click="addOrgRule()" style="white-space:nowrap"><i class="fas fa-plus" aria-hidden="true"></i></button>
-                            </div>
+                        <div style="margin-bottom:.6rem;font-size:.78rem;color:var(--text-muted)">
+                            <i class="fas fa-folder" style="margin-right:.3rem" aria-hidden="true"></i>
+                            <span x-text="downloadsDir || 'Not configured'" style="font-family:var(--font-data)"></span>
+                            <span x-show="organizeCustomRules && organizeCustomRules.length > 0" class="badge bn" style="margin-left:.4rem;font-size:.6rem" x-text="organizeCustomRules.length + ' custom rule' + (organizeCustomRules.length !== 1 ? 's' : '')"></span>
                         </div>
                         <div style="display:flex;gap:1rem;margin-bottom:.75rem">
                             <label class="toggle-item"><input type="checkbox" x-model="dryRun"> Dry Run</label>
                         </div>
-                        <button class="btn btn-sm btn-primary" style="width:100%" :disabled="runningScript" @click="
-                            let args = [];
-                            if (dryRun) args.push('--dry-run');
-                            if (organizeMaxDepth > 1) args.push('--max-depth', organizeMaxDepth);
-                            if (organizeExclude) args.push('--exclude', organizeExclude);
-                            runScript('organize', args.join(' '));
-                            opt = false;
-                        ">
-                            <i class="fas fa-play" aria-hidden="true"></i> Execute Job
-                        </button>
+                        <div style="display:flex;gap:.4rem">
+                            <button class="btn btn-sm btn-primary" style="flex:1" :disabled="runningScript" @click="
+                                let args = [];
+                                if (dryRun) args.push('--dry-run');
+                                if (organizeMaxDepth > 1) args.push('--max-depth', organizeMaxDepth);
+                                if (organizeExclude) args.push('--exclude', organizeExclude);
+                                runScript('organize', args.join(' '));
+                                opt = false;
+                            ">
+                                <i class="fas fa-play" aria-hidden="true"></i> Execute Job
+                            </button>
+                            <button class="btn btn-sm" @click="showSettings=true; settingsTab='backup'" title="Configure in Settings">
+                                <i class="fas fa-cog" aria-hidden="true"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -2224,11 +2199,96 @@
                 <p class="help-text" style="margin-bottom:.6rem">Email address for backup completion reports.</p>
                 <input class="field-input" type="email" x-model="backupEmail" placeholder="admin@example.com">
             </div>
-            <!-- Downloads Directory -->
+            <!-- Organize Downloads -->
             <div class="s-section">
-                <span class="s-label">Downloads Directory</span>
-                <p class="help-text" style="margin-bottom:.6rem">Target directory for the Organize Downloads job.</p>
-                <input class="field-input" type="text" x-model="downloadsDir" placeholder="/downloads">
+                <span class="s-label">Organize Downloads</span>
+                <p class="help-text" style="margin-bottom:.6rem">Configure how the Organize Downloads job sorts files into category folders.</p>
+                <div style="display:flex;flex-direction:column;gap:.7rem">
+                    <div>
+                        <label class="field-label">Target Directory</label>
+                        <input class="field-input" type="text" x-model="downloadsDir" placeholder="/home/user/Downloads">
+                    </div>
+                    <div class="field-2">
+                        <div>
+                            <label class="field-label">Scan Depth</label>
+                            <select class="theme-select" style="width:100%" x-model.number="organizeMaxDepth">
+                                <option value="1">1 — Top level only</option>
+                                <option value="2">2 — One subfolder deep</option>
+                                <option value="3">3 — Two subfolders deep</option>
+                                <option value="5">5 — Deep scan</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="field-label">Exclude Patterns</label>
+                            <input class="field-input" type="text" x-model="organizeExclude" placeholder="*.part, *.crdownload">
+                            <p class="help-text">Comma-separated globs to skip.</p>
+                        </div>
+                    </div>
+                    <!-- Default categories reference -->
+                    <div>
+                        <label class="field-label">Default Categories</label>
+                        <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:.3rem">
+                            <span class="badge bn" style="font-size:.6rem">Images</span>
+                            <span class="badge bn" style="font-size:.6rem">Video</span>
+                            <span class="badge bn" style="font-size:.6rem">Audio</span>
+                            <span class="badge bn" style="font-size:.6rem">Documents</span>
+                            <span class="badge bn" style="font-size:.6rem">Archives</span>
+                            <span class="badge bn" style="font-size:.6rem">DiskImages</span>
+                            <span class="badge bn" style="font-size:.6rem">Executables</span>
+                            <span class="badge bn" style="font-size:.6rem">Code</span>
+                            <span class="badge bn" style="font-size:.6rem">Fonts</span>
+                            <span class="badge bn" style="font-size:.6rem">Torrents</span>
+                            <span class="badge bn" style="font-size:.6rem">Other</span>
+                        </div>
+                        <p class="help-text">Files not matching any rule go to "Other".</p>
+                    </div>
+                    <!-- Custom rules -->
+                    <div>
+                        <label class="field-label">Custom Rules</label>
+                        <p class="help-text" style="margin-bottom:.4rem">Override or extend the default category mappings. Add new file extensions or create your own categories.</p>
+                        <div x-show="organizeCustomRules && organizeCustomRules.length > 0" style="margin-bottom:.5rem">
+                            <table style="width:100%;font-size:.78rem;border-collapse:collapse">
+                                <thead>
+                                    <tr style="border-bottom:1px solid var(--border);text-align:left">
+                                        <th style="padding:.25rem .4rem">Extension</th>
+                                        <th style="padding:.25rem .4rem">Category</th>
+                                        <th style="padding:.25rem .4rem;width:2rem"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="(rule, idx) in organizeCustomRules" :key="idx">
+                                        <tr style="border-bottom:1px solid var(--border)">
+                                            <td style="padding:.25rem .4rem;font-family:var(--font-data)" x-text="rule.split(':')[0] || ''"></td>
+                                            <td style="padding:.25rem .4rem" x-text="rule.split(':')[1] || ''"></td>
+                                            <td style="padding:.25rem .4rem;text-align:center">
+                                                <button style="background:none;border:none;color:var(--danger);cursor:pointer;padding:.1rem;font-size:.75rem" @click="removeOrgRule(idx)" title="Remove rule">&times;</button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div x-data="{ newExt: '', newCat: '' }" style="display:flex;gap:.4rem;align-items:flex-end">
+                            <div style="flex:1">
+                                <label class="field-label" style="font-size:.65rem">Extension</label>
+                                <input class="field-input" type="text" x-model="newExt" placeholder="blend" style="font-size:.78rem" @keydown.enter.prevent="if(newExt && newCat){newOrgRule=newExt.replace(/^\./,'') + ':' + newCat; addOrgRule(); newExt=''; newCat=''}">
+                            </div>
+                            <div style="flex:1">
+                                <label class="field-label" style="font-size:.65rem">Category</label>
+                                <input class="field-input" type="text" x-model="newCat" placeholder="3DModels" style="font-size:.78rem" list="org-cat-list" @keydown.enter.prevent="if(newExt && newCat){newOrgRule=newExt.replace(/^\./,'') + ':' + newCat; addOrgRule(); newExt=''; newCat=''}">
+                                <datalist id="org-cat-list">
+                                    <option value="Images"><option value="Video"><option value="Audio">
+                                    <option value="Documents"><option value="Archives"><option value="DiskImages">
+                                    <option value="Executables"><option value="Code"><option value="Fonts">
+                                    <option value="Torrents"><option value="Other">
+                                </datalist>
+                            </div>
+                            <button class="btn btn-sm" style="margin-bottom:1px" @click="if(newExt && newCat){newOrgRule=newExt.replace(/^\./,'') + ':' + newCat; addOrgRule(); newExt=''; newCat=''}">
+                                <i class="fas fa-plus" aria-hidden="true"></i> Add
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
             <!-- Cloud Remotes -->
             <div class="s-section">
