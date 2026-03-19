@@ -1,4 +1,4 @@
-"""Noba Command Center – FastAPI application v1.13.0"""
+"""Noba Command Center – FastAPI application v1.14.0"""
 from __future__ import annotations
 
 import asyncio
@@ -449,7 +449,9 @@ def api_runs(request: Request, auth=Depends(_get_auth)):
     limit = int(request.query_params.get("limit", "50"))
     status = request.query_params.get("status")
     auto_id = request.query_params.get("automation_id")
-    return db.get_job_runs(automation_id=auto_id, limit=limit, status=status)
+    trigger_prefix = request.query_params.get("trigger_prefix")
+    return db.get_job_runs(automation_id=auto_id, limit=limit, status=status,
+                           trigger_prefix=trigger_prefix)
 
 
 @app.get("/api/runs/{run_id}")
@@ -544,21 +546,26 @@ _AUTO_BUILDERS = {"script": _build_auto_script_process, "webhook": _build_auto_w
 _AUTO_TYPES = frozenset(list(_AUTO_BUILDERS) + ["workflow"])
 
 
-def _run_workflow(auto_id: str, steps: list[str], triggered_by: str, step_idx: int = 0) -> None:
-    """Chain-execute workflow steps sequentially via on_complete callbacks."""
+def _run_workflow(auto_id: str, steps: list[str], triggered_by: str,
+                  step_idx: int = 0, retries: int = 0, attempt: int = 0) -> None:
+    """Chain-execute workflow steps sequentially via on_complete callbacks.
+
+    ``retries`` is the max retry count per step (0 = no retries).
+    ``attempt`` tracks the current attempt for the active step.
+    """
     if step_idx >= len(steps):
         return
     step_auto_id = steps[step_idx]
     step_auto = db.get_automation(step_auto_id)
     if not step_auto:
         logger.warning("Workflow %s: step %d auto '%s' not found, skipping", auto_id, step_idx, step_auto_id)
-        _run_workflow(auto_id, steps, triggered_by, step_idx + 1)
+        _run_workflow(auto_id, steps, triggered_by, step_idx + 1, retries)
         return
 
     builder = _AUTO_BUILDERS.get(step_auto["type"])
     if not builder:
         logger.warning("Workflow %s: step %d has unsupported type '%s'", auto_id, step_idx, step_auto["type"])
-        _run_workflow(auto_id, steps, triggered_by, step_idx + 1)
+        _run_workflow(auto_id, steps, triggered_by, step_idx + 1, retries)
         return
 
     config = step_auto["config"]
@@ -568,16 +575,21 @@ def _run_workflow(auto_id: str, steps: list[str], triggered_by: str, step_idx: i
 
     def on_step_complete(_run_id: int, status: str) -> None:
         if status == "done":
-            _run_workflow(auto_id, steps, triggered_by, step_idx + 1)
+            _run_workflow(auto_id, steps, triggered_by, step_idx + 1, retries)
+        elif retries > 0 and attempt < retries:
+            logger.info("Workflow %s: step %d ('%s') %s — retry %d/%d",
+                        auto_id, step_idx, step_auto["name"], status, attempt + 1, retries)
+            _run_workflow(auto_id, steps, triggered_by, step_idx, retries, attempt + 1)
         else:
             logger.info("Workflow %s: step %d ('%s') %s — stopping chain",
                         auto_id, step_idx, step_auto["name"], status)
 
+    trigger_suffix = f":step{step_idx}" if attempt == 0 else f":step{step_idx}:retry{attempt}"
     try:
         job_runner.submit(
             make_process,
             automation_id=step_auto_id,
-            trigger=f"workflow:{auto_id}:step{step_idx}",
+            trigger=f"workflow:{auto_id}{trigger_suffix}",
             triggered_by=triggered_by,
             on_complete=on_step_complete,
         )
@@ -672,7 +684,8 @@ def api_automations_run(auto_id: str, request: Request, auth=Depends(_require_op
         steps = config.get("steps", [])
         if not steps:
             raise HTTPException(400, "Workflow has no steps")
-        _run_workflow(auto_id, steps, username)
+        wf_retries = int(config.get("retries", 0))
+        _run_workflow(auto_id, steps, username, retries=wf_retries)
         db.audit_log("automation_run", username, f"Workflow '{auto['name']}' started ({len(steps)} steps)", ip)
         return {"success": True, "run_id": None, "workflow": True, "steps": len(steps)}
 

@@ -246,3 +246,43 @@ class TestAutomations:
             assert auto["name"] == "First"
         finally:
             _cleanup(path)
+
+
+class TestJobRunsTriggerFilter:
+    def test_trigger_prefix_filter(self):
+        db, path = _make_db()
+        try:
+            db.insert_job_run("a1", "workflow:wf1:step0", "user1")
+            db.insert_job_run("a2", "workflow:wf1:step1", "user1")
+            db.insert_job_run("a3", "schedule:0 3 * * *", "scheduler")
+            db.insert_job_run("a4", "workflow:wf2:step0", "user2")
+
+            # Filter by workflow wf1
+            runs = db.get_job_runs(trigger_prefix="workflow:wf1")
+            assert len(runs) == 2
+            triggers = [r["trigger"] for r in runs]
+            assert all("workflow:wf1" in t for t in triggers)
+
+            # Filter by schedule
+            runs = db.get_job_runs(trigger_prefix="schedule:")
+            assert len(runs) == 1
+            assert runs[0]["trigger"] == "schedule:0 3 * * *"
+
+            # No match
+            runs = db.get_job_runs(trigger_prefix="alert:")
+            assert len(runs) == 0
+        finally:
+            _cleanup(path)
+
+    def test_trigger_prefix_with_status(self):
+        db, path = _make_db()
+        try:
+            run_id = db.insert_job_run("a1", "workflow:wf1:step0", "user1")
+            db.update_job_run(run_id, "done", exit_code=0)
+            db.insert_job_run("a2", "workflow:wf1:step1", "user1")
+
+            runs = db.get_job_runs(trigger_prefix="workflow:wf1", status="done")
+            assert len(runs) == 1
+            assert runs[0]["status"] == "done"
+        finally:
+            _cleanup(path)

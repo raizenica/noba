@@ -138,6 +138,7 @@ function authMixin() {
             if (this._logTimer)      { clearInterval(this._logTimer);      this._logTimer = null; }
             if (this._cloudTimer)    { clearInterval(this._cloudTimer);    this._cloudTimer = null; }
             if (this._heartbeatTimer){ clearInterval(this._heartbeatTimer);this._heartbeatTimer = null; }
+            this.stopJobNotifPoller();
         },
 
         // ── Admin user management ───────────────────────────────────────────────

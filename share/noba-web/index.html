@@ -942,14 +942,27 @@
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
             <div class="card-body action-list" id="body-automations" x-show="!collapsed.automations">
-                <div x-show="!autoListLoading && autoList.length > 0" style="display:flex;gap:.5rem;margin-bottom:.5rem;font-size:.7rem;opacity:.7">
-                    <span x-text="autoList.length + ' total'"></span>
-                    <span x-text="autoList.filter(a=>a.enabled).length + ' enabled'"></span>
-                    <span x-text="autoList.filter(a=>a.schedule).length + ' scheduled'"></span>
+                <div x-show="!autoListLoading && autoList.length > 0" style="margin-bottom:.5rem">
+                    <div style="display:flex;gap:.5rem;margin-bottom:.5rem;font-size:.7rem;opacity:.7">
+                        <span x-text="autoList.length + ' total'"></span>
+                        <span x-text="autoList.filter(a=>a.enabled).length + ' enabled'"></span>
+                        <span x-text="autoList.filter(a=>a.schedule).length + ' scheduled'"></span>
+                    </div>
+                    <div style="display:flex;gap:.25rem;margin-bottom:.4rem;flex-wrap:wrap">
+                        <template x-for="f in ['all','script','webhook','service','workflow']" :key="f">
+                            <button class="btn btn-sm" style="font-size:.6rem;padding:.15rem .4rem;width:auto"
+                                    :class="autoFilter === f ? 'btn-primary' : ''"
+                                    @click="autoFilter = f"
+                                    x-text="f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)"></button>
+                        </template>
+                    </div>
+                    <input class="field-input" type="text" x-model="autoSearch"
+                           placeholder="Search automations..." style="font-size:.75rem;padding:.3rem .5rem;margin-bottom:.4rem">
                 </div>
                 <div x-show="autoListLoading" style="text-align:center;padding:.5rem;opacity:.6">Loading...</div>
                 <div x-show="!autoListLoading && autoList.length === 0" class="empty-msg">No automations defined. Click + to create one.</div>
-                <template x-for="auto in autoList" :key="auto.id">
+                <div x-show="!autoListLoading && autoList.length > 0 && filteredAutoList.length === 0" class="empty-msg">No matching automations.</div>
+                <template x-for="auto in filteredAutoList" :key="auto.id">
                     <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.4rem">
                         <button class="btn btn-primary" style="flex:1;text-align:left"
                                 :disabled="runningScript || !auto.enabled"
@@ -1414,7 +1427,7 @@
                 </thead>
                 <tbody>
                     <template x-for="run in runHistory" :key="run.id">
-                        <tr>
+                        <tr style="cursor:pointer" @click="openRunDetail(run)" title="Click to view details">
                             <td x-text="run.id"></td>
                             <td x-text="run.trigger"></td>
                             <td x-text="run.triggered_by || '\u2014'"></td>
@@ -1558,6 +1571,11 @@
                         </template>
                     </div>
                 </div>
+                <div style="margin-bottom:.75rem">
+                    <label class="field-label">Retries per step (0 = no retry)</label>
+                    <input class="field-input" type="number" min="0" max="5"
+                           x-model.number="autoForm.config.retries" placeholder="0">
+                </div>
             </div>
         </template>
 
@@ -1571,6 +1589,64 @@
                 <i class="fas fa-save" aria-hidden="true"></i>
                 <span x-text="autoModalMode === 'create' ? 'Create' : 'Save'"></span>
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- Run Detail Modal -->
+<div x-show="showRunDetailModal"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showRunDetailModal=false"
+     role="dialog" aria-modal="true" aria-label="Run Detail" x-cloak>
+    <div class="modal-box" style="max-width:700px">
+        <div class="modal-title">
+            <i class="fas fa-info-circle" style="color:var(--accent)" aria-hidden="true"></i>
+            Run Detail
+            <span x-show="runDetail" class="badge" :class="runStatusClass(runDetail?.status)" x-text="runDetail?.status" style="margin-left:.5rem"></span>
+        </div>
+        <div x-show="runDetailLoading" style="text-align:center;padding:1rem;opacity:.6">Loading...</div>
+        <template x-if="runDetail && !runDetailLoading">
+            <div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;font-size:.78rem;margin-bottom:.75rem">
+                    <div><strong>Run ID:</strong> <span x-text="runDetail.id"></span></div>
+                    <div><strong>Trigger:</strong> <span x-text="runDetail.trigger" style="font-family:var(--font-data)"></span></div>
+                    <div><strong>By:</strong> <span x-text="runDetail.triggered_by || '\u2014'"></span></div>
+                    <div><strong>Exit Code:</strong> <span x-text="runDetail.exit_code ?? '\u2014'"></span></div>
+                    <div><strong>Started:</strong> <span x-text="fmtRunTime(runDetail.started_at)"></span></div>
+                    <div><strong>Duration:</strong> <span x-text="runDetail.finished_at && runDetail.started_at ? ((runDetail.finished_at - runDetail.started_at) + 's') : (runDetail.status === 'running' ? 'running' : '\u2014')"></span></div>
+                </div>
+                <div x-show="runDetail.error" style="margin-bottom:.5rem;padding:.4rem .6rem;background:rgba(255,80,80,.1);border-radius:4px;font-size:.75rem;color:var(--danger)">
+                    <strong>Error:</strong> <span x-text="runDetail.error"></span>
+                </div>
+                <div x-show="runDetail.output" style="margin-bottom:.75rem">
+                    <label class="field-label">Output</label>
+                    <pre class="console-out" style="max-height:200px;font-size:.7rem" x-text="runDetail.output"></pre>
+                </div>
+                <!-- Workflow steps breakdown -->
+                <div x-show="runDetailSteps.length > 1" style="margin-bottom:.75rem">
+                    <label class="field-label">Workflow Steps</label>
+                    <div style="max-height:200px;overflow-y:auto">
+                        <table class="audit-table" style="width:100%;font-size:.75rem">
+                            <thead><tr><th>Step</th><th>Trigger</th><th>Status</th><th>Duration</th><th>Exit</th></tr></thead>
+                            <tbody>
+                                <template x-for="(step, i) in runDetailSteps" :key="step.id">
+                                    <tr style="cursor:pointer" @click="openRunDetail(step)">
+                                        <td x-text="i + 1"></td>
+                                        <td x-text="step.trigger" style="font-family:var(--font-data);font-size:.65rem"></td>
+                                        <td><span class="badge" :class="runStatusClass(step.status)" x-text="step.status"></span></td>
+                                        <td x-text="step.finished_at && step.started_at ? ((step.finished_at - step.started_at) + 's') : (step.status === 'running' ? 'running' : '\u2014')"></td>
+                                        <td x-text="step.exit_code ?? '\u2014'"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </template>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="showRunDetailModal=false">Close</button>
         </div>
     </div>
 </div>
@@ -2141,6 +2217,7 @@
                                                 <option value="restart_container">Restart Container</option>
                                                 <option value="run">Run Command</option>
                                                 <option value="webhook">Trigger Webhook</option>
+                                                <option value="automation">Run Automation</option>
                                             </select>
                                         </div>
                                         <div x-show="draft._actionType">
@@ -2151,7 +2228,8 @@
                                                 :placeholder="draft._actionType==='restart_service' ? 'nginx.service' :
                                                     draft._actionType==='restart_container' ? 'docker:myapp' :
                                                     draft._actionType==='run' ? '/usr/local/bin/fix.sh' :
-                                                    draft._actionType==='webhook' ? 'webhook-id' : ''">
+                                                    draft._actionType==='webhook' ? 'webhook-id' :
+                                                    draft._actionType==='automation' ? 'automation-id' : ''">
                                         </div>
                                     </div>
                                     <div class="field-2" x-show="draft._actionType" style="margin-top:.5rem">

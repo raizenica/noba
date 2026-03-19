@@ -304,6 +304,8 @@ function dashboard() {
                 this.fetchAutomations(),
             ]);
 
+            this.startJobNotifPoller();
+
             if (this.userRole === 'admin') await this.fetchUsers();
 
             this.connectSSE();
@@ -400,6 +402,7 @@ function dashboard() {
                     this.showSessionsModal = false;
                     this.showAutoModal = false;
                     this.showRunHistoryModal = false;
+                    this.showRunDetailModal = false;
                 }
             };
             document.addEventListener('keydown', this._keydownHandler);

@@ -135,6 +135,41 @@ def _execute_heal(action_cfg: dict, rule_id: str, read_settings_fn) -> bool:
             with urllib.request.urlopen(req, timeout=8) as r:
                 return 200 <= r.getcode() < 300
 
+        if atype == "automation":
+            from .db import db
+            from .runner import job_runner
+            auto = db.get_automation(target)
+            if not auto:
+                logger.warning("Heal automation '%s' not found", target)
+                return False
+            from .app import _AUTO_BUILDERS, _run_workflow
+            if auto["type"] == "workflow":
+                steps = auto["config"].get("steps", [])
+                if steps:
+                    _run_workflow(auto["id"], steps, "alert:" + rule_id)
+                    return True
+                return False
+            builder = _AUTO_BUILDERS.get(auto["type"])
+            if not builder:
+                return False
+            config = auto["config"]
+
+            def make_process(_run_id: int) -> subprocess.Popen | None:
+                return builder(config)
+
+            try:
+                job_runner.submit(
+                    make_process,
+                    automation_id=auto["id"],
+                    trigger=f"alert:{rule_id}",
+                    triggered_by="alert:" + rule_id,
+                )
+                logger.info("Heal triggered automation '%s' for rule %s", auto["name"], rule_id)
+                return True
+            except RuntimeError as exc:
+                logger.warning("Heal automation submit failed: %s", exc)
+                return False
+
     except Exception as e:
         logger.error("Heal action %s/%s failed: %s", atype, target, e)
     return False

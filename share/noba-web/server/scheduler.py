@@ -121,7 +121,8 @@ class Scheduler:
         if auto["type"] == "workflow":
             steps = auto["config"].get("steps", [])
             if steps:
-                _run_workflow(auto["id"], steps, "scheduler")
+                wf_retries = int(auto["config"].get("retries", 0))
+                _run_workflow(auto["id"], steps, "scheduler", retries=wf_retries)
                 logger.info("Scheduler triggered workflow '%s' (%d steps)", auto["name"], len(steps))
             return
 

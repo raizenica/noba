@@ -119,6 +119,32 @@ class TestJobRunnerCancel:
         assert not runner.cancel(999999)
 
 
+class TestJobRunnerOnComplete:
+    def test_on_complete_called_on_success(self):
+        runner = _make_runner()
+        results = []
+
+        def callback(run_id, status):
+            results.append((run_id, status))
+
+        run_id = runner.submit(_echo_process, trigger="test", on_complete=callback)
+        time.sleep(0.5)
+        assert len(results) == 1
+        assert results[0] == (run_id, "done")
+
+    def test_on_complete_called_on_failure(self):
+        runner = _make_runner()
+        results = []
+
+        def callback(run_id, status):
+            results.append((run_id, status))
+
+        run_id = runner.submit(_fail_process, trigger="test", on_complete=callback)
+        time.sleep(0.5)
+        assert len(results) == 1
+        assert results[0] == (run_id, "failed")
+
+
 class TestJobRunnerShutdown:
     def test_shutdown_cancels_all(self):
         runner = _make_runner()

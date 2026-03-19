@@ -419,7 +419,8 @@ class Database:
             logger.error("update_job_run failed: %s", e)
 
     def get_job_runs(self, automation_id: str | None = None,
-                     limit: int = 50, status: str | None = None) -> list[dict]:
+                     limit: int = 50, status: str | None = None,
+                     trigger_prefix: str | None = None) -> list[dict]:
         try:
             clauses = []
             params: list = []
@@ -429,6 +430,9 @@ class Database:
             if status:
                 clauses.append("status = ?")
                 params.append(status)
+            if trigger_prefix:
+                clauses.append("trigger LIKE ?")
+                params.append(trigger_prefix + "%")
             where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
             params.append(limit)
             with self._lock:

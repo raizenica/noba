@@ -219,6 +219,7 @@ function actionsMixin() {
 
             // Poll for job output until completion
             const poll = setInterval(async () => {
+                if (!this.authenticated) { clearInterval(poll); this.runningScript = false; return; }
                 try {
                     const r = await fetch(`/api/runs/${runId}`, {
                         headers: { 'Authorization': 'Bearer ' + token },
@@ -709,6 +710,18 @@ function actionsMixin() {
         autoForm: { id: '', name: '', type: 'script', config: {}, schedule: '', enabled: true },
         autoList: [],
         autoListLoading: false,
+        autoFilter: 'all',
+        autoSearch: '',
+
+        // ── Run detail ──────────────────────────────────────────────────────
+        showRunDetailModal: false,
+        runDetail: null,
+        runDetailSteps: [],
+        runDetailLoading: false,
+
+        // ── Job notification poller ─────────────────────────────────────────
+        _jobNotifTimer: null,
+        _lastSeenRunId: 0,
 
         /** Fetch all automations from the DB. */
         async fetchAutomations() {
@@ -797,6 +810,107 @@ function actionsMixin() {
             });
         },
 
+        /** Return automations filtered by type tab and search text. */
+        get filteredAutoList() {
+            let list = this.autoList || [];
+            if (this.autoFilter !== 'all') {
+                list = list.filter(a => a.type === this.autoFilter);
+            }
+            if (this.autoSearch) {
+                const q = this.autoSearch.toLowerCase();
+                list = list.filter(a => a.name.toLowerCase().includes(q));
+            }
+            return list;
+        },
+
+        /** Open the run detail modal for a specific run. */
+        async openRunDetail(run) {
+            this.runDetail = run;
+            this.runDetailSteps = [];
+            this.showRunDetailModal = true;
+            this.runDetailLoading = true;
+            const token = this._token();
+            try {
+                // Fetch full run detail with output
+                const res = await fetch(`/api/runs/${run.id}`, {
+                    headers: { 'Authorization': 'Bearer ' + token },
+                });
+                if (res.ok) this.runDetail = await res.json();
+
+                // If this is a workflow step or parent, fetch sibling steps
+                const trigger = this.runDetail.trigger || '';
+                let prefix = '';
+                if (trigger.startsWith('workflow:')) {
+                    // Extract workflow auto_id from trigger like "workflow:abc123:step0"
+                    const parts = trigger.split(':');
+                    if (parts.length >= 2) prefix = `workflow:${parts[1]}`;
+                }
+                if (prefix) {
+                    const stepsRes = await fetch(`/api/runs?trigger_prefix=${encodeURIComponent(prefix)}&limit=50`, {
+                        headers: { 'Authorization': 'Bearer ' + token },
+                    });
+                    if (stepsRes.ok) {
+                        const steps = await stepsRes.json();
+                        this.runDetailSteps = steps.sort((a, b) => (a.started_at || 0) - (b.started_at || 0));
+                    }
+                }
+            } catch (e) {
+                this.addToast('Failed to load run details: ' + e.message, 'error');
+            } finally {
+                this.runDetailLoading = false;
+            }
+        },
+
+        /** Start polling for background job completions. */
+        async startJobNotifPoller() {
+            if (this._jobNotifTimer) clearInterval(this._jobNotifTimer);
+            // Initialize with current max run ID to avoid toasting old runs
+            await this._initJobNotifBaseline();
+            this._jobNotifTimer = setInterval(() => this._checkJobCompletions(), 15000);
+        },
+
+        /** Stop the job notification poller. */
+        stopJobNotifPoller() {
+            if (this._jobNotifTimer) { clearInterval(this._jobNotifTimer); this._jobNotifTimer = null; }
+        },
+
+        async _initJobNotifBaseline() {
+            try {
+                const res = await fetch('/api/runs?limit=1', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) {
+                    const runs = await res.json();
+                    this._lastSeenRunId = runs.length > 0 ? runs[0].id : 0;
+                }
+            } catch { /* silent */ }
+        },
+
+        async _checkJobCompletions() {
+            if (!this.authenticated) return;
+            try {
+                const res = await fetch('/api/runs?limit=10', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) return;
+                const runs = await res.json();
+                for (const run of runs) {
+                    if (run.id <= this._lastSeenRunId) continue;
+                    if (run.status === 'running' || run.status === 'queued') continue;
+                    // Only notify for scheduled/alert/workflow runs (not manual)
+                    const trigger = run.trigger || '';
+                    if (trigger.startsWith('schedule:') || trigger.startsWith('alert:') || trigger.startsWith('workflow:')) {
+                        const ok = run.status === 'done';
+                        const label = trigger.split(':').slice(0, 2).join(':');
+                        this.addToast(`Job #${run.id} (${label}) ${run.status}`, ok ? 'success' : 'error');
+                    }
+                }
+                if (runs.length > 0) {
+                    this._lastSeenRunId = Math.max(this._lastSeenRunId, ...runs.map(r => r.id));
+                }
+            } catch { /* silent */ }
+        },
+
         /** Manually run an automation and show live output. */
         async runAutomation(auto) {
             if (!this.authenticated || this.runningScript) return;
@@ -840,6 +954,7 @@ function actionsMixin() {
             }
 
             const poll = setInterval(async () => {
+                if (!this.authenticated) { clearInterval(poll); this.runningScript = false; return; }
                 try {
                     const r = await fetch(`/api/runs/${runId}`, {
                         headers: { 'Authorization': 'Bearer ' + token },
