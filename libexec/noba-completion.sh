@@ -64,7 +64,7 @@ _noba_completions() {
                 opts="-t --threshold -n --dry-run -v --verbose --help --version"
                 ;;
             organize-downloads.sh)
-                opts="-d --download-dir -a --min-age -n --dry-run -v --verbose --help --version"
+                opts="--dry-run --help"
                 ;;
             noba-daily-digest.sh)
                 opts="-e --email -n --dry-run --help --version"
@@ -83,9 +83,6 @@ _noba_completions() {
                 ;;
             noba-cron-setup.sh)
                 opts="--help --list --remove"
-                ;;
-            run-hogwarts-trainer.sh)
-                opts="-g --game-dir -t --trainer -p --proton-path -l --list-proton -q --quiet --help --version"
                 ;;
             *)
                 # Generic fallback for scripts with minimal flags
@@ -106,4 +103,4 @@ _noba_completions() {
 complete -F _noba_completions noba
 
 # Register dynamically for all individual scripts
-complete -F _noba_completions backup-notify.sh backup-to-nas.sh backup-verifier.sh checksum.sh cloud-backup.sh config-check.sh disk-sentinel.sh images-to-pdf.sh log-rotator.sh motd-generator.sh noba-cron-setup.sh noba-daily-digest.sh noba-dashboard.sh noba-tui.sh noba-update.sh noba-web.sh organize-downloads.sh run-hogwarts-trainer.sh service-watch.sh system-report.sh temperature-alert.sh undo-organizer.sh
+complete -F _noba_completions backup-notify.sh backup-to-nas.sh backup-verifier.sh checksum.sh cloud-backup.sh config-check.sh disk-sentinel.sh images-to-pdf.sh log-rotator.sh motd-generator.sh noba-cron-setup.sh noba-daily-digest.sh noba-dashboard.sh noba-tui.sh noba-update.sh noba-web.sh organize-downloads.sh service-watch.sh system-report.sh temperature-alert.sh undo-organizer.sh

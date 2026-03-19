@@ -417,8 +417,8 @@ def get_containers() -> list:
                     "id":     cid,
                     "name":   name,
                     "image":  c.get("Image", c.get("Repository", "?")).split("/")[-1][:32],
-                    "state":  (c.get("State",  c.get("Status",  "?")) or "?").lower().split()[0],
-                    "status": (c.get("Status", c.get("State",   "?")) or "?").lower().split()[0],
+                    "state":  ((c.get("State",  c.get("Status",  "?")) or "?").lower().split() or ["?"])[0],
+                    "status": ((c.get("Status", c.get("State",   "?")) or "?").lower().split() or ["?"])[0],
                 })
             return res
         except Exception:

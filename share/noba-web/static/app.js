@@ -35,21 +35,33 @@ function dashboard() {
     /** Keys that live in localStorage as a local mirror.
      * Secrets/tokens are intentionally excluded — they are loaded from the
      * backend via fetchSettings() after login and kept in memory only.        */
-    const LS_SCALAR_KEYS = [
-        'piholeUrl', 'monitoredServices', 'radarIps',
-        'bookmarksStr', 'plexUrl', 'kumaUrl', 'bmcMap',
-        'wanTestIp', 'lanTestIp',
-        'truenasUrl',
-        'radarrUrl',
-        'sonarrUrl',
-        'qbitUrl',    'qbitUser',
-        'proxmoxUrl', 'proxmoxUser', 'proxmoxTokenName',
-    ];
+    /** Map of data property → localStorage key for non-sensitive settings. */
+    const LS_KEY_MAP = {
+        piholeUrl:        'noba-pihole',
+        monitoredServices:'noba-services',
+        radarIps:         'noba-radar',
+        bookmarksStr:     'noba-bookmarks',
+        plexUrl:          'noba-plex-url',
+        kumaUrl:          'noba-kuma-url',
+        bmcMap:           'noba-bmc-map',
+        wanTestIp:        'noba-wan-ip',
+        lanTestIp:        'noba-lan-ip',
+        truenasUrl:       'noba-truenas-url',
+        radarrUrl:        'noba-radarr-url',
+        sonarrUrl:        'noba-sonarr-url',
+        qbitUrl:          'noba-qbit-url',
+        qbitUser:         'noba-qbit-user',
+        proxmoxUrl:       'noba-pmx-url',
+        proxmoxUser:      'noba-pmx-user',
+        proxmoxTokenName: 'noba-pmx-tok-name',
+    };
 
     // One-time migration: remove any legacy credential keys left in localStorage.
-    ['noba-pihole-tok', 'noba-plex-tok', 'noba-truenas-key',
-     'noba-radarr-key', 'noba-sonarr-key', 'noba-qbit-pass']
-        .forEach(k => localStorage.removeItem(k));
+    try {
+        ['noba-pihole-tok', 'noba-plex-tok', 'noba-truenas-key',
+         'noba-radarr-key', 'noba-sonarr-key', 'noba-qbit-pass']
+            .forEach(k => localStorage.removeItem(k));
+    } catch (_) { /* localStorage unavailable */ }
 
     /**
      * Keys that the server is allowed to push via SSE / refreshStats.
@@ -439,11 +451,6 @@ function dashboard() {
 
         // ── 5. Server Communication ────────────────────────────────────────────
 
-        /** Return the current bearer token from localStorage. */
-        _token() {
-            return localStorage.getItem('noba-token') || '';
-        },
-
         _startCountdown(interval = 5) {
             clearInterval(this._countdownTimer);
             this.countdown = interval;
@@ -623,8 +630,8 @@ function dashboard() {
 
         /** Persist settings to localStorage and backend. */
         async saveSettings() {
-            for (const key of LS_SCALAR_KEYS) {
-                localStorage.setItem(`noba-${key.replace(/([A-Z])/g, c => '-' + c.toLowerCase())}`, this[key] ?? '');
+            for (const [prop, lsKey] of Object.entries(LS_KEY_MAP)) {
+                localStorage.setItem(lsKey, this[prop] ?? '');
             }
             localStorage.setItem('noba-theme',     this.theme);
             localStorage.setItem('noba-vis',        JSON.stringify(this.vis));

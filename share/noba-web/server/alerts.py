@@ -231,8 +231,8 @@ def _send_gotify(level: str, msg: str, cfg: dict) -> None:
                 "priority": 8 if level in ("danger", "critical") else 5,
             }).encode()
             req = urllib.request.Request(
-                f"{url}/message?token={token}",
-                data=payload, headers={"Content-Type": "application/json"},
+                f"{url}/message",
+                data=payload, headers={"Content-Type": "application/json", "X-Gotify-Key": token},
             )
             urllib.request.urlopen(req, timeout=5)
     except Exception as e:

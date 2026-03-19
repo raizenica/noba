@@ -49,7 +49,7 @@ class Plugin:
             if hasattr(self.mod, "collect"):
                 self.data = self.mod.collect() or {}
             if hasattr(self.mod, "render"):
-                self.html = self.mod.render(self.data) if self.data else self.mod.render()
+                self.html = self.mod.render(self.data)
             self.error = ""
         except Exception as e:
             logger.error("Plugin %s collect error: %s", self.id, e)

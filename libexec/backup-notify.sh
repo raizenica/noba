@@ -73,8 +73,18 @@ read_state_file() {
         return 1
     fi
 
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
+    # Safe key-value parsing (avoids arbitrary code execution from source)
+    local exit_code="" snapshot="" duration="" failed_sources=""
+    while IFS='=' read -r key value; do
+        value="${value#\"}"
+        value="${value%\"}"
+        case "$key" in
+            exit_code)      exit_code="$value" ;;
+            snapshot)       snapshot="$value" ;;
+            duration)       duration="$value" ;;
+            failed_sources) failed_sources="$value" ;;
+        esac
+    done < "$STATE_FILE"
 
     STATUS_SOURCE="state_file"
 

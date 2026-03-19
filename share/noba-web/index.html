@@ -271,9 +271,9 @@
                             <span class="row-label">Active Apps</span>
                             <span class="row-val" x-text="(truenas.apps || []).filter(a => a.state === 'RUNNING').length + ' / ' + (truenas.apps || []).length"></span>
                         </div>
-                        <div class="row" x-show="truenas.alerts.length > 0">
+                        <div class="row" x-show="(truenas.alerts || []).length > 0">
                             <span class="row-label">Hardware Alerts</span>
-                            <span class="badge bd" x-text="truenas.alerts.length"></span>
+                            <span class="badge bd" x-text="(truenas.alerts || []).length"></span>
                         </div>
 
                         <div x-show="truenas.vms && truenas.vms.length > 0" style="margin-top:.8rem;padding-top:.6rem;border-top:1px dashed var(--border)">
@@ -1018,7 +1018,7 @@
         </div>
 
         <div style="margin-bottom:.8rem; display:flex; align-items:center; gap:.5rem;">
-            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.82rem;color:var(--fg-dim)">
+            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.82rem;color:var(--text-muted)">
                 <input type="checkbox"
                        x-model="historyAnomalyEnabled"
                        @change="fetchHistory()"
@@ -1102,7 +1102,7 @@
         </div>
 
         <template x-if="smartData.length === 0">
-            <p style="color:var(--fg-dim);text-align:center;padding:1.5rem 0">
+            <p style="color:var(--text-muted);text-align:center;padding:1.5rem 0">
                 No SMART data available. Ensure <code>smartctl</code> is installed and disks are accessible.
             </p>
         </template>
@@ -1112,7 +1112,7 @@
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
                     <div>
                         <strong x-text="disk.device"></strong>
-                        <span style="color:var(--fg-dim);font-size:.82rem;margin-left:.5rem" x-text="disk.model || ''"></span>
+                        <span style="color:var(--text-muted);font-size:.82rem;margin-left:.5rem" x-text="disk.model || ''"></span>
                     </div>
                     <template x-if="!disk.error">
                         <span class="badge" :class="smartRiskClass(disk.risk_score)" x-text="smartRiskLabel(disk.risk_score)"></span>
@@ -1449,7 +1449,7 @@
             </div>
             <div class="s-section">
                 <span class="s-label">Voice Alerts</span>
-                <p style="font-size:.8rem;color:var(--fg-dim);margin:.2rem 0 .5rem">
+                <p style="font-size:.8rem;color:var(--text-muted);margin:.2rem 0 .5rem">
                     Speak critical (danger) alerts aloud using the browser's built-in speech synthesis.
                     Requires a user gesture to activate the first time.
                 </p>
@@ -1520,6 +1520,7 @@
                         <label class="field-label" for="new-role">Role</label>
                         <select id="new-role" x-model="newRole" class="theme-select">
                             <option value="viewer">viewer</option>
+                            <option value="operator">operator</option>
                             <option value="admin">admin</option>
                         </select>
                         <button class="btn btn-sm btn-primary" @click="addUser()" style="margin-left:1rem"><i class="fas fa-check" aria-hidden="true"></i> Save</button>

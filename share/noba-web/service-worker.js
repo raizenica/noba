@@ -33,6 +33,13 @@ self.addEventListener('activate', event => {
     );
 });
 
+// ── Message: handle logout cache clear ──────────────────────────────────────
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'LOGOUT') {
+        caches.delete(STATS_CACHE);
+    }
+});
+
 // ── Fetch: network-first for API, cache-first for static ────────────────────
 self.addEventListener('fetch', event => {
     const url = new URL(event.request.url);
@@ -52,7 +59,9 @@ self.addEventListener('fetch', event => {
                     const clone = res.clone();
                     caches.open(STATS_CACHE).then(c => c.put('/api/stats', clone));
                     return res;
-                }).catch(() => caches.match('/api/stats'))
+                }).catch(() =>
+                    caches.match('/api/stats').then(r => r || new Response('{}', { status: 503 }))
+                )
             );
             return;
         }
@@ -79,6 +88,7 @@ self.addEventListener('fetch', event => {
                 if (event.request.mode === 'navigate') {
                     return caches.match('/index.html');
                 }
+                return new Response('', { status: 503, statusText: 'Offline' });
             });
         })
     );

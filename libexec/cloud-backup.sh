@@ -30,6 +30,7 @@ LIST_REMOTES=false
 BANDWIDTH=""
 TRANSFERS=""
 RETRIES=3
+VERBOSE=false
 EXTRA_EXCLUDES=()
 LOG_DIR="${LOG_DIR:-$HOME/.local/share}"
 LOG_FILE="$LOG_DIR/cloud-backup.log"
@@ -187,6 +188,7 @@ while true; do
            --retries)      RETRIES="$2";              shift 2 ;;
            --exclude)      EXTRA_EXCLUDES+=("$2");    shift 2 ;;
            --no-progress)  SHOW_PROGRESS=false;       shift   ;;
+        -v|--verbose)      VERBOSE=true;              shift   ;;
         -h|--help)         show_help ;;
            --version)      show_version ;;
         --)                shift; break ;;

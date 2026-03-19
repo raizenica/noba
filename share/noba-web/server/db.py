@@ -20,39 +20,42 @@ class Database:
     def __init__(self, path: str = HISTORY_DB) -> None:
         self._path = path
         self._lock = threading.Lock()
+        self._conn: sqlite3.Connection | None = None
         self._init_schema()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        return conn
+    def _get_conn(self) -> sqlite3.Connection:
+        """Return persistent connection, creating if needed."""
+        if self._conn is None:
+            self._conn = sqlite3.connect(self._path, check_same_thread=False)
+            self._conn.execute("PRAGMA journal_mode=WAL;")
+            self._conn.execute("PRAGMA synchronous=NORMAL;")
+        return self._conn
 
     def _init_schema(self) -> None:
         import os
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
         with self._lock:
-            with self._connect() as conn:
-                conn.executescript("""
-                    CREATE TABLE IF NOT EXISTS metrics (
-                        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp INTEGER NOT NULL,
-                        metric    TEXT NOT NULL,
-                        value     REAL,
-                        tags      TEXT
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_metric_time ON metrics(metric, timestamp);
+            conn = self._get_conn()
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS metrics (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp INTEGER NOT NULL,
+                    metric    TEXT NOT NULL,
+                    value     REAL,
+                    tags      TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_metric_time ON metrics(metric, timestamp);
 
-                    CREATE TABLE IF NOT EXISTS audit (
-                        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp INTEGER NOT NULL,
-                        username  TEXT NOT NULL,
-                        action    TEXT NOT NULL,
-                        details   TEXT,
-                        ip        TEXT
-                    );
-                """)
+                CREATE TABLE IF NOT EXISTS audit (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp INTEGER NOT NULL,
+                    username  TEXT NOT NULL,
+                    action    TEXT NOT NULL,
+                    details   TEXT,
+                    ip        TEXT
+                );
+            """)
 
     # ── Metrics ───────────────────────────────────────────────────────────────
     def insert_metrics(self, metrics: list[tuple]) -> None:
@@ -61,11 +64,12 @@ class Database:
         rows = [(now, m, v, t) for m, v, t in metrics]
         try:
             with self._lock:
-                with self._connect() as conn:
-                    conn.executemany(
-                        "INSERT INTO metrics (timestamp, metric, value, tags) VALUES (?,?,?,?)",
-                        rows,
-                    )
+                conn = self._get_conn()
+                conn.executemany(
+                    "INSERT INTO metrics (timestamp, metric, value, tags) VALUES (?,?,?,?)",
+                    rows,
+                )
+                conn.commit()
         except Exception as e:
             logger.error("insert_metrics failed: %s", e)
 
@@ -84,7 +88,8 @@ class Database:
             GROUP BY slot
             ORDER BY slot ASC
         """
-        with self._connect() as conn:
+        with self._lock:
+            conn = self._get_conn()
             rows = conn.execute(sql, (resolution, resolution, metric, cutoff)).fetchall()
 
         points = [{"time": r[0], "value": round(r[1], 2)} for r in rows]
@@ -110,18 +115,22 @@ class Database:
         cutoff = int(time.time()) - HISTORY_RETENTION_DAYS * 86400
         try:
             with self._lock:
-                with self._connect() as conn:
-                    c = conn.execute(
-                        "SELECT COUNT(*) FROM metrics WHERE timestamp < ?", (cutoff,)
-                    )
-                    stale = c.fetchone()[0]
-                    if stale == 0:
-                        return
-                    conn.execute("DELETE FROM metrics WHERE timestamp < ?", (cutoff,))
-                    logger.info("History pruned: %d rows older than %d days", stale, HISTORY_RETENTION_DAYS)
-                    if stale > 50_000:
-                        conn.execute("VACUUM")
-                        logger.info("History DB vacuumed")
+                conn = self._get_conn()
+                c = conn.execute(
+                    "SELECT COUNT(*) FROM metrics WHERE timestamp < ?", (cutoff,)
+                )
+                stale = c.fetchone()[0]
+                if stale == 0:
+                    return
+                conn.execute("DELETE FROM metrics WHERE timestamp < ?", (cutoff,))
+                conn.commit()
+                logger.info("History pruned: %d rows older than %d days", stale, HISTORY_RETENTION_DAYS)
+            if stale > 50_000:
+                # VACUUM must run outside any transaction
+                with self._lock:
+                    conn = self._get_conn()
+                    conn.execute("VACUUM")
+                    logger.info("History DB vacuumed")
         except Exception as e:
             logger.error("prune_history failed: %s", e)
 
@@ -129,14 +138,15 @@ class Database:
         cutoff = int(time.time()) - AUDIT_RETENTION_DAYS * 86400
         try:
             with self._lock:
-                with self._connect() as conn:
-                    stale = conn.execute(
-                        "SELECT COUNT(*) FROM audit WHERE timestamp < ?", (cutoff,)
-                    ).fetchone()[0]
-                    if stale == 0:
-                        return
-                    conn.execute("DELETE FROM audit WHERE timestamp < ?", (cutoff,))
-                    logger.info("Audit pruned: %d rows older than %d days", stale, AUDIT_RETENTION_DAYS)
+                conn = self._get_conn()
+                stale = conn.execute(
+                    "SELECT COUNT(*) FROM audit WHERE timestamp < ?", (cutoff,)
+                ).fetchone()[0]
+                if stale == 0:
+                    return
+                conn.execute("DELETE FROM audit WHERE timestamp < ?", (cutoff,))
+                conn.commit()
+                logger.info("Audit pruned: %d rows older than %d days", stale, AUDIT_RETENTION_DAYS)
         except Exception as e:
             logger.error("prune_audit failed: %s", e)
 
@@ -146,17 +156,19 @@ class Database:
             details = details[:512] + "…"
         try:
             with self._lock:
-                with self._connect() as conn:
-                    conn.execute(
-                        "INSERT INTO audit (timestamp, username, action, details, ip) VALUES (?,?,?,?,?)",
-                        (int(time.time()), username, action, details, ip),
-                    )
+                conn = self._get_conn()
+                conn.execute(
+                    "INSERT INTO audit (timestamp, username, action, details, ip) VALUES (?,?,?,?,?)",
+                    (int(time.time()), username, action, details, ip),
+                )
+                conn.commit()
         except Exception as e:
             logger.error("audit_log failed: %s", e)
 
     def get_audit(self, limit: int = 100) -> list[dict]:
         try:
-            with self._connect() as conn:
+            with self._lock:
+                conn = self._get_conn()
                 rows = conn.execute(
                     "SELECT timestamp, username, action, details, ip FROM audit ORDER BY timestamp DESC LIMIT ?",
                     (limit,),

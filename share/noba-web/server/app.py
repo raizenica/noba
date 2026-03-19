@@ -66,7 +66,6 @@ def _cleanup_loop() -> None:
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db._init_schema()
     db.audit_log("system_start", "system", f"Noba v{VERSION} starting (FastAPI)")
     bg_collector.start()
     threading.Thread(target=_cleanup_loop, daemon=True, name="token-cleanup").start()
@@ -178,9 +177,9 @@ class _CachedStaticFiles(StaticFiles):
     async def __call__(self, scope, receive, send):
         async def _send_with_cache(msg):
             if msg["type"] == "http.response.start":
-                headers = dict(msg.get("headers", []))
-                headers[b"cache-control"] = b"public, max-age=3600"
-                msg["headers"] = list(headers.items())
+                headers = [(k, v) for k, v in msg.get("headers", []) if k != b"cache-control"]
+                headers.append((b"cache-control", b"public, max-age=3600"))
+                msg["headers"] = headers
             await send(msg)
         await super().__call__(scope, receive, _send_with_cache)
 
@@ -225,7 +224,7 @@ async def api_stream(request: Request, auth=Depends(_get_auth_sse)):
     shutdown = get_shutdown_flag()
 
     async def generate():
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         first = await loop.run_in_executor(None, lambda: bg_collector.get() or collect_stats(qs))
         yield f"data: {json.dumps(first)}\n\n"
         last_hb = time.time()
@@ -257,9 +256,10 @@ async def api_settings_post(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
     ok = write_yaml_settings(body)
-    db.audit_log("settings_update", username, "Updated web settings", _client_ip(request))
     if not ok:
+        db.audit_log("settings_update", username, "Settings update failed", _client_ip(request))
         raise HTTPException(500, "Failed to write settings")
+    db.audit_log("settings_update", username, "Updated web settings", _client_ip(request))
     return {"status": "ok"}
 
 
@@ -269,12 +269,13 @@ def api_notif_test(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     cfg = read_yaml_settings()
     notif_cfg = cfg.get("notifications", {})
-    if notif_cfg:
-        threading.Thread(
-            target=dispatch_notifications,
-            args=("info", "This is a test notification from NOBA", notif_cfg, None),
-            daemon=True,
-        ).start()
+    if not notif_cfg:
+        return {"status": "ok", "message": "No notification channels configured"}
+    threading.Thread(
+        target=dispatch_notifications,
+        args=("info", "This is a test notification from NOBA", notif_cfg, None),
+        daemon=True,
+    ).start()
     db.audit_log("test_notification", username, "Test notification triggered", _client_ip(request))
     return {"status": "ok", "message": "Notification sent"}
 
@@ -357,16 +358,22 @@ def api_config_backup(request: Request, auth=Depends(_require_admin)):
 @app.post("/api/config/restore")
 async def api_config_restore(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
-    content_length = int(request.headers.get("Content-Length", 0))
-    if content_length > 512 * 1024:
-        raise HTTPException(413, "Upload too large (max 512 KB)")
     raw = await request.body()
+    if len(raw) > 512 * 1024:
+        raise HTTPException(413, "Upload too large (max 512 KB)")
     if not raw:
         raise HTTPException(400, "Empty body")
     try:
-        raw.decode("utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise HTTPException(400, "Invalid file encoding (expected UTF-8 YAML)")
+    import yaml
+    try:
+        parsed = yaml.safe_load(text)
+        if not isinstance(parsed, dict):
+            raise HTTPException(400, "Config must be a YAML mapping")
+    except yaml.YAMLError as e:
+        raise HTTPException(400, f"Invalid YAML: {e}")
     os.makedirs(os.path.dirname(NOBA_YAML), exist_ok=True)
     tmp = NOBA_YAML + ".restore-tmp"
     with open(tmp, "wb") as f:
@@ -542,6 +549,10 @@ async def api_truenas_vm(request: Request, auth=Depends(_require_operator)):
     body = await _read_body(request)
     vm_id  = body.get("id")
     action = body.get("action")
+    try:
+        vm_id = int(vm_id)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid VM ID")
     if not vm_id or action not in ALLOWED_ACTIONS:
         raise HTTPException(400, "Invalid request")
     cfg = read_yaml_settings()
@@ -575,6 +586,8 @@ async def api_webhook(request: Request, auth=Depends(_require_operator)):
     hook = next((a for a in cfg.get("automations", []) if a.get("id") == hook_id), None)
     if not hook or not hook.get("url"):
         raise HTTPException(404, "Webhook not found in config")
+    if not hook["url"].startswith(("http://", "https://")):
+        raise HTTPException(400, "Invalid webhook URL scheme")
     import urllib.request as _ur
     try:
         method = hook.get("method", "POST").upper()
@@ -749,6 +762,8 @@ async def api_service_control(request: Request, auth=Depends(_require_operator))
             stderr = strip_ansi(r.stderr.decode().strip())
             raise HTTPException(422, stderr or f"systemctl {action} {svc} failed")
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Service control error: %s", e)
         db.audit_log("service_control", username, f"{action} {svc} failed: {e}", ip)
@@ -757,10 +772,9 @@ async def api_service_control(request: Request, auth=Depends(_require_operator))
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def _read_body(request: Request) -> dict:
-    content_length = int(request.headers.get("Content-Length", 0))
-    if content_length > MAX_BODY_BYTES:
-        raise HTTPException(413, "Request body too large")
     raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        raise HTTPException(413, "Request body too large")
     try:
         return json.loads(raw)
     except json.JSONDecodeError:

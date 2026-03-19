@@ -43,14 +43,18 @@ def collect_stats(qs: dict) -> dict:
     cfg = read_yaml_settings()
 
     # Parse query string / config values
-    svc_list  = [s.strip() for s in qs.get("services", [""])[0].split(",") if s.strip()]
-    ip_list   = [ip.strip() for ip in qs.get("radar", [""])[0].split(",") if ip.strip()]
-    ph_url    = cfg.get("piholeUrl",  "") or qs.get("pihole",    [""])[0]
-    ph_tok    = cfg.get("piholeToken","") or qs.get("piholetok", [""])[0]
-    plex_url  = cfg.get("plexUrl",    "") or qs.get("plexUrl",   [""])[0]
-    plex_tok  = cfg.get("plexToken",  "") or qs.get("plexToken", [""])[0]
-    kuma_url  = cfg.get("kumaUrl",    "") or qs.get("kumaUrl",   [""])[0]
-    bmc_map   = [x.strip() for x in qs.get("bmcMap", [""])[0].split(",") if x.strip()]
+    def _qs0(key: str) -> str:
+        v = qs.get(key, [""])
+        return v[0] if v else ""
+
+    svc_list  = [s.strip() for s in _qs0("services").split(",") if s.strip()]
+    ip_list   = [ip.strip() for ip in _qs0("radar").split(",") if ip.strip()]
+    ph_url    = cfg.get("piholeUrl",  "") or _qs0("pihole")
+    ph_tok    = cfg.get("piholeToken","") or _qs0("piholetok")
+    plex_url  = cfg.get("plexUrl",    "") or _qs0("plexUrl")
+    plex_tok  = cfg.get("plexToken",  "") or _qs0("plexToken")
+    kuma_url  = cfg.get("kumaUrl",    "") or _qs0("kumaUrl")
+    bmc_map   = [x.strip() for x in _qs0("bmcMap").split(",") if x.strip()]
     tn_url    = cfg.get("truenasUrl",         "")
     tn_key    = cfg.get("truenasKey",         "")
     rad_url   = cfg.get("radarrUrl",          "")
