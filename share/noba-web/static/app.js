@@ -431,6 +431,7 @@ function dashboard() {
         // FIXED: plain object instead of Set so Alpine reactivity works correctly
         _dismissedAlerts: {},
         _allCollapsed: false,
+        glanceMode: false,
 
         // ── Context menu ─────────────────────────────────────────────────────
         ctxMenu: { show: false, x: 0, y: 0, card: '' },
@@ -646,6 +647,7 @@ function dashboard() {
                 else if (key === kb.audit && this.userRole === 'admin') { this.showAuditModal = true; this.fetchAuditLog(); }
                 else if (key === kb.filter) { e.preventDefault(); const el = document.querySelector('.svc-filter'); if (el) el.focus(); }
                 else if (key === kb.terminal && this.userRole === 'admin') { this.showTerminal = true; }
+                else if (key === 'g') { this.glanceMode = !this.glanceMode; }
             };
             document.addEventListener('keydown', this._keydownHandler);
         },
@@ -1207,6 +1209,26 @@ function dashboard() {
             this._term = term;
             this._termSocket = ws;
             this._termResizeObserver = ro;
+        },
+
+        renderSparkline(el, values, color) {
+            if (!el || !values || values.length < 2) return;
+            const w = el.clientWidth || 200;
+            const h = 40;
+            const max = Math.max(...values, 1);
+            const min = Math.min(...values, 0);
+            const range = max - min || 1;
+            const points = values.map((v, i) => {
+                const x = (i / (values.length - 1)) * w;
+                const y = h - ((v - min) / range) * (h - 4) - 2;
+                return `${x},${y}`;
+            }).join(' ');
+            const fillPoints = points + ` ${w},${h} 0,${h}`;
+            const c = color || 'var(--accent)';
+            el.innerHTML = `<svg class="sparkline" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+                <polygon class="spark-fill" points="${fillPoints}" style="fill:${c}"/>
+                <polyline points="${points}" style="stroke:${c}"/>
+            </svg>`;
         },
 
         closeTerminal() {

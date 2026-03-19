@@ -139,6 +139,10 @@
                 <span x-show="unreadCount>0" class="notif-badge" x-text="unreadCount" x-cloak></span>
             </button>
 
+            <button class="icon-btn" @click="glanceMode = !glanceMode" :title="glanceMode ? 'Expand cards' : 'Quick glance (g)'" x-show="authenticated" x-cloak>
+                <i class="fas" :class="glanceMode ? 'fa-th-large' : 'fa-th-list'"></i>
+            </button>
+
             <button class="icon-btn" @click="_allCollapsed = !_allCollapsed; collapseAll(_allCollapsed)"
                     :title="_allCollapsed ? 'Expand all' : 'Collapse all'"
                     :aria-label="_allCollapsed ? 'Expand all cards' : 'Collapse all cards'">
@@ -169,6 +173,16 @@
             </button>
         </div>
     </header>
+
+    <div class="health-bar" x-show="authenticated" x-cloak title="Service Health">
+        <div class="health-pip" :class="(services||[]).some(s=>s.running) ? 'ok' : 'off'" title="Services"></div>
+        <div class="health-pip" :class="scrutiny ? (scrutiny.failed > 0 ? 'fail' : scrutiny.warn > 0 ? 'warn' : 'ok') : 'off'" title="Disks"></div>
+        <div class="health-pip" :class="tailscale ? (tailscale.onlineCount === tailscale.totalCount ? 'ok' : 'warn') : 'off'" title="Tailscale"></div>
+        <div class="health-pip" :class="frigate ? (frigate.onlineCount === frigate.cameraCount ? 'ok' : frigate.onlineCount > 0 ? 'warn' : 'fail') : 'off'" title="Cameras"></div>
+        <div class="health-pip" :class="radar ? (radar.every(r=>r.status==='Up') ? 'ok' : 'warn') : 'off'" title="Network"></div>
+        <div class="health-pip" :class="pihole ? 'ok' : 'off'" title="DNS"></div>
+        <div class="health-pip" :class="containers ? 'ok' : 'off'" title="Containers"></div>
+    </div>
 
     <!-- Notification Center Panel -->
     <div class="notif-panel" x-show="notifCenter" x-cloak @click.outside="notifCenter=false">
@@ -216,9 +230,9 @@
     </div>
 
     <main>
-    <div class="grid" id="sortable-grid" x-cloak>
+    <div class="grid" :class="{'glance-mode': glanceMode}" id="sortable-grid" x-cloak>
 
-        <div class="card" data-id="card-core" x-show="vis.core" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card" data-id="card-core" x-show="vis.core" :data-health="(cpuPercent||0) > 90 ? 'fail' : (cpuPercent||0) > 70 ? 'warn' : 'ok'" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-microchip card-icon" aria-hidden="true"></i>
                 <span class="card-title" id="hdr-core">Core System</span>
@@ -270,6 +284,7 @@
                         <div class="spark-val" x-text="cpuPercent + '%'" aria-hidden="true"></div>
                     </div>
                 </div>
+                <div x-ref="cpuSpark" x-effect="renderSparkline($refs.cpuSpark, cpuHistory, 'var(--accent)')"></div>
                 <div class="prog" style="margin-top:.65rem">
                     <div class="prog-meta">
                         <span>MEMORY</span>
@@ -375,6 +390,7 @@
                         </div>
                     </template>
                 </div>
+                <div x-ref="netSpark" x-effect="if(netInterfaces) renderSparkline($refs.netSpark, (netInterfaces||[]).map(n=>n.rx_bytes||0).slice(-30))"></div>
             </div>
         </div>
 
@@ -689,7 +705,7 @@
         </div>
 
         <!-- ── Scrutiny (Disk SMART Health) ────────────────────────────── -->
-        <div class="card" data-id="card-scrutiny" x-show="vis.scrutiny && scrutiny" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card" data-id="card-scrutiny" x-show="vis.scrutiny && scrutiny" :data-health="scrutiny ? (scrutiny.failed > 0 ? 'fail' : scrutiny.warn > 0 ? 'warn' : 'ok') : ''" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon" style="color:#e5c07b" aria-hidden="true"></i>
                 <span class="card-title">Disk Health</span>
@@ -742,7 +758,7 @@
         </div>
 
         <!-- ── Tailscale Network ────────────────────────────────────────── -->
-        <div class="card" data-id="card-tailscale" x-show="vis.tailscale && tailscale" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card" data-id="card-tailscale" x-show="vis.tailscale && tailscale" :data-health="tailscale ? (tailscale.onlineCount === tailscale.totalCount ? 'ok' : 'warn') : ''" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-network-wired card-icon" style="color:#56b6c2" aria-hidden="true"></i>
                 <span class="card-title">Tailscale</span>
@@ -764,7 +780,7 @@
         </div>
 
         <!-- ── Frigate Cameras ──────────────────────────────────────────── -->
-        <div class="card" data-id="card-frigate" x-show="vis.frigate && frigateUrl && frigate" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card" data-id="card-frigate" x-show="vis.frigate && frigateUrl && frigate" :data-health="frigate ? (frigate.onlineCount === frigate.cameraCount ? 'ok' : 'fail') : ''" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-video card-icon" style="color:#e06c75" aria-hidden="true"></i>
                 <span class="card-title">Cameras</span>
@@ -1656,7 +1672,7 @@
             </div>
         </div>
 
-        <div class="card span-full" data-id="card-services" x-show="vis.services" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+        <div class="card span-full" data-id="card-services" x-show="vis.services" :data-health="(services||[]).every(s=>s.running) ? 'ok' : (services||[]).some(s=>s.running) ? 'warn' : 'fail'" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-cogs card-icon" aria-hidden="true"></i>
                 <span class="card-title">Services</span>
