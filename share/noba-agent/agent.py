@@ -488,6 +488,82 @@ def _cmd_ping(_params: dict, _ctx: dict) -> dict:
     return {"status": "ok", "pong": int(time.time()), "version": VERSION}
 
 
+def _cmd_get_logs(params: dict, _ctx: dict) -> dict:
+    """Fetch recent journalctl logs for a service or system-wide."""
+    import subprocess
+    unit = params.get("unit", "")
+    lines = min(params.get("lines", 50), 200)
+    priority = params.get("priority", "")  # e.g., "err" for errors only
+    cmd = ["journalctl", "--no-pager", "-n", str(lines)]
+    if unit:
+        import re
+        if not re.match(r'^[a-zA-Z0-9@._-]+$', unit):
+            return {"status": "error", "error": "Invalid unit name"}
+        cmd.extend(["-u", unit])
+    if priority:
+        cmd.extend(["-p", priority])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        return {"status": "ok", "stdout": result.stdout[:_CMD_MAX_OUTPUT]}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+def _cmd_check_service(params: dict, _ctx: dict) -> dict:
+    """Get detailed systemd service status."""
+    import subprocess
+    import re
+    service = params.get("service", "")
+    if not service or not re.match(r'^[a-zA-Z0-9@._-]+$', service):
+        return {"status": "error", "error": "Invalid service name"}
+    try:
+        result = subprocess.run(
+            ["systemctl", "status", service, "--no-pager"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return {"status": "ok", "stdout": result.stdout[:_CMD_MAX_OUTPUT], "exit_code": result.returncode}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+def _cmd_network_test(params: dict, _ctx: dict) -> dict:
+    """Ping or traceroute from the agent's perspective."""
+    import subprocess
+    import re
+    target = params.get("target", "")
+    mode = params.get("mode", "ping")  # "ping" or "trace"
+    if not target or not re.match(r'^[a-zA-Z0-9._:-]+$', target):
+        return {"status": "error", "error": "Invalid target"}
+    if mode == "trace":
+        cmd = ["traceroute", "-n", "-m", "10", "-w", "2", target]
+    else:
+        cmd = ["ping", "-c", "4", "-W", "2", target]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        return {"status": "ok", "stdout": result.stdout[:_CMD_MAX_OUTPUT]}
+    except FileNotFoundError:
+        return {"status": "error", "error": f"{mode} not installed"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+def _cmd_package_updates(params: dict, _ctx: dict) -> dict:
+    """Check for available package updates."""
+    import subprocess
+    for cmd in [
+        ["apt", "list", "--upgradable"],
+        ["dnf", "check-update"],
+        ["pkg", "version", "-vIL="],
+    ]:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            lines = [l for l in result.stdout.strip().split("\n") if l.strip() and "Listing" not in l]
+            return {"status": "ok", "count": len(lines), "stdout": "\n".join(lines[:50])}
+        except FileNotFoundError:
+            continue
+    return {"status": "error", "error": "No supported package manager found"}
+
+
 def execute_commands(commands: list, ctx: dict) -> list:
     """Execute a list of commands and return results."""
     results = []
@@ -497,6 +573,10 @@ def execute_commands(commands: list, ctx: dict) -> list:
         "update_agent": _cmd_update_agent,
         "set_interval": _cmd_set_interval,
         "ping": _cmd_ping,
+        "get_logs": _cmd_get_logs,
+        "check_service": _cmd_check_service,
+        "network_test": _cmd_network_test,
+        "package_updates": _cmd_package_updates,
     }
     for cmd in commands[:10]:  # Max 10 commands per cycle
         cmd_type = cmd.get("type", "")

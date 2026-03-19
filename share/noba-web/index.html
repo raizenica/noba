@@ -5082,11 +5082,37 @@
                                         <div style="opacity:.7"><span x-text="p.name"></span> <span x-text="p.cpu+'%'"></span></div>
                                     </template>
                                 </div>
+                                <!-- Quick command buttons -->
+                                <div x-show="a.online && userRole==='admin'" style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.3rem">
+                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'ping')" title="Ping"><i class="fas fa-heartbeat"></i></button>
+                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'df -h'})" title="Disk usage"><i class="fas fa-hdd"></i></button>
+                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'uptime && free -h'})" title="System info"><i class="fas fa-info-circle"></i></button>
+                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'journalctl --no-pager -n 20 -p err'})" title="Recent errors"><i class="fas fa-exclamation-circle"></i></button>
+                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'apt list --upgradable 2>/dev/null | head -20 || dnf check-update 2>/dev/null | tail -20'})" title="Check updates"><i class="fas fa-download"></i></button>
+                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'update_agent')" title="Update agent"><i class="fas fa-sync"></i></button>
+                                </div>
+                                <!-- Command result display -->
+                                <div x-show="agentCmdOutput[a.hostname]" style="margin-top:.4rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:.3rem .5rem;font-family:var(--font-data);font-size:.6rem;max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-all" x-text="agentCmdOutput[a.hostname]"></div>
                             </div>
                         </div>
                     </template>
                 </div>
             </template>
+            <!-- Custom command input -->
+            <div x-show="agents && agents.length > 0 && userRole==='admin'" style="margin-top:1rem;padding:.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)">
+                <div style="font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.4rem">Remote Command</div>
+                <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+                    <select class="field-select" x-model="agentCmdTarget" style="width:140px;font-size:.75rem">
+                        <option value="">Select agent...</option>
+                        <template x-for="a in (agents||[]).filter(a=>a.online)" :key="a.hostname">
+                            <option :value="a.hostname" x-text="a.hostname"></option>
+                        </template>
+                        <option value="__all__">All agents</option>
+                    </select>
+                    <input class="field-input" type="text" x-model="agentCmdInput" placeholder="command to execute..." @keyup.enter="sendAgentExec()" style="flex:1;font-size:.75rem;font-family:var(--font-data)">
+                    <button class="btn btn-primary btn-sm" @click="sendAgentExec()" :disabled="!agentCmdTarget || !agentCmdInput.trim() || agentCmdSending"><i class="fas fa-terminal"></i> Run</button>
+                </div>
+            </div>
             <div x-show="!agents || agents.length===0" class="empty-msg">No agents reporting. Deploy agents to remote nodes to see their metrics here.</div>
         </div>
     </div>

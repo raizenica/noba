@@ -3931,7 +3931,8 @@ async def api_agent_command(hostname: str, request: Request, auth=Depends(_requi
     body = await _read_body(request)
     cmd_type = body.get("type", "")
     params = body.get("params", {})
-    valid_types = {"exec", "restart_service", "update_agent", "set_interval", "ping"}
+    valid_types = {"exec", "restart_service", "update_agent", "set_interval", "ping",
+                    "get_logs", "check_service", "network_test", "package_updates"}
     if cmd_type not in valid_types:
         raise HTTPException(400, f"Invalid command type. Valid: {', '.join(sorted(valid_types))}")
     import secrets

@@ -379,6 +379,7 @@ function dashboard() {
         showCorrelateModal: false, correlateMetrics: '', correlateHours: 6, correlateData: null, correlateLoading: false,
         showGraylogModal: false, graylogQuery: '*', graylogResults: null, graylogLoading: false,
         agentKeys: '', statusPageServices: '', graylogUrl: '', graylogToken: '',
+        agentCmdTarget: '', agentCmdInput: '', agentCmdSending: false, agentCmdOutput: {},
 
         // ── Live data ──────────────────────────────────────────────────────────
         timestamp: '--:--', uptime: '--', loadavg: '--', memory: '--',

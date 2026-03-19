@@ -2513,6 +2513,61 @@ function actionsMixin() {
         },
 
 
+        // -- Agent Commands ---------------------------------------------------
+
+        async sendAgentCmd(hostname, type, params = {}) {
+            try {
+                const res = await fetch(`/api/agents/${encodeURIComponent(hostname)}/command`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type, params }),
+                });
+                if (res.ok) {
+                    const d = await res.json();
+                    this.addToast(`Command queued for ${hostname} (${type})`, 'success');
+                    // Poll for results after a delay
+                    setTimeout(() => this.pollAgentResult(hostname), 5000);
+                    setTimeout(() => this.pollAgentResult(hostname), 15000);
+                    setTimeout(() => this.pollAgentResult(hostname), 35000);
+                } else {
+                    this.addToast('Failed to queue command', 'error');
+                }
+            } catch (e) { this.addToast('Command error: ' + e.message, 'error'); }
+        },
+
+        async sendAgentExec() {
+            if (!this.agentCmdTarget || !this.agentCmdInput.trim()) return;
+            this.agentCmdSending = true;
+            const targets = this.agentCmdTarget === '__all__'
+                ? (this.agents || []).filter(a => a.online).map(a => a.hostname)
+                : [this.agentCmdTarget];
+            for (const host of targets) {
+                await this.sendAgentCmd(host, 'exec', { command: this.agentCmdInput });
+            }
+            this.agentCmdSending = false;
+        },
+
+        async pollAgentResult(hostname) {
+            try {
+                const res = await fetch(`/api/agents/${encodeURIComponent(hostname)}/results`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) {
+                    const results = await res.json();
+                    if (results.length > 0) {
+                        const last = results[results.length - 1];
+                        let output = '';
+                        if (last.stdout) output = last.stdout;
+                        else if (last.pong) output = `pong v${last.version || '?'}`;
+                        else if (last.message) output = last.message;
+                        else if (last.error) output = `Error: ${last.error}`;
+                        else output = JSON.stringify(last);
+                        this.agentCmdOutput = { ...this.agentCmdOutput, [hostname]: output.trim() };
+                    }
+                }
+            } catch { /* silent */ }
+        },
+
         // -- Incident Timeline (Round 11) ------------------------------------
 
         async fetchIncidents(hours) {
