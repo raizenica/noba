@@ -1008,22 +1008,28 @@ function dashboard() {
                 const d = await res.json();
                 this.notifications = d.notifications || [];
                 this.unreadCount = d.unread_count || 0;
-            } catch { /* silent */ }
+            } catch {
+                // Keep previous state on failure — don't clear notifications
+            }
         },
 
         async markNotifRead(id) {
-            await fetch(`/api/notifications/${id}/read`, {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + this._token() },
-            });
+            try {
+                await fetch(`/api/notifications/${id}/read`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+            } catch { /* silent */ }
             this.fetchNotifications();
         },
 
         async markAllNotifsRead() {
-            await fetch('/api/notifications/read-all', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + this._token() },
-            });
+            try {
+                await fetch('/api/notifications/read-all', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+            } catch { /* silent */ }
             this.fetchNotifications();
         },
 

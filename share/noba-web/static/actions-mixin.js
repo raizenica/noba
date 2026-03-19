@@ -1455,7 +1455,10 @@ function actionsMixin() {
                     headers: { 'Authorization': 'Bearer ' + this._token() },
                 });
                 if (res.ok) this.apiKeys = await res.json();
-            } catch { /* silent */ }
+                else this.addToast('Failed to load API keys', 'error');
+            } catch (e) {
+                this.addToast('Failed to fetch API keys: ' + e.message, 'error');
+            }
         },
 
         /** Create a new API key. */
@@ -1468,12 +1471,18 @@ function actionsMixin() {
                     body: JSON.stringify({ name: this.newApiKeyName, role: this.newApiKeyRole }),
                 });
                 const d = await res.json();
-                if (d.key) {
-                    this.lastCreatedKey = d.key;
-                    this.addToast('API key created — copy it now, it won\'t be shown again', 'success');
-                    this.newApiKeyName = '';
-                    this.fetchApiKeys();
+                if (!res.ok) {
+                    this.addToast(d.detail || 'Failed to create key', 'error');
+                    return;
                 }
+                if (!d.key) {
+                    this.addToast('Server returned no key', 'error');
+                    return;
+                }
+                this.lastCreatedKey = d.key;
+                this.addToast('API key created — copy it now, it won\'t be shown again', 'success');
+                this.newApiKeyName = '';
+                this.fetchApiKeys();
             } catch (e) {
                 this.addToast('Failed to create key: ' + e.message, 'error');
             }
@@ -1482,10 +1491,15 @@ function actionsMixin() {
         /** Delete an API key by ID. */
         async deleteApiKey(keyId) {
             if (!confirm('Delete this API key?')) return;
-            await fetch(`/api/admin/api-keys/${keyId}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': 'Bearer ' + this._token() },
-            });
+            try {
+                await fetch(`/api/admin/api-keys/${keyId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                this.addToast('API key deleted', 'success');
+            } catch (e) {
+                this.addToast('Delete failed: ' + e.message, 'error');
+            }
             this.fetchApiKeys();
         },
 
