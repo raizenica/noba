@@ -91,6 +91,12 @@ WEB_KEYS = frozenset([
     "scrutinyUrl",
     # RSS triggers
     "rssTriggers",
+    # Round 10 – Deep features
+    "piholePassword",
+    "siteMap", "siteNames",
+    "frigateUrl",
+    "serviceDependencies",
+    "influxdbUrl", "influxdbToken", "influxdbOrg",
 ])
 _NOTIF_WEB_KEYS = frozenset([
     "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",

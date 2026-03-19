@@ -13,7 +13,7 @@ from .metrics import (
     get_cpu_percent, get_cpu_history, get_service_status, ping_host, get_containers,
     collect_disk_io, collect_per_interface_net,
     check_cert_expiry, check_device_presence, check_domain_expiry, get_vpn_status,
-    check_docker_updates, snapshot_top_processes,
+    check_docker_updates, snapshot_top_processes, get_tailscale_status,
 )
 from .integrations import (
     get_pihole, get_plex, get_kuma, get_truenas, get_servarr, get_qbit, get_proxmox,
@@ -22,7 +22,7 @@ from .integrations import (
     get_nextcloud, get_traefik, get_npm, get_authentik, get_cloudflare, get_omv, get_xcpng,
     get_homebridge, get_z2m, get_esphome, get_unifi_protect, get_pikvm, get_k8s,
     get_gitea, get_gitlab, get_github, get_paperless, get_vaultwarden, get_weather,
-    get_energy_shelly, get_scrutiny,
+    get_energy_shelly, get_scrutiny, get_frigate,
 )
 from .cache import cache as _cache
 from .alerts import build_threshold_alerts, check_anomalies, evaluate_alert_rules
@@ -152,6 +152,8 @@ def collect_stats(qs: dict) -> dict:
     presence_ips = [x.strip() for x in cfg.get("devicePresenceIps", "").split(",") if x.strip()]
     scrutiny_url = cfg.get("scrutinyUrl", "")
     energy_urls  = [x.strip() for x in cfg.get("energySensors", "").split(",") if x.strip()]
+    frigate_url  = cfg.get("frigateUrl", "")
+    pihole_pass  = cfg.get("piholePassword", "")
 
     bmc_list = []
     for entry in bmc_map:
@@ -167,7 +169,7 @@ def collect_stats(qs: dict) -> dict:
     wan_fut   = _pool.submit(ping_host, wan_ip) if wan_ip else None
     lan_fut   = _pool.submit(ping_host, lan_ip) if lan_ip else None
 
-    ph_fut    = _pool.submit(get_pihole,  ph_url, ph_tok)   if ph_url  else None
+    ph_fut    = _pool.submit(get_pihole,  ph_url, ph_tok, pihole_pass) if ph_url else None
     plex_fut  = _pool.submit(get_plex,    plex_url, plex_tok) if plex_url else None
     kuma_fut  = _pool.submit(get_kuma,    kuma_url)          if kuma_url else None
     ct_fut    = _pool.submit(get_containers)
@@ -218,6 +220,8 @@ def collect_stats(qs: dict) -> dict:
     presence_fut = _pool.submit(check_device_presence, presence_ips) if presence_ips else None
     scrutiny_fut = _pool.submit(get_scrutiny, scrutiny_url) if scrutiny_url else None
     energy_fut   = _pool.submit(get_energy_shelly, energy_urls) if energy_urls else None
+    frigate_fut  = _pool.submit(get_frigate, frigate_url) if frigate_url else None
+    tailscale_fut = _pool.submit(get_tailscale_status)
 
     # Docker image update check — only every 5th cycle to avoid registry spam
     global _docker_update_cycle
@@ -333,6 +337,8 @@ def collect_stats(qs: dict) -> dict:
     stats["devicePresence"] = _get(presence_fut, default=[])
     stats["scrutiny"]       = _get(scrutiny_fut)
     stats["energy"]         = _get(energy_fut, default=[])
+    stats["frigate"]        = _get(frigate_fut)
+    stats["tailscale"]      = _get(tailscale_fut)
 
     stats.update(collect_disk_io())
     stats.update(collect_per_interface_net())

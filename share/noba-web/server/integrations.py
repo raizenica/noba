@@ -33,16 +33,48 @@ def _http_get(url: str, headers: dict | None = None, timeout: int = 4) -> dict |
     return r.json()
 
 
+# ── Pi-hole v6 session cache ────────────────────────────────────────────────
+import threading  # noqa: E402
+import time  # noqa: E402
+
+_pihole_sessions: dict[str, tuple[str, float]] = {}
+_pihole_session_lock = threading.Lock()
+
+
+def _pihole_v6_auth(base: str, password: str) -> str:
+    """Authenticate to Pi-hole v6 and return session ID."""
+    with _pihole_session_lock:
+        cached = _pihole_sessions.get(base)
+        if cached and time.time() < cached[1]:
+            return cached[0]
+    try:
+        r = _client.post(f"{base}/api/auth", json={"password": password}, timeout=4)
+        data = r.json()
+        sid = data.get("session", {}).get("sid") or ""
+        if sid:
+            with _pihole_session_lock:
+                _pihole_sessions[base] = (sid, time.time() + 280)  # ~5min TTL
+        return sid
+    except (httpx.HTTPError, ValueError):
+        return ""
+
+
 # ── Pi-hole ───────────────────────────────────────────────────────────────────
-def get_pihole(url: str, token: str) -> dict | None:
+def get_pihole(url: str, token: str, password: str = "") -> dict | None:
     if not url:
         return None
     base = (url if url.startswith("http") else "http://" + url).rstrip("/").replace("/admin", "")
     hdrs = {"User-Agent": f"noba-web/{VERSION}", "Accept": "application/json"}
-    if token:
-        hdrs["sid"] = token
 
-    # v6 API
+    # v6 API — authenticate with password or token
+    sid = ""
+    if password:
+        sid = _pihole_v6_auth(base, password)
+    if not sid and token:
+        sid = token
+    if sid:
+        hdrs["sid"] = sid
+
     try:
         data = _http_get(f"{base}/api/stats/summary", hdrs)
         return {
@@ -53,7 +85,24 @@ def get_pihole(url: str, token: str) -> dict | None:
             "domains": f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}",
         }
     except (httpx.HTTPError, KeyError, ValueError):
-        pass
+        # If auth error and password set, clear cache and retry once
+        if password:
+            with _pihole_session_lock:
+                _pihole_sessions.pop(base, None)
+            sid = _pihole_v6_auth(base, password)
+            if sid:
+                hdrs["sid"] = sid
+                try:
+                    data = _http_get(f"{base}/api/stats/summary", hdrs)
+                    return {
+                        "queries": data.get("queries", {}).get("total", 0),
+                        "blocked": data.get("ads", {}).get("blocked", 0),
+                        "percent": round(data.get("ads", {}).get("percentage", 0.0), 1),
+                        "status":  data.get("gravity", {}).get("status", "unknown"),
+                        "domains": f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}",
+                    }
+                except (httpx.HTTPError, KeyError, ValueError):
+                    pass
 
     # v5 legacy API
     try:
@@ -1162,4 +1211,147 @@ def get_scrutiny(url: str) -> dict | None:
             "device_list": device_list,
         }
     except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Frigate NVR ─────────────────────────────────────────────────────────────
+def get_frigate(url: str) -> dict | None:
+    """Fetch camera list and status from Frigate NVR."""
+    if not url:
+        return None
+    base = url.rstrip("/")
+    try:
+        stats = _http_get(f"{base}/api/stats", timeout=6)
+        config = _http_get(f"{base}/api/config", timeout=6)
+        cameras = []
+        cam_configs = config.get("cameras", {})
+        for name, cfg in cam_configs.items():
+            cam_stats = stats.get(name, {})
+            cameras.append({
+                "name": name,
+                "fps": cam_stats.get("camera_fps", 0),
+                "detect": cfg.get("detect", {}).get("enabled", False),
+                "record": cfg.get("record", {}).get("enabled", False),
+                "status": "online" if cam_stats.get("camera_fps", 0) > 0 else "offline",
+            })
+        svc = stats.get("service", {})
+        return {
+            "cameras": cameras,
+            "cameraCount": len(cameras),
+            "onlineCount": sum(1 for c in cameras if c["status"] == "online"),
+            "version": svc.get("version", ""),
+            "uptime": svc.get("uptime", 0),
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Scrutiny Intelligence ───────────────────────────────────────────────────
+def get_scrutiny_intelligence(url: str) -> list[dict] | None:
+    """Fetch SMART attribute history and compute failure predictions."""
+    if not url:
+        return None
+    base = url.rstrip("/")
+    try:
+        summary_data = _http_get(f"{base}/api/summary", timeout=10)
+        summary = summary_data.get("data", {}).get("summary", {})
+        if not summary:
+            return None
+        predictions = []
+        for wwn, info in summary.items():
+            dev = info.get("device", {})
+            smart = info.get("smart", {})
+            status = dev.get("device_status", 3)
+            hours = smart.get("power_on_hours") or 0
+            temp = smart.get("temp") or 0
+            # Try to get detailed SMART history
+            risk_score = 0
+            growth_rate = 0.0
+            estimated = ""
+            try:
+                detail = _http_get(f"{base}/api/device/{wwn}/details", timeout=8)
+                results = detail.get("data", {}).get("smart_results", [])
+                if len(results) >= 2:
+                    # Check reallocated sectors (attr 5) trend
+                    attr5_vals = []
+                    for r in results:
+                        attrs = r.get("attrs", {})
+                        a5 = attrs.get("5", {})
+                        if a5:
+                            attr5_vals.append((r.get("date", ""), a5.get("raw_value", 0)))
+                    if len(attr5_vals) >= 2 and attr5_vals[0][1] != attr5_vals[-1][1]:
+                        total_growth = attr5_vals[-1][1] - attr5_vals[0][1]
+                        # Simple rate (sectors per month estimate)
+                        months = max(len(attr5_vals), 1)
+                        growth_rate = round(total_growth / months, 1)
+                        risk_score = min(100, int(growth_rate * 10 + (30 if status >= 2 else 0)))
+                        if growth_rate > 0:
+                            # Rough estimate: threshold ~4000 sectors
+                            remaining = max(0, 4000 - attr5_vals[-1][1])
+                            months_to_fail = remaining / growth_rate if growth_rate > 0 else 999
+                            if months_to_fail < 120:
+                                from datetime import datetime, timedelta  # noqa: PLC0415
+                                est_date = datetime.now() + timedelta(days=months_to_fail * 30)
+                                estimated = est_date.strftime("%Y-%m")
+                    elif status >= 2:
+                        risk_score = 25  # Failed status but stable attributes
+            except (httpx.HTTPError, KeyError, ValueError):
+                if status >= 2:
+                    risk_score = 20
+            predictions.append({
+                "wwn": wwn,
+                "name": dev.get("device_name", ""),
+                "model": dev.get("model_name", ""),
+                "serial": dev.get("serial_number", ""),
+                "status": status,
+                "temp": temp,
+                "powerOnHours": hours,
+                "riskScore": risk_score,
+                "growthRate": growth_rate,
+                "estimatedFailure": estimated,
+            })
+        predictions.sort(key=lambda d: d["riskScore"], reverse=True)
+        return predictions
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── InfluxDB v2 ─────────────────────────────────────────────────────────────
+def query_influxdb(url: str, token: str, org: str, query: str) -> list[dict] | None:
+    """Execute a Flux query against InfluxDB v2 and return results."""
+    if not url or not token or not query:
+        return None
+    base = url.rstrip("/")
+    try:
+        r = _client.post(
+            f"{base}/api/v2/query",
+            params={"org": org},
+            headers={
+                "Authorization": f"Token {token}",
+                "Content-Type": "application/vnd.flux",
+                "Accept": "application/csv",
+            },
+            content=query,
+            timeout=15,
+        )
+        r.raise_for_status()
+        # Parse CSV response
+        lines = r.text.strip().split("\n")
+        if len(lines) < 2:
+            return []
+        headers = lines[0].split(",")
+        results = []
+        for line in lines[1:]:
+            if not line.strip() or line.startswith(",result"):
+                continue
+            cols = line.split(",")
+            row = {}
+            for i, h in enumerate(headers):
+                if i < len(cols) and h.strip() and h.strip() not in ("", "result", "table"):
+                    row[h.strip()] = cols[i].strip()
+            if row:
+                results.append(row)
+        return results[:1000]  # Limit to 1000 rows
+    except (httpx.HTTPError, ValueError):
         return None

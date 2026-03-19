@@ -946,3 +946,52 @@ def query_source_server(host: str, port: int) -> dict:
             }
     except Exception:
         return {"host": host, "port": port, "status": "offline"}
+
+
+# ── Tailscale ────────────────────────────────────────────────────────────────
+def get_tailscale_status() -> dict | None:
+    """Get Tailscale network status via CLI."""
+    try:
+        raw = _run(["tailscale", "status", "--json"], timeout=10,
+                   cache_key="tailscale_status", cache_ttl=30)
+        if not raw:
+            return None
+        import json as _json  # noqa: PLC0415
+        data = _json.loads(raw)
+        self_node = data.get("Self", {})
+        peers_raw = data.get("Peer", {})
+        peers = []
+        for _key, p in peers_raw.items():
+            ips = p.get("TailscaleIPs", [])
+            peers.append({
+                "hostname": p.get("HostName", ""),
+                "ip": ips[0] if ips else "",
+                "os": p.get("OS", ""),
+                "online": p.get("Online", False),
+                "active": p.get("Active", False),
+                "direct": "Direct" in str(p.get("CurAddr", "")),
+                "curAddr": p.get("CurAddr", ""),
+                "rxBytes": p.get("RxBytes", 0),
+                "txBytes": p.get("TxBytes", 0),
+                "lastSeen": p.get("LastSeen", ""),
+                "exitNode": p.get("ExitNode", False),
+                "subnets": [r for r in p.get("AllowedIPs", [])
+                           if not r.endswith("/32") and not r.endswith("/128")],
+                "tags": p.get("Tags", []),
+            })
+        self_ips = self_node.get("TailscaleIPs", [])
+        online_count = sum(1 for p in peers if p["online"])
+        return {
+            "self": {
+                "hostname": self_node.get("HostName", ""),
+                "ip": self_ips[0] if self_ips else "",
+                "os": self_node.get("OS", ""),
+                "relay": self_node.get("Relay", ""),
+            },
+            "peers": peers,
+            "onlineCount": online_count,
+            "totalCount": len(peers),
+            "tailnet": data.get("MagicDNSSuffix", ""),
+        }
+    except (OSError, ValueError):
+        return None

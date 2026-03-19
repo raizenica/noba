@@ -37,7 +37,8 @@ def read_yaml_settings() -> dict:
 
     defaults: dict = {
         # ── Core / existing ────────────────────────────────────────────────
-        "piholeUrl": "", "piholeToken": "", "monitoredServices": "", "radarIps": "", "bookmarksStr": "",
+        "piholeUrl": "", "piholeToken": "", "piholePassword": "",
+        "monitoredServices": "", "radarIps": "", "bookmarksStr": "",
         "plexUrl": "", "plexToken": "", "kumaUrl": "", "bmcMap": "", "backupSources": [], "backupDest": "",
         "backupRetentionDays": 7, "backupKeepCount": 0, "backupVerifySample": 20,
         "backupMaxDelete": "", "backupEmail": "",
@@ -85,6 +86,7 @@ def read_yaml_settings() -> dict:
         "unifiProtectUrl": "", "unifiProtectUser": "", "unifiProtectPass": "",
         "pikvmUrl": "", "pikvmUser": "", "pikvmPass": "",
         "hassEventTriggers": [], "hassSensors": "", "cameraFeeds": [],
+        "frigateUrl": "",
         # ── Round 6: Security ──────────────────────────────────────────────
         "oidcProviderUrl": "", "oidcClientId": "", "oidcClientSecret": "",
         "ldapUrl": "", "ldapBaseDn": "", "ldapBindDn": "", "ldapBindPassword": "",
@@ -101,6 +103,12 @@ def read_yaml_settings() -> dict:
         "scrutinyUrl": "",
         # RSS triggers
         "rssTriggers": [],
+        # Multi-Site
+        "siteMap": {}, "siteNames": {"siteA": "Site A", "siteB": "Site B"},
+        # Service dependencies
+        "serviceDependencies": "",
+        # InfluxDB
+        "influxdbUrl": "", "influxdbToken": "", "influxdbOrg": "",
     }
     if not os.path.exists(NOBA_YAML):
         with _settings_cache_lock:
