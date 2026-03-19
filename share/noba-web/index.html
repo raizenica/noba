@@ -107,6 +107,11 @@
                 <i class="fas fa-sync" :class="refreshing ? 'fa-spin' : ''" aria-hidden="true"></i>
             </button>
 
+            <button class="icon-btn" @click="showMultiChartModal=true; fetchAvailableMetrics(); fetchMultiMetricChart()"
+                    title="Custom Dashboard" aria-label="Custom dashboard" x-show="authenticated" x-cloak>
+                <i class="fas fa-chart-line" aria-hidden="true"></i>
+            </button>
+
             <button class="icon-btn" @click="toggleNotifCenter()" title="Notifications" style="position:relative" aria-label="Notifications">
                 <i class="fas fa-bell" aria-hidden="true"></i>
                 <span x-show="unreadCount>0" class="notif-badge" x-text="unreadCount" x-cloak></span>
@@ -174,7 +179,7 @@
         </div>
     </div>
 
-    <div class="alerts" role="alert" x-show="visibleAlerts && visibleAlerts.length > 0" x-cloak>
+    <div class="alerts" role="alert" x-show="visibleAlerts && visibleAlerts.length > 0" x-cloak style="display:flex;align-items:center;flex-wrap:wrap">
         <template x-for="a in visibleAlerts" :key="a.msg">
             <div class="alert" :class="a.level" :data-msg="a.msg" style="transition:transform .2s,opacity .2s">
                 <i class="fas" :class="a.level==='danger' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'" aria-hidden="true"></i>
@@ -182,6 +187,10 @@
                 <button class="alert-dismiss" @click="dismissAlert(a.msg)" :aria-label="'Dismiss: ' + a.msg">×</button>
             </div>
         </template>
+        <button class="btn-sm" @click="showAlertRuleModal=true; fetchAlertRules(); fetchAvailableMetrics()"
+                x-show="userRole==='admin'" style="margin-left:auto">
+            <i class="fas fa-cog"></i> Rules
+        </button>
     </div>
 
     <main>
@@ -4215,6 +4224,139 @@
                     <i class="fas fa-plus"></i> Create Snapshot
                 </button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Multi-Metric Dashboard Modal -->
+<div class="modal-overlay" x-show="showMultiChartModal" x-cloak @keydown.escape.window="showMultiChartModal=false">
+    <div class="modal-box" style="max-width:1000px;height:85vh;display:flex;flex-direction:column">
+        <div class="modal-title">
+            <i class="fas fa-chart-line"></i> Custom Dashboard
+            <button class="modal-close" @click="showMultiChartModal=false">&times;</button>
+        </div>
+        <div style="padding:8px 16px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
+            <template x-for="m in multiMetrics" :key="m">
+                <span class="badge bs" style="cursor:pointer" @click="removeMultiMetric(m)">
+                    <span x-text="m"></span> <i class="fas fa-times" style="margin-left:4px;font-size:.6rem"></i>
+                </span>
+            </template>
+            <select style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:4px;font-size:.8rem"
+                    @change="addMultiMetric($event.target.value); $event.target.value=''">
+                <option value="">+ Add metric</option>
+                <template x-for="m in availableMetrics.filter(x => x.type==='history' || x.type==='number')" :key="m.name">
+                    <option :value="m.name" x-text="m.name"></option>
+                </template>
+            </select>
+        </div>
+        <div style="flex:1;padding:16px;position:relative">
+            <canvas id="multi-chart-canvas" style="width:100%;height:100%"></canvas>
+        </div>
+        <div class="modal-footer" style="display:flex;gap:8px">
+            <select x-model.number="historyRange" @change="fetchMultiMetricChart()" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:4px;border-radius:4px">
+                <option value="1">1h</option><option value="6">6h</option><option value="24">24h</option>
+                <option value="168">7d</option><option value="720">30d</option>
+            </select>
+            <button class="btn-sm" @click="fetchMultiMetricChart()"><i class="fas fa-sync"></i> Refresh</button>
+        </div>
+    </div>
+</div>
+
+<!-- Alert Rule Builder Modal -->
+<div class="modal-overlay" x-show="showAlertRuleModal" x-cloak @keydown.escape.window="showAlertRuleModal=false">
+    <div class="modal-box" style="max-width:800px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title">
+            <i class="fas fa-bell"></i> Alert Rules
+            <button class="modal-close" @click="showAlertRuleModal=false">&times;</button>
+        </div>
+        <div style="padding:16px">
+            <!-- Rule editor -->
+            <div style="background:var(--surface-2);padding:12px;border-radius:6px;margin-bottom:16px">
+                <h4 style="margin:0 0 8px;font-size:.85rem;color:var(--text-muted)" x-text="editingRule ? 'Edit Rule' : 'New Rule'"></h4>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label">Condition</label>
+                        <input class="field-input" type="text" :x-model="editingRule ? 'editingRule.condition' : 'newRule.condition'"
+                               x-model="editingRule ? editingRule.condition : newRule.condition"
+                               placeholder="cpuPercent > 90 AND memPercent > 80">
+                    </div>
+                    <div>
+                        <label class="field-label">Severity</label>
+                        <select class="field-input" x-model="editingRule ? editingRule.severity : newRule.severity">
+                            <option value="warning">Warning</option>
+                            <option value="danger">Danger</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="field-label">Message</label>
+                    <input class="field-input" type="text" x-model="editingRule ? editingRule.message : newRule.message"
+                           placeholder="CPU is at {{ cpuPercent }}%">
+                </div>
+                <div class="field-2" style="margin-top:8px">
+                    <div>
+                        <label class="field-label">Group</label>
+                        <input class="field-input" type="text" x-model="editingRule ? editingRule.group : newRule.group"
+                               placeholder="cpu_alerts">
+                    </div>
+                    <div>
+                        <label class="field-label">Cooldown (sec)</label>
+                        <input class="field-input" type="number" x-model.number="editingRule ? editingRule.cooldown : newRule.cooldown">
+                    </div>
+                </div>
+                <div style="margin-top:8px;display:flex;gap:8px">
+                    <button class="btn-sm" @click="saveAlertRule()" style="background:var(--accent);color:#fff">
+                        <i class="fas fa-save"></i> <span x-text="editingRule ? 'Update' : 'Create'"></span>
+                    </button>
+                    <button class="btn-sm" x-show="editingRule" @click="editingRule=null">Cancel</button>
+                </div>
+            </div>
+            <!-- Existing rules list -->
+            <template x-for="rule in alertRulesList" :key="rule.id">
+                <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);gap:8px">
+                    <span style="flex:1;min-width:0">
+                        <div style="font-size:.85rem;font-weight:500"><code x-text="rule.condition" style="font-size:.75rem"></code></div>
+                        <div style="font-size:.7rem;color:var(--text-dim)" x-text="rule.message || rule.id"></div>
+                    </span>
+                    <span class="badge" :class="rule.severity==='danger'?'bd':rule.severity==='critical'?'bd':'bw'" x-text="rule.severity"></span>
+                    <button class="svc-btn" title="Test" @click="testAlertRule(rule.id)"><i class="fas fa-flask"></i></button>
+                    <button class="svc-btn" title="Edit" @click="editAlertRule(rule)"><i class="fas fa-edit"></i></button>
+                    <button class="svc-btn" title="Delete" @click="deleteAlertRule(rule.id)"><i class="fas fa-trash"></i></button>
+                </div>
+            </template>
+            <div class="empty-msg" x-show="alertRulesList.length===0">No alert rules configured</div>
+        </div>
+    </div>
+</div>
+
+<!-- Workflow Trace Modal -->
+<div class="modal-overlay" x-show="showWorkflowTraceModal" x-cloak @keydown.escape.window="showWorkflowTraceModal=false">
+    <div class="modal-box" style="max-width:800px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title">
+            <i class="fas fa-project-diagram"></i> <span x-text="'Workflow: ' + (workflowTrace?.workflow || '')"></span>
+            <button class="modal-close" @click="showWorkflowTraceModal=false">&times;</button>
+        </div>
+        <div style="padding:16px">
+            <template x-if="workflowTrace && workflowTrace.executions">
+                <template x-for="exec in workflowTrace.executions" :key="exec.started_at">
+                    <div style="margin-bottom:16px;background:var(--surface-2);padding:12px;border-radius:6px">
+                        <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:8px">
+                            <span x-text="exec.triggered_by"></span> —
+                            <span x-text="exec.started_at ? new Date(exec.started_at*1000).toLocaleString() : ''"></span>
+                        </div>
+                        <template x-for="step in exec.steps" :key="step.id">
+                            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
+                                <span style="font-size:.7rem;color:var(--text-dim);min-width:50px" x-text="'Step ' + step.step.index"></span>
+                                <span style="flex:1;font-size:.85rem" x-text="step.automation_id"></span>
+                                <span class="badge" :class="step.status==='done'?'bs':step.status==='running'?'bw':'bd'" x-text="step.status" style="font-size:.65rem"></span>
+                                <span style="font-size:.7rem;color:var(--text-dim)" x-text="step.exit_code !== null ? 'exit:'+step.exit_code : ''"></span>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </template>
+            <div class="empty-msg" x-show="!workflowTrace || !workflowTrace.executions?.length">No execution history</div>
         </div>
     </div>
 </div>

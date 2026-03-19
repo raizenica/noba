@@ -387,6 +387,23 @@ def _int_param(request: Request, name: str, default: int, lo: int, hi: int) -> i
     return max(lo, min(hi, v))
 
 
+@app.get("/api/history/multi")
+def api_history_multi(request: Request, auth=Depends(_get_auth)):
+    """Get multiple metrics for overlay charting."""
+    metrics_param = request.query_params.get("metrics", "")
+    if not metrics_param:
+        raise HTTPException(400, "Provide comma-separated metrics")
+    metric_list = [m.strip() for m in metrics_param.split(",") if m.strip()]
+    range_h = _int_param(request, "range", 24, 1, 8760)
+    resolution = _int_param(request, "resolution", 60, 1, 3600)
+    result = {}
+    for metric in metric_list[:10]:  # Max 10 metrics
+        if metric not in HISTORY_METRICS:
+            continue
+        result[metric] = db.get_history(metric, range_h, resolution)
+    return result
+
+
 @app.get("/api/history/{metric}")
 def api_history(metric: str, request: Request, auth=Depends(_get_auth)):
     if metric not in HISTORY_METRICS:
@@ -426,6 +443,123 @@ def api_history_trend(metric: str, request: Request, auth=Depends(_get_auth)):
     range_h = _int_param(request, "range", 168, 1, 8760)
     project_h = _int_param(request, "project", 168, 1, 8760)
     return db.get_trend(metric, range_hours=range_h, projection_hours=project_h)
+
+
+# ── /api/metrics/available ───────────────────────────────────────────────────
+@app.get("/api/metrics/available")
+def api_metrics_available(auth=Depends(_get_auth)):
+    """List all available metric names with current values for the UI metric picker."""
+    stats = bg_collector.get() or {}
+    metrics = []
+    for k, v in sorted(stats.items()):
+        if isinstance(v, (int, float)):
+            metrics.append({"name": k, "value": round(v, 2), "type": "number"})
+        elif isinstance(v, str) and v not in ("N/A", "--", ""):
+            try:
+                float(v.replace("\u00b0C", "").replace("%", ""))
+                metrics.append({"name": k, "value": v, "type": "string_numeric"})
+            except ValueError:
+                pass
+    # Add history metric names
+    for m in HISTORY_METRICS:
+        if not any(x["name"] == m for x in metrics):
+            metrics.append({"name": m, "value": None, "type": "history"})
+    return metrics
+
+
+# ── /api/alert-rules ─────────────────────────────────────────────────────────
+@app.get("/api/alert-rules")
+def api_alert_rules(auth=Depends(_get_auth)):
+    """List all configured alert rules."""
+    cfg = read_yaml_settings()
+    return cfg.get("alertRules", [])
+
+
+@app.post("/api/alert-rules")
+async def api_alert_rules_create(request: Request, auth=Depends(_require_admin)):
+    """Add a new alert rule."""
+    import uuid
+
+    username, _ = auth
+    body = await _read_body(request)
+    rule_id = body.get("id") or uuid.uuid4().hex[:8]
+    condition = body.get("condition", "")
+    if not condition:
+        raise HTTPException(400, "Condition is required")
+    rule = {
+        "id": rule_id,
+        "condition": condition,
+        "severity": body.get("severity", "warning"),
+        "message": body.get("message", condition),
+        "channels": body.get("channels", []),
+        "cooldown": int(body.get("cooldown", 300)),
+        "action": body.get("action"),
+        "max_retries": int(body.get("max_retries", 3)),
+        "group": body.get("group", ""),
+        "escalation": body.get("escalation", []),
+    }
+    cfg = read_yaml_settings()
+    rules = cfg.get("alertRules", [])
+    rules.append(rule)
+    cfg["alertRules"] = rules
+    write_yaml_settings(cfg)
+    db.audit_log("alert_rule_create", username, f"Created rule '{rule_id}'", _client_ip(request))
+    return {"status": "ok", "id": rule_id}
+
+
+@app.put("/api/alert-rules/{rule_id}")
+async def api_alert_rules_update(rule_id: str, request: Request, auth=Depends(_require_admin)):
+    """Update an existing alert rule."""
+    username, _ = auth
+    body = await _read_body(request)
+    cfg = read_yaml_settings()
+    rules = cfg.get("alertRules", [])
+    idx = next((i for i, r in enumerate(rules) if r.get("id") == rule_id), None)
+    if idx is None:
+        raise HTTPException(404, "Rule not found")
+    for key in ("condition", "severity", "message", "channels", "cooldown", "action",
+                "max_retries", "group", "escalation"):
+        if key in body:
+            rules[idx][key] = body[key]
+    cfg["alertRules"] = rules
+    write_yaml_settings(cfg)
+    db.audit_log("alert_rule_update", username, f"Updated rule '{rule_id}'", _client_ip(request))
+    return {"status": "ok"}
+
+
+@app.delete("/api/alert-rules/{rule_id}")
+def api_alert_rules_delete(rule_id: str, request: Request, auth=Depends(_require_admin)):
+    """Delete an alert rule."""
+    username, _ = auth
+    cfg = read_yaml_settings()
+    rules = cfg.get("alertRules", [])
+    new_rules = [r for r in rules if r.get("id") != rule_id]
+    if len(new_rules) == len(rules):
+        raise HTTPException(404, "Rule not found")
+    cfg["alertRules"] = new_rules
+    write_yaml_settings(cfg)
+    db.audit_log("alert_rule_delete", username, f"Deleted rule '{rule_id}'", _client_ip(request))
+    return {"status": "ok"}
+
+
+@app.get("/api/alert-rules/test/{rule_id}")
+def api_alert_rule_test(rule_id: str, auth=Depends(_require_admin)):
+    """Test an alert rule against current stats."""
+    cfg = read_yaml_settings()
+    rules = cfg.get("alertRules", [])
+    rule = next((r for r in rules if r.get("id") == rule_id), None)
+    if not rule:
+        raise HTTPException(404, "Rule not found")
+    from .alerts import _safe_eval  # noqa: PLC0415
+
+    stats = bg_collector.get() or {}
+    flat = {}
+    for k, v in stats.items():
+        if isinstance(v, (int, float, str)):
+            flat[k] = v
+    result = _safe_eval(rule.get("condition", ""), flat)
+    return {"rule_id": rule_id, "condition": rule.get("condition"), "result": result,
+            "available_metrics": sorted(flat.keys())[:50]}
 
 
 # ── /api/audit ────────────────────────────────────────────────────────────────
@@ -1572,6 +1706,49 @@ def _run_parallel_workflow(auto_id: str, steps: list[str], triggered_by: str) ->
             )
         except RuntimeError as exc:
             logger.warning("Parallel workflow %s: step %d submit failed: %s", auto_id, idx, exc)
+
+
+# ── /api/automations/{auto_id}/trace — workflow execution trace ───────────────
+@app.get("/api/automations/{auto_id}/trace")
+def api_automation_trace(auto_id: str, auth=Depends(_get_auth)):
+    """Get execution trace for a workflow automation."""
+    auto = db.get_automation(auto_id)
+    if not auto:
+        raise HTTPException(404, "Automation not found")
+    if auto["type"] != "workflow":
+        raise HTTPException(400, "Not a workflow automation")
+    limit = 50
+    traces = db.get_workflow_trace(auto_id, limit)
+    # Group by triggered_by + approximate start time
+    groups: dict = {}
+    for t in traces:
+        key = t.get("triggered_by", "")
+        # Group runs within 60 seconds of each other
+        group_key = f"{key}:{(t.get('started_at', 0) or 0) // 60}"
+        if group_key not in groups:
+            groups[group_key] = {"triggered_by": key, "started_at": t.get("started_at"), "steps": []}
+        groups[group_key]["steps"].append(t)
+    # Sort groups by start time descending
+    sorted_groups = sorted(groups.values(), key=lambda g: g.get("started_at") or 0, reverse=True)
+    return {"workflow": auto["name"], "executions": sorted_groups[:20]}
+
+
+# ── /api/automations/validate-workflow — validate workflow step IDs ───────────
+@app.post("/api/automations/validate-workflow")
+async def api_validate_workflow(request: Request, auth=Depends(_require_operator)):
+    """Validate a workflow definition — check all step IDs exist."""
+    body = await _read_body(request)
+    steps = body.get("steps", [])
+    if not isinstance(steps, list):
+        raise HTTPException(400, "Steps must be a list")
+    results = []
+    for step_id in steps:
+        auto = db.get_automation(step_id)
+        if auto:
+            results.append({"id": step_id, "name": auto["name"], "type": auto["type"], "valid": True})
+        else:
+            results.append({"id": step_id, "name": "", "type": "", "valid": False})
+    return {"steps": results, "valid": all(r["valid"] for r in results)}
 
 
 # ── /api/admin/users ──────────────────────────────────────────────────────────

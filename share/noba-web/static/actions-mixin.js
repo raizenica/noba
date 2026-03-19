@@ -1973,5 +1973,182 @@ function actionsMixin() {
                 this.addToast('Console failed: ' + e.message, 'error');
             }
         },
+
+
+        // ── Custom Monitoring Dashboard ──────────────────────────────────────
+        multiMetrics: ['cpu_percent'],
+        multiMetricData: {},
+        multiMetricLoading: false,
+        showMultiChartModal: false,
+        availableMetrics: [],
+
+        async fetchAvailableMetrics() {
+            try {
+                const res = await fetch('/api/metrics/available', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.availableMetrics = await res.json();
+            } catch { /* silent */ }
+        },
+
+        async fetchMultiMetricChart() {
+            if (!this.multiMetrics.length) return;
+            this.multiMetricLoading = true;
+            try {
+                const metrics = this.multiMetrics.join(',');
+                const res = await fetch(`/api/history/multi?metrics=${metrics}&range=${this.historyRange}&resolution=${this.historyResolution}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.multiMetricData = await res.json();
+            } catch { /* silent */ }
+            this.multiMetricLoading = false;
+            this.renderMultiChart();
+        },
+
+        addMultiMetric(metric) {
+            if (!this.multiMetrics.includes(metric) && this.multiMetrics.length < 10) {
+                this.multiMetrics.push(metric);
+                this.fetchMultiMetricChart();
+            }
+        },
+
+        removeMultiMetric(metric) {
+            this.multiMetrics = this.multiMetrics.filter(m => m !== metric);
+            this.fetchMultiMetricChart();
+        },
+
+        renderMultiChart() {
+            const canvas = document.getElementById('multi-chart-canvas');
+            if (!canvas) return;
+            if (this._multiChart) this._multiChart.destroy();
+            const colors = ['#7aa2f7','#f7768e','#9ece6a','#e0af68','#bb9af7','#7dcfff','#ff9e64','#c0caf5','#73daca','#b4f9f8'];
+            const datasets = [];
+            let i = 0;
+            for (const [metric, points] of Object.entries(this.multiMetricData)) {
+                datasets.push({
+                    label: metric,
+                    data: points.map(p => ({ x: p.time * 1000, y: p.value })),
+                    borderColor: colors[i % colors.length],
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    tension: 0.3,
+                });
+                i++;
+            }
+            this._multiChart = new Chart(canvas, {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { tooltipFormat: 'HH:mm' },
+                             ticks: { color: 'rgba(255,255,255,.5)' }, grid: { color: 'rgba(255,255,255,.05)' } },
+                        y: { ticks: { color: 'rgba(255,255,255,.5)' }, grid: { color: 'rgba(255,255,255,.05)' } },
+                    },
+                    plugins: { legend: { labels: { color: 'rgba(255,255,255,.7)' } } },
+                },
+            });
+        },
+        _multiChart: null,
+
+
+        // ── Alert Rule Builder ───────────────────────────────────────────────
+        showAlertRuleModal: false,
+        alertRulesList: [],
+        editingRule: null,
+        newRule: { condition: '', severity: 'warning', message: '', channels: [], cooldown: 300, group: '' },
+        ruleTestResult: null,
+
+        async fetchAlertRules() {
+            try {
+                const res = await fetch('/api/alert-rules', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.alertRulesList = await res.json();
+            } catch { /* silent */ }
+        },
+
+        async saveAlertRule() {
+            const rule = this.editingRule || this.newRule;
+            if (!rule.condition) { this.addToast('Condition is required', 'error'); return; }
+            const method = this.editingRule ? 'PUT' : 'POST';
+            const url = this.editingRule ? `/api/alert-rules/${this.editingRule.id}` : '/api/alert-rules';
+            try {
+                const res = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify(rule),
+                });
+                if (!res.ok) { const d = await res.json(); this.addToast(d.detail || 'Failed', 'error'); return; }
+                this.addToast(this.editingRule ? 'Rule updated' : 'Rule created', 'success');
+                this.editingRule = null;
+                this.newRule = { condition: '', severity: 'warning', message: '', channels: [], cooldown: 300, group: '' };
+                this.fetchAlertRules();
+            } catch (e) {
+                this.addToast('Save failed: ' + e.message, 'error');
+            }
+        },
+
+        async deleteAlertRule(ruleId) {
+            if (!confirm('Delete this alert rule?')) return;
+            await fetch(`/api/alert-rules/${ruleId}`, {
+                method: 'DELETE', headers: { 'Authorization': 'Bearer ' + this._token() },
+            });
+            this.fetchAlertRules();
+        },
+
+        async testAlertRule(ruleId) {
+            try {
+                const res = await fetch(`/api/alert-rules/test/${ruleId}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) {
+                    this.ruleTestResult = await res.json();
+                    this.addToast(`Rule test: ${this.ruleTestResult.result ? 'TRIGGERED' : 'not triggered'}`,
+                                 this.ruleTestResult.result ? 'warning' : 'success');
+                }
+            } catch { /* silent */ }
+        },
+
+        editAlertRule(rule) {
+            this.editingRule = { ...rule };
+        },
+
+
+        // ── Workflow Trace ───────────────────────────────────────────────────
+        workflowTrace: null,
+        workflowTraceLoading: false,
+        showWorkflowTraceModal: false,
+
+        async fetchWorkflowTrace(autoId) {
+            this.workflowTraceLoading = true;
+            this.showWorkflowTraceModal = true;
+            try {
+                const res = await fetch(`/api/automations/${autoId}/trace`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.workflowTrace = await res.json();
+            } catch { this.workflowTrace = null; }
+            this.workflowTraceLoading = false;
+        },
+
+        async validateWorkflow(steps) {
+            try {
+                const res = await fetch('/api/automations/validate-workflow', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ steps }),
+                });
+                if (res.ok) {
+                    const d = await res.json();
+                    if (d.valid) this.addToast('Workflow valid — all steps found', 'success');
+                    else this.addToast('Invalid — some steps not found', 'error');
+                    return d;
+                }
+            } catch { /* silent */ }
+            return null;
+        },
     };
 }

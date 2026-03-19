@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import sqlite3
 import threading
 import time
@@ -12,6 +13,26 @@ from datetime import datetime
 from .config import AUDIT_RETENTION_DAYS, HISTORY_DB, HISTORY_RETENTION_DAYS, JOB_RETENTION_DAYS
 
 logger = logging.getLogger("noba")
+
+
+def _parse_step_from_trigger(trigger: str) -> dict:
+    """Parse step index and retry info from a workflow trigger string."""
+    # Format: "workflow:<auto_id>:step<N>" or "workflow:<auto_id>:step<N>:retry<M>"
+    # or "workflow:<auto_id>:parallel<N>"
+    result: dict = {"index": 0, "retry": 0, "mode": "sequential"}
+    if ":step" in trigger:
+        m = re.search(r":step(\d+)", trigger)
+        if m:
+            result["index"] = int(m.group(1))
+        m = re.search(r":retry(\d+)", trigger)
+        if m:
+            result["retry"] = int(m.group(1))
+    elif ":parallel" in trigger:
+        m = re.search(r":parallel(\d+)", trigger)
+        if m:
+            result["index"] = int(m.group(1))
+            result["mode"] = "parallel"
+    return result
 
 
 class Database:
@@ -543,6 +564,32 @@ class Database:
         except Exception as e:
             logger.error("get_automation_stats failed: %s", e)
             return {}
+
+    def get_workflow_trace(self, workflow_auto_id: str, limit: int = 20) -> list[dict]:
+        """Get execution traces for a workflow — groups runs by trigger timestamp."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                rows = conn.execute(
+                    "SELECT id, automation_id, trigger, status, started_at, finished_at, "
+                    "exit_code, output, triggered_by, error "
+                    "FROM job_runs WHERE trigger LIKE ? "
+                    "ORDER BY id DESC LIMIT ?",
+                    (f"workflow:{workflow_auto_id}%", limit),
+                ).fetchall()
+            return [
+                {
+                    "id": r[0], "automation_id": r[1], "trigger": r[2],
+                    "status": r[3], "started_at": r[4], "finished_at": r[5],
+                    "exit_code": r[6], "output": r[7][:500] if r[7] else None,
+                    "triggered_by": r[8], "error": r[9],
+                    "step": _parse_step_from_trigger(r[2]),
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error("get_workflow_trace failed: %s", e)
+            return []
 
     def prune_job_runs(self) -> None:
         cutoff = int(time.time()) - JOB_RETENTION_DAYS * 86400
