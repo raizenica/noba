@@ -16,6 +16,18 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
 
+    <script>
+        // Handle OIDC callback token in URL
+        (function() {
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('token');
+            if (token) {
+                localStorage.setItem('noba-token', token);
+                window.history.replaceState({}, '', '/');
+            }
+        })();
+    </script>
+
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 
     <link rel="stylesheet" href="/static/style.css">
@@ -74,6 +86,12 @@
                 <span class="badge" :class="userRole==='admin'?'ba':userRole==='operator'?'bs':'bn'" x-text="userRole"></span>
             </div>
 
+            <div class="user-chip" x-show="authenticated && nowPlayingCount > 0" x-cloak
+                 style="border-color:var(--accent);box-shadow:0 0 8px var(--accent-dim)">
+                <i class="fas fa-play-circle" style="color:var(--accent)" aria-hidden="true"></i>
+                <span x-text="nowPlayingCount + ' streaming'" style="font-size:.75rem"></span>
+            </div>
+
             <label for="theme-selector" class="sr-only">Theme</label>
             <select id="theme-selector" class="theme-select" x-model="theme" @change="localStorage.setItem('noba-theme', theme); if (userRole !== 'viewer') saveSettings()">
                 <option value="auto">System (Auto)</option>
@@ -87,6 +105,22 @@
 
             <button class="icon-btn" @click="refreshStats()" title="Refresh (r)" aria-label="Refresh stats">
                 <i class="fas fa-sync" :class="refreshing ? 'fa-spin' : ''" aria-hidden="true"></i>
+            </button>
+
+            <button class="icon-btn" @click="toggleNotifCenter()" title="Notifications" style="position:relative" aria-label="Notifications">
+                <i class="fas fa-bell" aria-hidden="true"></i>
+                <span x-show="unreadCount>0" class="notif-badge" x-text="unreadCount" x-cloak></span>
+            </button>
+
+            <button class="icon-btn" @click="_allCollapsed = !_allCollapsed; collapseAll(_allCollapsed)"
+                    :title="_allCollapsed ? 'Expand all' : 'Collapse all'"
+                    :aria-label="_allCollapsed ? 'Expand all cards' : 'Collapse all cards'">
+                <i class="fas" :class="_allCollapsed ? 'fa-expand-alt' : 'fa-compress-alt'" aria-hidden="true"></i>
+            </button>
+
+            <button class="icon-btn" @click="showTerminal=true" title="Terminal"
+                    x-show="userRole==='admin'" x-cloak aria-label="Open terminal">
+                <i class="fas fa-terminal" aria-hidden="true"></i>
             </button>
 
             <button class="icon-btn"
@@ -109,6 +143,37 @@
         </div>
     </header>
 
+    <!-- Notification Center Panel -->
+    <div class="notif-panel" x-show="notifCenter" x-cloak @click.outside="notifCenter=false">
+        <div class="notif-header">
+            <span>Notifications</span>
+            <button @click="markAllNotifsRead()" class="btn btn-sm">Mark all read</button>
+        </div>
+        <template x-if="notifications.length===0"><div class="empty-msg">No notifications</div></template>
+        <template x-for="n in notifications" :key="n.id">
+            <div class="notif-item" :class="n.read?'':'notif-unread'" @click="markNotifRead(n.id)">
+                <div class="notif-title" x-text="n.title"></div>
+                <div class="notif-msg" x-text="n.message"></div>
+                <div class="notif-time" x-text="new Date(n.timestamp*1000).toLocaleString()"></div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Context menu -->
+    <div class="ctx-menu" x-show="ctxMenu.show" x-cloak
+         :style="'left:'+ctxMenu.x+'px;top:'+ctxMenu.y+'px'"
+         @click.outside="ctxMenu.show=false">
+        <div class="ctx-menu-item" @click="ctxAction('collapse')">
+            <i class="fas fa-compress"></i> Toggle Collapse
+        </div>
+        <div class="ctx-menu-item" @click="ctxAction('hide')">
+            <i class="fas fa-eye-slash"></i> Hide Card
+        </div>
+        <div class="ctx-menu-item" @click="ctxAction('settings')">
+            <i class="fas fa-cog"></i> Settings
+        </div>
+    </div>
+
     <div class="alerts" role="alert" x-show="visibleAlerts && visibleAlerts.length > 0" x-cloak>
         <template x-for="a in visibleAlerts" :key="a.msg">
             <div class="alert" :class="a.level" :data-msg="a.msg" style="transition:transform .2s,opacity .2s">
@@ -122,7 +187,7 @@
     <main>
     <div class="grid" id="sortable-grid" x-cloak>
 
-        <div class="card" data-id="card-core" x-show="vis.core">
+        <div class="card" data-id="card-core" x-show="vis.core" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-microchip card-icon" aria-hidden="true"></i>
                 <span class="card-title" id="hdr-core">Core System</span>
@@ -187,7 +252,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-netio" x-show="vis.netio">
+        <div class="card" data-id="card-netio" x-show="vis.netio" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-network-wired card-icon" aria-hidden="true"></i>
                 <span class="card-title">Network I/O</span>
@@ -234,7 +299,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-hw" x-show="vis.hw">
+        <div class="card" data-id="card-hw" x-show="vis.hw" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-memory card-icon" aria-hidden="true"></i>
                 <span class="card-title">Hardware</span>
@@ -262,7 +327,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-truenas" x-show="vis.truenas && truenasUrl">
+        <div class="card" data-id="card-truenas" x-show="vis.truenas && truenasUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-server card-icon" aria-hidden="true"></i>
                 <span class="card-title">TrueNAS Integration</span>
@@ -320,7 +385,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-plex" x-show="vis.plex && plexUrl">
+        <div class="card" data-id="card-plex" x-show="vis.plex && plexUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-film card-icon" aria-hidden="true"></i>
                 <span class="card-title">Media Stack</span>
@@ -350,6 +415,17 @@
                             </div>
                         </div>
                         <div x-show="plex.activities > 0" class="empty-msg" style="color:var(--warning)">High activity: Metadata scanning in progress.</div>
+                        <template x-if="plex && plex.now_playing && plex.now_playing.length > 0">
+                            <div style="margin-top:.75rem;border-top:1px solid var(--border);padding-top:.5rem">
+                                <div style="font-size:.7rem;color:var(--text-dim);margin-bottom:.3rem">Now Playing</div>
+                                <template x-for="np in plex.now_playing" :key="np.title">
+                                    <div class="row" style="font-size:.8rem">
+                                        <span class="row-label" x-text="np.user" style="color:var(--accent)"></span>
+                                        <span class="row-val" x-text="np.title" style="flex:1;text-align:right"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
                     </div>
                 </template>
                 <template x-if="!plex">
@@ -358,7 +434,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-downloads" x-show="vis.downloads && (qbitUrl || radarrUrl || sonarrUrl)">
+        <div class="card" data-id="card-downloads" x-show="vis.downloads && (qbitUrl || radarrUrl || sonarrUrl)" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-download card-icon" aria-hidden="true"></i>
                 <span class="card-title">Download Stack</span>
@@ -402,7 +478,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-battery" x-show="vis.battery && battery && !battery.desktop">
+        <div class="card" data-id="card-battery" x-show="vis.battery && battery && !battery.desktop" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-battery-half card-icon" aria-hidden="true"></i>
                 <span class="card-title">Power State</span>
@@ -435,7 +511,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-pihole" x-show="vis.pihole && piholeUrl">
+        <div class="card" data-id="card-pihole" x-show="vis.pihole && piholeUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-shield-alt card-icon" aria-hidden="true"></i>
                 <span class="card-title">Pi-hole DNS</span>
@@ -481,7 +557,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-storage" x-show="vis.storage">
+        <div class="card" data-id="card-storage" x-show="vis.storage" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon" aria-hidden="true"></i>
                 <span class="card-title">Storage</span>
@@ -526,7 +602,7 @@
         </div>
 
         <!-- ── Disk I/O ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-diskio" x-show="vis.diskIo">
+        <div class="card" data-id="card-diskio" x-show="vis.diskIo" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon" aria-hidden="true"></i>
                 <span class="card-title">Disk I/O</span>
@@ -551,7 +627,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-radar" x-show="vis.radar">
+        <div class="card" data-id="card-radar" x-show="vis.radar" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-satellite-dish card-icon" aria-hidden="true"></i>
                 <span class="card-title">Network Radar</span>
@@ -576,7 +652,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-kuma" x-show="vis.kuma && kumaUrl">
+        <div class="card" data-id="card-kuma" x-show="vis.kuma && kumaUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-heartbeat card-icon" aria-hidden="true"></i>
                 <span class="card-title">Uptime Kuma</span>
@@ -602,7 +678,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-procs" x-show="vis.procs">
+        <div class="card" data-id="card-procs" x-show="vis.procs" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-chart-bar card-icon" aria-hidden="true"></i>
                 <span class="card-title">Resource Hogs</span>
@@ -648,7 +724,7 @@
         </div>
 
         <!-- ── AdGuard Home ──────────────────────────────────────────────── -->
-        <div class="card" data-id="card-adguard" x-show="vis.adguard && adguardUrl">
+        <div class="card" data-id="card-adguard" x-show="vis.adguard && adguardUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-shield-alt card-icon" aria-hidden="true"></i>
                 <span class="card-title">AdGuard Home</span>
@@ -669,7 +745,7 @@
         </div>
 
         <!-- ── Jellyfin ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-jellyfin" x-show="vis.jellyfin && jellyfinUrl">
+        <div class="card" data-id="card-jellyfin" x-show="vis.jellyfin && jellyfinUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-film card-icon" aria-hidden="true"></i>
                 <span class="card-title">Jellyfin</span>
@@ -684,6 +760,17 @@
                         <div class="row"><span class="row-label">Movies</span><span class="row-val" x-text="(jellyfin.movies||0).toLocaleString()"></span></div>
                         <div class="row"><span class="row-label">Series</span><span class="row-val" x-text="jellyfin.series||0"></span></div>
                         <div class="row"><span class="row-label">Episodes</span><span class="row-val" x-text="(jellyfin.episodes||0).toLocaleString()"></span></div>
+                        <template x-if="jellyfin && jellyfin.now_playing && jellyfin.now_playing.length > 0">
+                            <div style="margin-top:.75rem;border-top:1px solid var(--border);padding-top:.5rem">
+                                <div style="font-size:.7rem;color:var(--text-dim);margin-bottom:.3rem">Now Playing</div>
+                                <template x-for="np in jellyfin.now_playing" :key="np.title">
+                                    <div class="row" style="font-size:.8rem">
+                                        <span class="row-label" x-text="np.user" style="color:var(--accent)"></span>
+                                        <span class="row-val" x-text="np.title" style="flex:1;text-align:right"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
                     </div>
                 </template>
                 <div x-show="!jellyfin" class="empty-msg">Jellyfin data unavailable.</div>
@@ -691,7 +778,7 @@
         </div>
 
         <!-- ── Home Assistant ────────────────────────────────────────────── -->
-        <div class="card" data-id="card-hass" x-show="vis.hass && hassUrl">
+        <div class="card" data-id="card-hass" x-show="vis.hass && hassUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-home card-icon" aria-hidden="true"></i>
                 <span class="card-title">Home Assistant</span>
@@ -713,7 +800,7 @@
         </div>
 
         <!-- ── UniFi Network ─────────────────────────────────────────────── -->
-        <div class="card" data-id="card-unifi" x-show="vis.unifi && unifiUrl">
+        <div class="card" data-id="card-unifi" x-show="vis.unifi && unifiUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-wifi card-icon" aria-hidden="true"></i>
                 <span class="card-title">UniFi Network</span>
@@ -733,7 +820,7 @@
         </div>
 
         <!-- ── Speedtest ─────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-speedtest" x-show="vis.speedtest && speedtestUrl">
+        <div class="card" data-id="card-speedtest" x-show="vis.speedtest && speedtestUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-tachometer-alt card-icon" aria-hidden="true"></i>
                 <span class="card-title">Speedtest</span>
@@ -754,7 +841,506 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-containers" x-show="vis.containers">
+        <!-- ── Weather ────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-weather" x-show="vis.weather && weather" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr">
+                <i class="fas fa-cloud-sun card-icon" aria-hidden="true"></i>
+                <span class="card-title">Weather</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.weather?'is-collapsed':''" @click="toggleCollapse('weather')" :aria-expanded="!collapsed.weather" aria-label="Toggle Weather"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
+            </div>
+            <div class="card-body" x-show="!collapsed.weather">
+                <template x-if="weather">
+                    <div>
+                        <div class="row"><span class="row-label">Location</span><span class="row-val" x-text="weather.city"></span></div>
+                        <div class="row"><span class="row-label">Temperature</span><span class="row-val" x-text="weather.temp+'°C'"></span></div>
+                        <div class="row"><span class="row-label">Feels Like</span><span class="row-val" x-text="weather.feels_like+'°C'"></span></div>
+                        <div class="row"><span class="row-label">Humidity</span><span class="row-val" x-text="weather.humidity+'%'"></span></div>
+                        <div class="row"><span class="row-label">Conditions</span><span class="row-val" x-text="weather.description"></span></div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ── Tautulli ───────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-tautulli" x-show="vis.tautulli && tautulliUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-chart-bar card-icon" aria-hidden="true"></i><span class="card-title">Tautulli</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.tautulli?'is-collapsed':''" @click="toggleCollapse('tautulli')" :aria-expanded="!collapsed.tautulli" aria-label="Toggle Tautulli"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.tautulli">
+                <template x-if="tautulli"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="tautulli.status==='online'?'bs':'bd'" x-text="tautulli.status"></span></div>
+                    <div class="row"><span class="row-label">Active Streams</span><span class="row-val" x-text="tautulli.streams||0"></span></div>
+                </div></template>
+                <template x-if="!tautulli"><div class="empty-msg">Tautulli unreachable</div></template>
+            </div>
+        </div>
+
+        <!-- ── Overseerr ──────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-overseerr" x-show="vis.overseerr && overseerrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-hand-paper card-icon" aria-hidden="true"></i><span class="card-title">Overseerr</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.overseerr?'is-collapsed':''" @click="toggleCollapse('overseerr')" :aria-expanded="!collapsed.overseerr" aria-label="Toggle Overseerr"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.overseerr">
+                <template x-if="overseerr"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="overseerr.status==='online'?'bs':'bd'" x-text="overseerr.status"></span></div>
+                    <div class="row"><span class="row-label">Pending</span><span class="row-val" x-text="overseerr.pending||0"></span></div>
+                    <div class="row"><span class="row-label">Approved</span><span class="row-val" x-text="overseerr.approved||0"></span></div>
+                    <div class="row"><span class="row-label">Available</span><span class="row-val" x-text="overseerr.available||0"></span></div>
+                </div></template>
+                <template x-if="!overseerr"><div class="empty-msg">Overseerr unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Media Calendar (Upcoming) ───────────────────────────────────── -->
+        <div class="card" data-id="card-media-calendar" x-show="(radarrCalendar||[]).length > 0 || (sonarrCalendar||[]).length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-calendar-alt card-icon" style="color:#e88c30"></i><span class="card-title">Upcoming Media</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.mediaCalendar?'is-collapsed':''" @click="toggleCollapse('mediaCalendar')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.mediaCalendar">
+                <template x-for="item in [...(radarrCalendar||[]), ...(sonarrCalendar||[])].sort((a,b) => (a.date||'').localeCompare(b.date||'')).slice(0,10)" :key="item.title+item.date">
+                    <div class="row">
+                        <span class="row-label" style="flex:1">
+                            <i class="fas" :class="item.type==='movie' ? 'fa-film' : 'fa-tv'" style="width:16px;color:var(--text-dim)"></i>
+                            <span x-text="item.title"></span>
+                        </span>
+                        <span class="row-val" style="font-size:.75rem;color:var(--text-muted)" x-text="item.date ? new Date(item.date).toLocaleDateString() : ''"></span>
+                    </div>
+                </template>
+                <div class="empty-msg" x-show="(radarrCalendar||[]).length===0 && (sonarrCalendar||[]).length===0">No upcoming releases</div>
+            </div>
+        </div>
+
+        <!-- ── Prowlarr ───────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-prowlarr" x-show="vis.prowlarr && prowlarrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-search card-icon" aria-hidden="true"></i><span class="card-title">Prowlarr</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.prowlarr?'is-collapsed':''" @click="toggleCollapse('prowlarr')" :aria-expanded="!collapsed.prowlarr" aria-label="Toggle Prowlarr"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.prowlarr">
+                <template x-if="prowlarr"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="prowlarr.status==='online'?'bs':'bd'" x-text="prowlarr.status"></span></div>
+                    <div class="row"><span class="row-label">Indexers</span><span class="row-val" x-text="prowlarr.indexers||0"></span></div>
+                </div></template>
+                <template x-if="!prowlarr"><div class="empty-msg">Prowlarr unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Nextcloud ──────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-nextcloud" x-show="vis.nextcloud && nextcloudUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-cloud card-icon" aria-hidden="true"></i><span class="card-title">Nextcloud</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.nextcloud?'is-collapsed':''" @click="toggleCollapse('nextcloud')" :aria-expanded="!collapsed.nextcloud" aria-label="Toggle Nextcloud"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.nextcloud">
+                <template x-if="nextcloud"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="nextcloud.status==='online'?'bs':'bd'" x-text="nextcloud.status"></span></div>
+                    <div class="row"><span class="row-label">Active Users</span><span class="row-val" x-text="nextcloud.active_users||0"></span></div>
+                    <div class="row"><span class="row-label">Storage</span><span class="row-val" x-text="(nextcloud.storage_total||'--') + ' / ' + (nextcloud.storage_free||'--') + ' free'"></span></div>
+                    <div class="row"><span class="row-label">Files</span><span class="row-val" x-text="(nextcloud.files||0).toLocaleString()"></span></div>
+                </div></template>
+                <template x-if="!nextcloud"><div class="empty-msg">Nextcloud unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Traefik ────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-traefik" x-show="vis.traefik && traefikUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-route card-icon" aria-hidden="true"></i><span class="card-title">Traefik</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.traefik?'is-collapsed':''" @click="toggleCollapse('traefik')" :aria-expanded="!collapsed.traefik" aria-label="Toggle Traefik"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.traefik">
+                <template x-if="traefik"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="traefik.status==='online'?'bs':'bd'" x-text="traefik.status"></span></div>
+                    <div class="row"><span class="row-label">Routers</span><span class="row-val" x-text="traefik.routers||0"></span></div>
+                    <div class="row"><span class="row-label">Services</span><span class="row-val" x-text="traefik.services||0"></span></div>
+                    <div class="row"><span class="row-label">Errors</span><span class="row-val" x-text="traefik.errors||0"></span></div>
+                </div></template>
+                <template x-if="!traefik"><div class="empty-msg">Traefik unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Nginx Proxy Manager ────────────────────────────────────────── -->
+        <div class="card" data-id="card-npm" x-show="vis.npm && npmUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-globe card-icon" aria-hidden="true"></i><span class="card-title">Nginx Proxy Manager</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.npm?'is-collapsed':''" @click="toggleCollapse('npm')" :aria-expanded="!collapsed.npm" aria-label="Toggle NPM"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.npm">
+                <template x-if="npm"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="npm.status==='online'?'bs':'bd'" x-text="npm.status"></span></div>
+                    <div class="row"><span class="row-label">Proxy Hosts</span><span class="row-val" x-text="npm.proxy_hosts||0"></span></div>
+                </div></template>
+                <template x-if="!npm"><div class="empty-msg">NPM unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Authentik ──────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-authentik" x-show="vis.authentik && authentikUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-id-badge card-icon" aria-hidden="true"></i><span class="card-title">Authentik</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.authentik?'is-collapsed':''" @click="toggleCollapse('authentik')" :aria-expanded="!collapsed.authentik" aria-label="Toggle Authentik"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.authentik">
+                <template x-if="authentik"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="authentik.status==='online'?'bs':'bd'" x-text="authentik.status"></span></div>
+                    <div class="row"><span class="row-label">Users</span><span class="row-val" x-text="authentik.users||0"></span></div>
+                    <div class="row"><span class="row-label">Failed Logins</span><span class="row-val" x-text="authentik.failed_logins||0"></span></div>
+                </div></template>
+                <template x-if="!authentik"><div class="empty-msg">Authentik unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Cloudflare ─────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-cloudflare" x-show="vis.cloudflare && cloudflareToken" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-cloud-meatball card-icon" aria-hidden="true"></i><span class="card-title">Cloudflare</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.cloudflare?'is-collapsed':''" @click="toggleCollapse('cloudflare')" :aria-expanded="!collapsed.cloudflare" aria-label="Toggle Cloudflare"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.cloudflare">
+                <template x-if="cloudflare"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="cloudflare.status==='online'?'bs':'bd'" x-text="cloudflare.status"></span></div>
+                    <div class="row"><span class="row-label">Requests</span><span class="row-val" x-text="(cloudflare.requests||0).toLocaleString()"></span></div>
+                    <div class="row"><span class="row-label">Threats</span><span class="row-val" x-text="cloudflare.threats||0"></span></div>
+                    <div class="row"><span class="row-label">Bandwidth</span><span class="row-val" x-text="cloudflare.bandwidth||'--'"></span></div>
+                    <div class="row"><span class="row-label">Cache Ratio</span><span class="row-val" x-text="(cloudflare.cache_ratio||0)+'%'"></span></div>
+                </div></template>
+                <template x-if="!cloudflare"><div class="empty-msg">Cloudflare unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── OpenMediaVault ─────────────────────────────────────────────── -->
+        <div class="card" data-id="card-omv" x-show="vis.omv && omvUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-hdd card-icon" aria-hidden="true"></i><span class="card-title">OpenMediaVault</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.omv?'is-collapsed':''" @click="toggleCollapse('omv')" :aria-expanded="!collapsed.omv" aria-label="Toggle OMV"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.omv">
+                <template x-if="omv"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="omv.status==='online'?'bs':'bd'" x-text="omv.status"></span></div>
+                    <template x-for="fs in (omv.filesystems||[])" :key="fs.name">
+                        <div class="row" style="font-size:.75rem">
+                            <span class="row-label" x-text="fs.name"></span>
+                            <span class="row-val" x-text="fs.used + ' / ' + fs.total"></span>
+                        </div>
+                    </template>
+                </div></template>
+                <template x-if="!omv"><div class="empty-msg">OMV unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── XCP-ng ─────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-xcpng" x-show="vis.xcpng && xcpngUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-server card-icon" aria-hidden="true"></i><span class="card-title">XCP-ng</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.xcpng?'is-collapsed':''" @click="toggleCollapse('xcpng')" :aria-expanded="!collapsed.xcpng" aria-label="Toggle XCP-ng"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.xcpng">
+                <template x-if="xcpng"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="xcpng.status==='online'?'bs':'bd'" x-text="xcpng.status"></span></div>
+                    <div class="row"><span class="row-label">VMs</span><span class="row-val" x-text="xcpng.vms||0"></span></div>
+                    <div class="row"><span class="row-label">Running</span><span class="row-val" x-text="xcpng.running||0"></span></div>
+                </div></template>
+                <template x-if="!xcpng"><div class="empty-msg">XCP-ng unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Homebridge ─────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-homebridge" x-show="vis.homebridge && homebridgeUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-home card-icon" aria-hidden="true"></i><span class="card-title">Homebridge</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.homebridge?'is-collapsed':''" @click="toggleCollapse('homebridge')" :aria-expanded="!collapsed.homebridge" aria-label="Toggle Homebridge"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.homebridge">
+                <template x-if="homebridge"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="homebridge.status==='online'?'bs':'bd'" x-text="homebridge.status"></span></div>
+                    <div class="row"><span class="row-label">Accessories</span><span class="row-val" x-text="homebridge.accessories||0"></span></div>
+                    <div class="row"><span class="row-label">Battery Devices</span><span class="row-val" x-text="homebridge.battery_devices||0"></span></div>
+                </div></template>
+                <template x-if="!homebridge"><div class="empty-msg">Homebridge unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Zigbee2MQTT ────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-z2m" x-show="vis.z2m && z2mUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-broadcast-tower card-icon" aria-hidden="true"></i><span class="card-title">Zigbee2MQTT</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.z2m?'is-collapsed':''" @click="toggleCollapse('z2m')" :aria-expanded="!collapsed.z2m" aria-label="Toggle Zigbee2MQTT"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.z2m">
+                <template x-if="z2m"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="z2m.status==='online'?'bs':'bd'" x-text="z2m.status"></span></div>
+                    <div class="row"><span class="row-label">Devices</span><span class="row-val" x-text="z2m.devices||0"></span></div>
+                    <div class="row"><span class="row-label">Offline</span><span class="row-val" x-text="z2m.offline||0"></span></div>
+                    <div class="row"><span class="row-label">Low Battery</span><span class="row-val" x-text="z2m.low_battery||0"></span></div>
+                </div></template>
+                <template x-if="!z2m"><div class="empty-msg">Zigbee2MQTT unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── ESPHome ────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-esphome" x-show="vis.esphome && esphomeUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-microchip card-icon" aria-hidden="true"></i><span class="card-title">ESPHome</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.esphome?'is-collapsed':''" @click="toggleCollapse('esphome')" :aria-expanded="!collapsed.esphome" aria-label="Toggle ESPHome"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.esphome">
+                <template x-if="esphome"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="esphome.status==='online'?'bs':'bd'" x-text="esphome.status"></span></div>
+                    <div class="row"><span class="row-label">Nodes</span><span class="row-val" x-text="esphome.nodes||0"></span></div>
+                    <div class="row"><span class="row-label">Online</span><span class="row-val" x-text="esphome.online||0"></span></div>
+                </div></template>
+                <template x-if="!esphome"><div class="empty-msg">ESPHome unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── UniFi Protect ──────────────────────────────────────────────── -->
+        <div class="card" data-id="card-unifiProtect" x-show="vis.unifiProtect && unifiProtectUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-video card-icon" aria-hidden="true"></i><span class="card-title">UniFi Protect</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.unifiProtect?'is-collapsed':''" @click="toggleCollapse('unifiProtect')" :aria-expanded="!collapsed.unifiProtect" aria-label="Toggle UniFi Protect"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.unifiProtect">
+                <template x-if="unifiProtect"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="unifiProtect.status==='online'?'bs':'bd'" x-text="unifiProtect.status"></span></div>
+                    <div class="row"><span class="row-label">Cameras</span><span class="row-val" x-text="unifiProtect.cameras||0"></span></div>
+                    <div class="row"><span class="row-label">Recording</span><span class="row-val" x-text="unifiProtect.recording||0"></span></div>
+                </div></template>
+                <template x-if="!unifiProtect"><div class="empty-msg">UniFi Protect unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── PiKVM ──────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-pikvm" x-show="vis.pikvm && pikvmUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-desktop card-icon" aria-hidden="true"></i><span class="card-title">PiKVM</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.pikvm?'is-collapsed':''" @click="toggleCollapse('pikvm')" :aria-expanded="!collapsed.pikvm" aria-label="Toggle PiKVM"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.pikvm">
+                <template x-if="pikvm"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="pikvm.status==='online'?'bs':'bd'" x-text="pikvm.status"></span></div>
+                </div></template>
+                <template x-if="!pikvm"><div class="empty-msg">PiKVM unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Kubernetes ─────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-k8s" x-show="vis.k8s && k8sUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-dharmachakra card-icon" aria-hidden="true"></i><span class="card-title">Kubernetes</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.k8s?'is-collapsed':''" @click="toggleCollapse('k8s')" :aria-expanded="!collapsed.k8s" aria-label="Toggle Kubernetes"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.k8s">
+                <template x-if="k8s"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="k8s.status==='online'?'bs':'bd'" x-text="k8s.status"></span></div>
+                    <div class="row"><span class="row-label">Pods</span><span class="row-val" x-text="k8s.pods||0"></span></div>
+                    <div class="row"><span class="row-label">Running</span><span class="row-val" x-text="k8s.running||0"></span></div>
+                    <div class="row"><span class="row-label">Namespaces</span><span class="row-val" x-text="k8s.namespaces||0"></span></div>
+                </div></template>
+                <template x-if="!k8s"><div class="empty-msg">Kubernetes unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Gitea ──────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-gitea" x-show="vis.gitea && giteaUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-code-branch card-icon" aria-hidden="true"></i><span class="card-title">Gitea</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.gitea?'is-collapsed':''" @click="toggleCollapse('gitea')" :aria-expanded="!collapsed.gitea" aria-label="Toggle Gitea"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.gitea">
+                <template x-if="gitea"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="gitea.status==='online'?'bs':'bd'" x-text="gitea.status"></span></div>
+                    <div class="row"><span class="row-label">Repositories</span><span class="row-val" x-text="gitea.repos||0"></span></div>
+                </div></template>
+                <template x-if="!gitea"><div class="empty-msg">Gitea unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── GitLab ─────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-gitlab" x-show="vis.gitlab && gitlabUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fab fa-gitlab card-icon" aria-hidden="true"></i><span class="card-title">GitLab</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.gitlab?'is-collapsed':''" @click="toggleCollapse('gitlab')" :aria-expanded="!collapsed.gitlab" aria-label="Toggle GitLab"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.gitlab">
+                <template x-if="gitlab"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="gitlab.status==='online'?'bs':'bd'" x-text="gitlab.status"></span></div>
+                    <div class="row"><span class="row-label">Projects</span><span class="row-val" x-text="gitlab.projects||0"></span></div>
+                </div></template>
+                <template x-if="!gitlab"><div class="empty-msg">GitLab unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── GitHub ─────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-github" x-show="vis.github && githubToken" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fab fa-github card-icon" aria-hidden="true"></i><span class="card-title">GitHub</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.github?'is-collapsed':''" @click="toggleCollapse('github')" :aria-expanded="!collapsed.github" aria-label="Toggle GitHub"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.github">
+                <template x-if="github"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="github.status==='online'?'bs':'bd'" x-text="github.status"></span></div>
+                    <div class="row"><span class="row-label">Repositories</span><span class="row-val" x-text="github.repos||0"></span></div>
+                </div></template>
+                <template x-if="!github"><div class="empty-msg">GitHub unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Paperless-ngx ──────────────────────────────────────────────── -->
+        <div class="card" data-id="card-paperless" x-show="vis.paperless && paperlessUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-file-alt card-icon" aria-hidden="true"></i><span class="card-title">Paperless-ngx</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.paperless?'is-collapsed':''" @click="toggleCollapse('paperless')" :aria-expanded="!collapsed.paperless" aria-label="Toggle Paperless"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.paperless">
+                <template x-if="paperless"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="paperless.status==='online'?'bs':'bd'" x-text="paperless.status"></span></div>
+                    <div class="row"><span class="row-label">Documents</span><span class="row-val" x-text="(paperless.documents||0).toLocaleString()"></span></div>
+                </div></template>
+                <template x-if="!paperless"><div class="empty-msg">Paperless unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Vaultwarden ────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-vaultwarden" x-show="vis.vaultwarden && vaultwardenUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-lock card-icon" aria-hidden="true"></i><span class="card-title">Vaultwarden</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.vaultwarden?'is-collapsed':''" @click="toggleCollapse('vaultwarden')" :aria-expanded="!collapsed.vaultwarden" aria-label="Toggle Vaultwarden"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.vaultwarden">
+                <template x-if="vaultwarden"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="vaultwarden.status==='online'?'bs':'bd'" x-text="vaultwarden.status"></span></div>
+                </div></template>
+                <template x-if="!vaultwarden"><div class="empty-msg">Vaultwarden unreachable — configure in Settings.</div></template>
+            </div>
+        </div>
+
+        <!-- ── VPN ────────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-vpn" x-show="vis.vpn && vpn" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-shield-alt card-icon" aria-hidden="true"></i><span class="card-title">VPN</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.vpn?'is-collapsed':''" @click="toggleCollapse('vpn')" :aria-expanded="!collapsed.vpn" aria-label="Toggle VPN"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.vpn">
+                <template x-if="vpn"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="vpn.status==='online'?'bs':'bd'" x-text="vpn.status"></span></div>
+                    <div class="row"><span class="row-label">Peers</span><span class="row-val" x-text="vpn.peers||0"></span></div>
+                </div></template>
+                <template x-if="!vpn"><div class="empty-msg">VPN data unavailable.</div></template>
+            </div>
+        </div>
+
+        <!-- ── Cert Expiry ────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-certExpiry" x-show="vis.certExpiry && certExpiry && certExpiry.length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-certificate card-icon" aria-hidden="true"></i><span class="card-title">Cert Expiry</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.certExpiry?'is-collapsed':''" @click="toggleCollapse('certExpiry')" :aria-expanded="!collapsed.certExpiry" aria-label="Toggle Cert Expiry"></button>
+                <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
+            <div class="card-body" x-show="!collapsed.certExpiry">
+                <template x-for="cert in (certExpiry||[])" :key="cert.host">
+                    <div class="row">
+                        <span class="row-label" x-text="cert.host"></span>
+                        <span class="badge" :class="cert.days_left > 30 ? 'bs' : cert.days_left > 7 ? 'bw' : 'bd'" x-text="cert.days_left + ' days'"></span>
+                    </div>
+                </template>
+                <div x-show="!certExpiry || certExpiry.length === 0" class="empty-msg">No certificates to monitor.</div>
+            </div>
+        </div>
+
+        <!-- ── Docker Updates ──────────────────────────────────────────────── -->
+        <div class="card" data-id="card-docker-updates" x-show="dockerUpdates && dockerUpdates.length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-box-open card-icon"></i><span class="card-title">Docker Updates</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.dockerUpdates?'is-collapsed':''" @click="toggleCollapse('dockerUpdates')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.dockerUpdates">
+                <template x-for="c in (dockerUpdates||[]).filter(u => u.has_update)" :key="c.name">
+                    <div class="row">
+                        <span class="row-label" x-text="c.name"></span>
+                        <span class="badge bw">Update available</span>
+                    </div>
+                </template>
+                <div class="empty-msg" x-show="!(dockerUpdates||[]).some(u => u.has_update)">All images up to date</div>
+            </div>
+        </div>
+
+        <!-- ── Device Presence ─────────────────────────────────────────────── -->
+        <div class="card" data-id="card-device-presence" x-show="devicePresence && devicePresence.length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-mobile-alt card-icon"></i><span class="card-title">Device Presence</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.devicePresence?'is-collapsed':''" @click="toggleCollapse('devicePresence')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.devicePresence">
+                <template x-for="d in devicePresence" :key="d.ip">
+                    <div class="row">
+                        <span class="row-label" x-text="d.name || d.ip"></span>
+                        <span class="badge" :class="d.status==='online'?'bs':'bd'" x-text="d.status"></span>
+                        <span x-show="d.ms > 0" class="row-val" x-text="d.ms + 'ms'" style="margin-left:auto;font-size:.75rem;color:var(--text-dim)"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ── Camera Feeds ────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-cameras" x-show="(cameraFeeds||[]).length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-video card-icon"></i><span class="card-title">Camera Feeds</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.cameras?'is-collapsed':''" @click="toggleCollapse('cameras')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.cameras">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">
+                    <template x-for="cam in cameraFeeds" :key="cam.url">
+                        <div style="text-align:center">
+                            <img :src="cam.url" :alt="cam.name" style="width:100%;border-radius:4px;background:#000"
+                                 onerror="this.style.display='none'" loading="lazy">
+                            <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px" x-text="cam.name"></div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Energy Monitoring ────────────────────────────────────────────── -->
+        <div class="card" data-id="card-energy" x-show="(energy||[]).length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-bolt card-icon" style="color:#f0c040"></i><span class="card-title">Energy</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.energy?'is-collapsed':''" @click="toggleCollapse('energy')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.energy">
+                <template x-for="e in energy" :key="e.name">
+                    <div class="row" style="flex-wrap:wrap">
+                        <span class="row-label" x-text="e.name" style="min-width:80px"></span>
+                        <template x-if="e.status==='online'">
+                            <span style="display:flex;gap:12px;font-size:.8rem">
+                                <span><strong x-text="e.power_w"></strong> W</span>
+                                <span x-show="e.voltage_v > 0" x-text="e.voltage_v + ' V'" style="color:var(--text-muted)"></span>
+                                <span class="badge" :class="e.on ? 'bs' : 'bn'" x-text="e.on ? 'ON' : 'OFF'" style="font-size:.65rem"></span>
+                            </span>
+                        </template>
+                        <template x-if="e.status!=='online'"><span class="badge bd">offline</span></template>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ── Lidarr ──────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-lidarr" x-show="vis.lidarr && lidarrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-music card-icon"></i><span class="card-title">Lidarr</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.lidarr?'is-collapsed':''" @click="toggleCollapse('lidarr')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.lidarr">
+                <template x-if="lidarr"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="lidarr.status==='online'?'bs':'bd'" x-text="lidarr.status"></span></div>
+                    <div class="row"><span class="row-label">Queue</span><span class="row-val" x-text="lidarr.queue_count||0"></span></div>
+                </div></template>
+                <template x-if="!lidarr"><div class="empty-msg">Lidarr unreachable</div></template>
+            </div>
+        </div>
+
+        <!-- ── Readarr ─────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-readarr" x-show="vis.readarr && readarrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-book card-icon"></i><span class="card-title">Readarr</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.readarr?'is-collapsed':''" @click="toggleCollapse('readarr')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.readarr">
+                <template x-if="readarr"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="readarr.status==='online'?'bs':'bd'" x-text="readarr.status"></span></div>
+                    <div class="row"><span class="row-label">Queue</span><span class="row-val" x-text="readarr.queue_count||0"></span></div>
+                </div></template>
+                <template x-if="!readarr"><div class="empty-msg">Readarr unreachable</div></template>
+            </div>
+        </div>
+
+        <!-- ── Bazarr ──────────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-bazarr" x-show="vis.bazarr && bazarrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-closed-captioning card-icon"></i><span class="card-title">Bazarr</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.bazarr?'is-collapsed':''" @click="toggleCollapse('bazarr')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.bazarr">
+                <template x-if="bazarr"><div>
+                    <div class="row"><span class="row-label">Status</span><span class="badge" :class="bazarr.status==='online'?'bs':'bd'" x-text="bazarr.status"></span></div>
+                    <div class="row"><span class="row-label">Queue</span><span class="row-val" x-text="bazarr.queue_count||0"></span></div>
+                </div></template>
+                <template x-if="!bazarr"><div class="empty-msg">Bazarr unreachable</div></template>
+            </div>
+        </div>
+
+        <div class="card" data-id="card-containers" x-show="vis.containers" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-boxes card-icon" aria-hidden="true"></i>
                 <span class="card-title">Containers</span>
@@ -788,7 +1374,7 @@
         </div>
 
         <!-- ── Proxmox VE ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-proxmox" x-show="vis.proxmox && proxmoxUrl">
+        <div class="card" data-id="card-proxmox" x-show="vis.proxmox && proxmoxUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-server card-icon" aria-hidden="true"></i>
                 <span class="card-title">Proxmox VE</span>
@@ -843,7 +1429,7 @@
             </div>
         </div>
 
-        <div class="card span-full" data-id="card-services" x-show="vis.services">
+        <div class="card span-full" data-id="card-services" x-show="vis.services" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-cogs card-icon" aria-hidden="true"></i>
                 <span class="card-title">Services</span>
@@ -891,7 +1477,7 @@
             </div>
         </div>
 
-        <div class="card span-full" data-id="card-logs" x-show="vis.logs">
+        <div class="card span-full" data-id="card-logs" x-show="vis.logs" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-scroll card-icon" aria-hidden="true"></i>
                 <span class="card-title">System Logs</span>
@@ -923,7 +1509,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-automations" x-show="vis.automations">
+        <div class="card" data-id="card-automations" x-show="vis.automations" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-robot card-icon" aria-hidden="true"></i>
                 <span class="card-title">Automation Deck</span>
@@ -1009,7 +1595,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-actions" x-show="vis.actions">
+        <div class="card" data-id="card-actions" x-show="vis.actions" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-terminal card-icon" aria-hidden="true"></i>
                 <span class="card-title">Quick Actions</span>
@@ -1204,7 +1790,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-bookmarks" x-show="vis.bookmarks">
+        <div class="card" data-id="card-bookmarks" x-show="vis.bookmarks" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-bookmark card-icon" aria-hidden="true"></i>
                 <span class="card-title">Homelab Links</span>
@@ -1230,7 +1816,7 @@
 
         <!-- ── Plugin Cards ──────────────────────────────────────────────── -->
         <template x-for="plug in plugins" :key="plug.id">
-            <div class="card" :data-id="'card-plugin-' + plug.id">
+            <div class="card" :data-id="'card-plugin-' + plug.id" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
                 <div class="card-hdr">
                     <i class="fas card-icon" :class="plug.icon || 'fa-puzzle-piece'" aria-hidden="true"></i>
                     <span class="card-title" x-text="plug.name"></span>
@@ -1245,6 +1831,34 @@
         </template>
 
     </div></main>
+
+<!-- Terminal Modal -->
+<div class="modal-overlay" x-show="showTerminal" x-cloak @keydown.escape.window="showTerminal=false">
+    <div class="modal-box" style="width:90vw;max-width:1100px;height:80vh;padding:0;display:flex;flex-direction:column">
+        <div class="modal-title" style="padding:12px 16px;flex-shrink:0">
+            <i class="fas fa-terminal"></i> Terminal
+            <button class="modal-close" @click="showTerminal=false;closeTerminal()" aria-label="Close">&times;</button>
+        </div>
+        <div id="terminal-container" style="flex:1;background:#1a1b26;overflow:hidden"></div>
+    </div>
+</div>
+
+<!-- Mobile bottom nav -->
+<nav class="mobile-nav" x-show="authenticated" x-cloak>
+    <div class="mobile-nav-item" :class="!showSettings && !showAutoModal ? 'active' : ''" @click="showSettings=false">
+        <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
+    </div>
+    <div class="mobile-nav-item" @click="showSettings=true; settingsTab='automations'">
+        <i class="fas fa-robot"></i><span>Automations</span>
+    </div>
+    <div class="mobile-nav-item" @click="toggleNotifCenter()">
+        <i class="fas fa-bell"></i><span>Alerts</span>
+    </div>
+    <div class="mobile-nav-item" @click="showSettings=true; settingsTab='visibility'">
+        <i class="fas fa-cog"></i><span>Settings</span>
+    </div>
+</nav>
+
 </div><div x-show="showHistoryModal"
      class="modal-overlay"
      style="display:none"
@@ -1293,6 +1907,12 @@
         </div>
 
         <div class="modal-footer">
+            <button class="chart-export-btn" @click="resetChartZoom()" title="Reset zoom" style="right:80px">
+                <i class="fas fa-search-minus"></i> Reset
+            </button>
+            <button class="chart-export-btn" @click="exportChart()" title="Export as PNG">
+                <i class="fas fa-download"></i> PNG
+            </button>
             <button class="btn btn-sm btn-secondary"
                     @click="downloadHistoryCSV()"
                     title="Download as CSV"
@@ -1331,15 +1951,15 @@
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th scope="col">Time</th>
-                        <th scope="col">User</th>
-                        <th scope="col">Action</th>
-                        <th scope="col">Details</th>
-                        <th scope="col">IP</th>
+                        <th @click="toggleAuditSort('time')" style="cursor:pointer">Time <i class="fas" :class="auditSortField==='time' ? (auditSortDir==='asc' ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'" style="opacity:.5"></i></th>
+                        <th @click="toggleAuditSort('username')" style="cursor:pointer">User <i class="fas" :class="auditSortField==='username' ? (auditSortDir==='asc' ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'" style="opacity:.5"></i></th>
+                        <th @click="toggleAuditSort('action')" style="cursor:pointer">Action</th>
+                        <th>Details</th>
+                        <th>IP</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="entry in auditLog" :key="entry.time + entry.action">
+                    <template x-for="entry in auditSorted" :key="entry.time + entry.action">
                         <tr>
                             <td x-text="new Date(entry.time*1000).toLocaleString()"></td>
                             <td x-text="entry.username"></td>
@@ -1351,8 +1971,13 @@
                 </tbody>
             </table>
         </div>
-        <div class="modal-footer">
-            <button class="btn btn-sm" @click="showAuditModal=false">Close</button>
+        <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center">
+            <button class="btn-sm" @click="exportAuditCsv()"><i class="fas fa-download"></i> Export CSV</button>
+            <div style="display:flex;gap:8px;align-items:center">
+                <button class="btn-sm" @click="auditPrevPage()" :disabled="auditPage <= 1"><i class="fas fa-chevron-left"></i></button>
+                <span style="font-size:.8rem" x-text="'Page ' + auditPage"></span>
+                <button class="btn-sm" @click="auditNextPage()"><i class="fas fa-chevron-right"></i></button>
+            </div>
         </div>
     </div>
 </div>
@@ -1803,6 +2428,35 @@
                     <label class="toggle-item"><input type="checkbox" x-model="vis.unifi"> UniFi</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.speedtest"> Speedtest</label>
                     <label class="toggle-item"><input type="checkbox" x-model="vis.diskIo"> Disk I/O</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.weather"> Weather</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.tautulli"> Tautulli</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.overseerr"> Overseerr</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.prowlarr"> Prowlarr</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.nextcloud"> Nextcloud</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.traefik"> Traefik</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.npm"> Nginx Proxy Manager</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.authentik"> Authentik</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.cloudflare"> Cloudflare</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.omv"> OpenMediaVault</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.xcpng"> XCP-ng</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.homebridge"> Homebridge</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.z2m"> Zigbee2MQTT</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.esphome"> ESPHome</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.unifiProtect"> UniFi Protect</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.pikvm"> PiKVM</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.k8s"> Kubernetes</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.gitea"> Gitea</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.gitlab"> GitLab</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.github"> GitHub</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.paperless"> Paperless-ngx</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.vaultwarden"> Vaultwarden</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.vpn"> VPN</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.certExpiry"> Cert Expiry</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.lidarr"> Lidarr</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.readarr"> Readarr</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.bazarr"> Bazarr</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.dockerUpdates"> Docker Updates</label>
+                    <label class="toggle-item"><input type="checkbox" x-model="vis.devicePresence"> Device Presence</label>
                 </div>
             </div>
         </div>
@@ -1853,6 +2507,15 @@
                     <button class="btn btn-sm" @click="openConfigHistory()">
                         <i class="fas fa-history" aria-hidden="true"></i> Version History
                     </button>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px">
+                    <button class="btn-sm" @click="downloadEncryptedConfig()">
+                        <i class="fas fa-lock"></i> Encrypted Backup
+                    </button>
+                    <label class="btn-sm" style="cursor:pointer">
+                        <i class="fas fa-unlock"></i> Restore Encrypted
+                        <input type="file" accept=".bin" @change="restoreEncryptedConfig($event)" style="display:none">
+                    </label>
                 </div>
             </div>
             <div class="s-section">
@@ -2138,6 +2801,446 @@
                 <div>
                     <label class="field-label" for="s-speedtest-url">URL</label>
                     <input id="s-speedtest-url" class="field-input" type="url" x-model="speedtestUrl" placeholder="http://192.168.1.50:8765">
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Weather</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-weather-key">API Key (OpenWeatherMap)</label>
+                        <div class="reveal-wrap">
+                            <input id="s-weather-key" class="field-input" type="password" x-model="weatherApiKey" autocomplete="off" placeholder="Your OWM API key">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-weather-city">City</label>
+                        <input id="s-weather-city" class="field-input" type="text" x-model="weatherCity" placeholder="London,UK">
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Tautulli</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-tautulli-url">URL</label>
+                        <input id="s-tautulli-url" class="field-input" type="url" x-model="tautulliUrl" placeholder="http://tautulli:8181">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-tautulli-key">API Key</label>
+                        <div class="reveal-wrap">
+                            <input id="s-tautulli-key" class="field-input" type="password" x-model="tautulliKey" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Overseerr</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-overseerr-url">URL</label>
+                        <input id="s-overseerr-url" class="field-input" type="url" x-model="overseerrUrl" placeholder="http://overseerr:5055">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-overseerr-key">API Key</label>
+                        <div class="reveal-wrap">
+                            <input id="s-overseerr-key" class="field-input" type="password" x-model="overseerrKey" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Prowlarr</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-prowlarr-url">URL</label>
+                        <input id="s-prowlarr-url" class="field-input" type="url" x-model="prowlarrUrl" placeholder="http://prowlarr:9696">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-prowlarr-key">API Key</label>
+                        <div class="reveal-wrap">
+                            <input id="s-prowlarr-key" class="field-input" type="password" x-model="prowlarrKey" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Lidarr</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-lidarr-url">URL</label>
+                        <input id="s-lidarr-url" class="field-input" type="url" x-model="lidarrUrl" placeholder="http://lidarr:8686">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-lidarr-key">API Key</label>
+                        <div class="reveal-wrap">
+                            <input id="s-lidarr-key" class="field-input" type="password" x-model="lidarrKey" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Readarr</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-readarr-url">URL</label>
+                        <input id="s-readarr-url" class="field-input" type="url" x-model="readarrUrl" placeholder="http://readarr:8787">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-readarr-key">API Key</label>
+                        <div class="reveal-wrap">
+                            <input id="s-readarr-key" class="field-input" type="password" x-model="readarrKey" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Bazarr</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-bazarr-url">URL</label>
+                        <input id="s-bazarr-url" class="field-input" type="url" x-model="bazarrUrl" placeholder="http://bazarr:6767">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-bazarr-key">API Key</label>
+                        <div class="reveal-wrap">
+                            <input id="s-bazarr-key" class="field-input" type="password" x-model="bazarrKey" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Nextcloud</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-nextcloud-url">URL</label>
+                        <input id="s-nextcloud-url" class="field-input" type="url" x-model="nextcloudUrl" placeholder="https://cloud.example.com">
+                    </div>
+                    <div style="display:flex;gap:.5rem">
+                        <div style="flex:1">
+                            <label class="field-label" for="s-nextcloud-user">Username</label>
+                            <input id="s-nextcloud-user" class="field-input" type="text" x-model="nextcloudUser" autocomplete="username">
+                        </div>
+                        <div style="flex:1">
+                            <label class="field-label" for="s-nextcloud-pass">Password</label>
+                            <div class="reveal-wrap">
+                                <input id="s-nextcloud-pass" class="field-input" type="password" x-model="nextcloudPass" autocomplete="off">
+                                <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Traefik</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-traefik-url">URL</label>
+                        <input id="s-traefik-url" class="field-input" type="url" x-model="traefikUrl" placeholder="http://traefik:8080">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-traefik-key">API (no auth needed)</label>
+                        <span class="field-hint" style="font-size:.75rem;color:var(--text-dim)">Traefik API uses no key — just enable the API in traefik config</span>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Nginx Proxy Manager</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-npm-url">URL</label>
+                        <input id="s-npm-url" class="field-input" type="url" x-model="npmUrl" placeholder="http://npm:81">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-npm-key">API Token</label>
+                        <div class="reveal-wrap">
+                            <input id="s-npm-key" class="field-input" type="password" x-model="npmToken" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Authentik</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-authentik-url">URL</label>
+                        <input id="s-authentik-url" class="field-input" type="url" x-model="authentikUrl" placeholder="https://auth.example.com">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-authentik-key">API Token</label>
+                        <div class="reveal-wrap">
+                            <input id="s-authentik-key" class="field-input" type="password" x-model="authentikToken" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Cloudflare</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-cf-token">API Token</label>
+                        <div class="reveal-wrap">
+                            <input id="s-cf-token" class="field-input" type="password" x-model="cloudflareToken" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-cf-zone">Zone ID</label>
+                        <input id="s-cf-zone" class="field-input" type="text" x-model="cloudflareZoneId" placeholder="Zone ID">
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">OpenMediaVault</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-omv-url">URL</label>
+                        <input id="s-omv-url" class="field-input" type="url" x-model="omvUrl" placeholder="http://omv:80">
+                    </div>
+                    <div style="display:flex;gap:.5rem">
+                        <div style="flex:1">
+                            <label class="field-label" for="s-omv-user">Username</label>
+                            <input id="s-omv-user" class="field-input" type="text" x-model="omvUser" autocomplete="username">
+                        </div>
+                        <div style="flex:1">
+                            <label class="field-label" for="s-omv-pass">Password</label>
+                            <div class="reveal-wrap">
+                                <input id="s-omv-pass" class="field-input" type="password" x-model="omvPass" autocomplete="off">
+                                <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">XCP-ng (Xen Orchestra)</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-xcpng-url">URL</label>
+                        <input id="s-xcpng-url" class="field-input" type="url" x-model="xcpngUrl" placeholder="https://xo.example.com">
+                    </div>
+                    <div style="display:flex;gap:.5rem">
+                        <div style="flex:1">
+                            <label class="field-label" for="s-xcpng-user">Username</label>
+                            <input id="s-xcpng-user" class="field-input" type="text" x-model="xcpngUser" autocomplete="username">
+                        </div>
+                        <div style="flex:1">
+                            <label class="field-label" for="s-xcpng-pass">Password</label>
+                            <div class="reveal-wrap">
+                                <input id="s-xcpng-pass" class="field-input" type="password" x-model="xcpngPass" autocomplete="off">
+                                <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Homebridge</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-homebridge-url">URL</label>
+                        <input id="s-homebridge-url" class="field-input" type="url" x-model="homebridgeUrl" placeholder="http://homebridge:8581">
+                    </div>
+                    <div style="display:flex;gap:.5rem">
+                        <div style="flex:1">
+                            <label class="field-label" for="s-homebridge-user">Username</label>
+                            <input id="s-homebridge-user" class="field-input" type="text" x-model="homebridgeUser" autocomplete="username">
+                        </div>
+                        <div style="flex:1">
+                            <label class="field-label" for="s-homebridge-pass">Password</label>
+                            <div class="reveal-wrap">
+                                <input id="s-homebridge-pass" class="field-input" type="password" x-model="homebridgePass" autocomplete="off">
+                                <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Zigbee2MQTT</span>
+                <div>
+                    <label class="field-label" for="s-z2m-url">URL</label>
+                    <input id="s-z2m-url" class="field-input" type="url" x-model="z2mUrl" placeholder="http://z2m:8080">
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">ESPHome</span>
+                <div>
+                    <label class="field-label" for="s-esphome-url">URL</label>
+                    <input id="s-esphome-url" class="field-input" type="url" x-model="esphomeUrl" placeholder="http://esphome:6052">
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">UniFi Protect</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-uprotect-url">URL</label>
+                        <input id="s-uprotect-url" class="field-input" type="url" x-model="unifiProtectUrl" placeholder="https://unvr.example.com">
+                    </div>
+                    <div style="display:flex;gap:.5rem">
+                        <div style="flex:1">
+                            <label class="field-label" for="s-uprotect-user">Username</label>
+                            <input id="s-uprotect-user" class="field-input" type="text" x-model="unifiProtectUser" autocomplete="username">
+                        </div>
+                        <div style="flex:1">
+                            <label class="field-label" for="s-uprotect-pass">Password</label>
+                            <div class="reveal-wrap">
+                                <input id="s-uprotect-pass" class="field-input" type="password" x-model="unifiProtectPass" autocomplete="off">
+                                <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">PiKVM</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-pikvm-url">URL</label>
+                        <input id="s-pikvm-url" class="field-input" type="url" x-model="pikvmUrl" placeholder="https://pikvm.local">
+                    </div>
+                    <div style="display:flex;gap:.5rem">
+                        <div style="flex:1">
+                            <label class="field-label" for="s-pikvm-user">Username</label>
+                            <input id="s-pikvm-user" class="field-input" type="text" x-model="pikvmUser" autocomplete="username">
+                        </div>
+                        <div style="flex:1">
+                            <label class="field-label" for="s-pikvm-pass">Password</label>
+                            <div class="reveal-wrap">
+                                <input id="s-pikvm-pass" class="field-input" type="password" x-model="pikvmPass" autocomplete="off">
+                                <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Kubernetes</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-k8s-url">API URL</label>
+                        <input id="s-k8s-url" class="field-input" type="url" x-model="k8sUrl" placeholder="https://k8s.example.com:6443">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-k8s-token">Bearer Token</label>
+                        <div class="reveal-wrap">
+                            <input id="s-k8s-token" class="field-input" type="password" x-model="k8sToken" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Gitea</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-gitea-url">URL</label>
+                        <input id="s-gitea-url" class="field-input" type="url" x-model="giteaUrl" placeholder="https://gitea.example.com">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-gitea-key">API Token</label>
+                        <div class="reveal-wrap">
+                            <input id="s-gitea-key" class="field-input" type="password" x-model="giteaToken" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">GitLab</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-gitlab-url">URL</label>
+                        <input id="s-gitlab-url" class="field-input" type="url" x-model="gitlabUrl" placeholder="https://gitlab.example.com">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-gitlab-key">Personal Access Token</label>
+                        <div class="reveal-wrap">
+                            <input id="s-gitlab-key" class="field-input" type="password" x-model="gitlabToken" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">GitHub</span>
+                <div>
+                    <label class="field-label" for="s-github-token">Personal Access Token</label>
+                    <div class="reveal-wrap">
+                        <input id="s-github-token" class="field-input" type="password" x-model="githubToken" autocomplete="off" placeholder="ghp_xxxx...">
+                        <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Paperless-ngx</span>
+                <div class="field-2">
+                    <div>
+                        <label class="field-label" for="s-paperless-url">URL</label>
+                        <input id="s-paperless-url" class="field-input" type="url" x-model="paperlessUrl" placeholder="http://paperless:8000">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-paperless-key">API Token</label>
+                        <div class="reveal-wrap">
+                            <input id="s-paperless-key" class="field-input" type="password" x-model="paperlessToken" autocomplete="off">
+                            <button type="button" class="reveal-btn" @click="$el.previousElementSibling.type = $el.previousElementSibling.type === 'password' ? 'text' : 'password'" title="Toggle visibility"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Vaultwarden</span>
+                <div>
+                    <label class="field-label" for="s-vaultwarden-url">URL</label>
+                    <input id="s-vaultwarden-url" class="field-input" type="url" x-model="vaultwardenUrl" placeholder="https://vault.example.com">
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">SSO / OIDC</span>
+                <div class="field-2">
+                    <div><label class="field-label">Provider URL</label><input class="field-input" type="url" x-model="oidcProviderUrl" placeholder="https://auth.example.com/realms/main"></div>
+                    <div><label class="field-label">Client ID</label><input class="field-input" type="text" x-model="oidcClientId" placeholder="noba"></div>
+                </div>
+                <div><label class="field-label">Client Secret</label>
+                    <div class="reveal-wrap"><input class="field-input" type="password" x-model="oidcClientSecret" autocomplete="off"><button type="button" class="reveal-btn" @click="$el.previousElementSibling.type=$el.previousElementSibling.type==='password'?'text':'password'"><i class="fas fa-eye"></i></button></div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">LDAP / Active Directory</span>
+                <div class="field-2">
+                    <div><label class="field-label">LDAP URL</label><input class="field-input" type="url" x-model="ldapUrl" placeholder="ldap://dc.example.com:389"></div>
+                    <div><label class="field-label">Base DN</label><input class="field-input" type="text" x-model="ldapBaseDn" placeholder="dc=example,dc=com"></div>
+                </div>
+                <div class="field-2">
+                    <div><label class="field-label">Bind DN</label><input class="field-input" type="text" x-model="ldapBindDn" placeholder="cn=admin,dc=example,dc=com"></div>
+                    <div><label class="field-label">Bind Password</label>
+                        <div class="reveal-wrap"><input class="field-input" type="password" x-model="ldapBindPassword" autocomplete="off"><button type="button" class="reveal-btn" @click="$el.previousElementSibling.type=$el.previousElementSibling.type==='password'?'text':'password'"><i class="fas fa-eye"></i></button></div>
+                    </div>
+                </div>
+            </div>
+            <div class="s-section">
+                <span class="s-label">Security &amp; Monitoring</span>
+                <div style="display:flex;flex-direction:column;gap:.7rem">
+                    <div>
+                        <label class="field-label" for="s-cert-hosts">Cert Expiry Hosts (comma-separated)</label>
+                        <input id="s-cert-hosts" class="field-input" type="text" x-model="certHosts" placeholder="example.com,cloud.example.com,git.example.com">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-domain-list">Domain List (comma-separated)</label>
+                        <input id="s-domain-list" class="field-input" type="text" x-model="domainList" placeholder="example.com,example.org">
+                    </div>
+                    <div>
+                        <label class="field-label" for="s-ip-whitelist">IP Whitelist (comma-separated)</label>
+                        <input id="s-ip-whitelist" class="field-input" type="text" x-model="ipWhitelist" placeholder="192.168.1.0/24,10.0.0.0/8">
+                    </div>
                 </div>
             </div>
         </div>
@@ -2593,6 +3696,12 @@
             <i class="fas fa-sign-in-alt" x-show="!loginLoading" aria-hidden="true"></i>
             <span x-text="loginLoading ? 'Authenticating…' : 'Login'"></span>
         </button>
+        <div x-show="oidcProviderUrl" style="text-align:center;margin-top:12px">
+            <div style="color:var(--text-dim);font-size:.75rem;margin-bottom:8px">— or —</div>
+            <a :href="'/api/auth/oidc/login'" class="btn-sm" style="text-decoration:none">
+                <i class="fas fa-sign-in-alt"></i> Sign in with SSO
+            </a>
+        </div>
     </div>
 </div>
 
@@ -2688,8 +3797,39 @@
                 <kbd>?</kbd><span>This Help</span>
             </div>
         </div>
+        <div style="text-align:center;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+            <button class="btn-sm" @click="showShortcutsModal=false; showKeybindModal=true">
+                <i class="fas fa-edit"></i> Customize Shortcuts
+            </button>
+        </div>
         <div class="modal-footer">
             <button class="btn btn-sm" @click="showShortcutsModal=false">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Keybindings Editor Modal -->
+<div class="modal-overlay" x-show="showKeybindModal" x-cloak @keydown.escape.window="showKeybindModal=false">
+    <div class="modal-box" style="max-width:450px">
+        <div class="modal-title">
+            <i class="fas fa-keyboard"></i> Customize Shortcuts
+            <button class="modal-close" @click="showKeybindModal=false">&times;</button>
+        </div>
+        <div style="padding:16px">
+            <template x-for="[action, key] in Object.entries(keyBindings)" :key="action">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+                    <span style="text-transform:capitalize" x-text="action"></span>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <kbd x-text="key" style="min-width:28px;text-align:center"></kbd>
+                        <input type="text" maxlength="1" style="width:40px;text-align:center;padding:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+                               :value="key"
+                               @keydown.prevent="setKeyBinding(action, $event.key); $el.value = $event.key">
+                    </div>
+                </div>
+            </template>
+            <div style="margin-top:12px;text-align:right">
+                <button class="btn-sm" @click="resetKeyBindings()"><i class="fas fa-undo"></i> Reset to Defaults</button>
+            </div>
         </div>
     </div>
 </div>

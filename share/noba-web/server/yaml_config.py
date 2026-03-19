@@ -36,6 +36,7 @@ def read_yaml_settings() -> dict:
             return _settings_cache
 
     defaults: dict = {
+        # ── Core / existing ────────────────────────────────────────────────
         "piholeUrl": "", "piholeToken": "", "monitoredServices": "", "radarIps": "", "bookmarksStr": "",
         "plexUrl": "", "plexToken": "", "kumaUrl": "", "bmcMap": "", "backupSources": [], "backupDest": "",
         "backupRetentionDays": 7, "backupKeepCount": 0, "backupVerifySample": 20,
@@ -50,6 +51,54 @@ def read_yaml_settings() -> dict:
         "proxmoxUrl": "", "proxmoxUser": "", "proxmoxTokenName": "", "proxmoxTokenValue": "",
         "pushoverEnabled": False, "pushoverAppToken": "", "pushoverUserKey": "",
         "gotifyEnabled": False,   "gotifyUrl": "",        "gotifyAppToken": "",
+        # ── Existing integrations (already in WEB_KEYS) ────────────────────
+        "adguardUrl": "", "adguardUser": "", "adguardPass": "",
+        "jellyfinUrl": "", "jellyfinKey": "",
+        "hassUrl": "", "hassToken": "",
+        "unifiUrl": "", "unifiUser": "", "unifiPass": "", "unifiSite": "",
+        "speedtestUrl": "",
+        "customMetricScripts": "",
+        # ── Round 1: Automation ────────────────────────────────────────────
+        "maintenanceWindows": [], "fsTriggers": [],
+        # ── Round 2: Monitoring ────────────────────────────────────────────
+        "weatherApiKey": "", "weatherCity": "", "certHosts": "", "domainList": "",
+        "energySensors": "", "devicePresenceIps": "",
+        # ── Round 3: Media ─────────────────────────────────────────────────
+        "tautulliUrl": "", "tautulliKey": "",
+        "overseerrUrl": "", "overseerrKey": "",
+        "prowlarrUrl": "", "prowlarrKey": "",
+        "lidarrUrl": "", "lidarrKey": "",
+        "readarrUrl": "", "readarrKey": "",
+        "bazarrUrl": "", "bazarrKey": "",
+        "nextcloudUrl": "", "nextcloudUser": "", "nextcloudPass": "",
+        # ── Round 4: Infrastructure ────────────────────────────────────────
+        "traefikUrl": "",
+        "npmUrl": "", "npmToken": "",
+        "authentikUrl": "", "authentikToken": "",
+        "cloudflareToken": "", "cloudflareZoneId": "",
+        "omvUrl": "", "omvUser": "", "omvPass": "",
+        "xcpngUrl": "", "xcpngUser": "", "xcpngPass": "",
+        # ── Round 5: IoT ───────────────────────────────────────────────────
+        "homebridgeUrl": "", "homebridgeUser": "", "homebridgePass": "",
+        "z2mUrl": "",
+        "esphomeUrl": "",
+        "unifiProtectUrl": "", "unifiProtectUser": "", "unifiProtectPass": "",
+        "pikvmUrl": "", "pikvmUser": "", "pikvmPass": "",
+        "hassEventTriggers": [], "hassSensors": "", "cameraFeeds": [],
+        # ── Round 6: Security ──────────────────────────────────────────────
+        "oidcProviderUrl": "", "oidcClientId": "", "oidcClientSecret": "",
+        "ldapUrl": "", "ldapBaseDn": "", "ldapBindDn": "", "ldapBindPassword": "",
+        "ipWhitelist": "", "auditRetentionDays": 90,
+        # ── Round 9: DevOps & Misc ─────────────────────────────────────────
+        "k8sUrl": "", "k8sToken": "",
+        "giteaUrl": "", "giteaToken": "",
+        "gitlabUrl": "", "gitlabToken": "",
+        "githubToken": "",
+        "paperlessUrl": "", "paperlessToken": "",
+        "vaultwardenUrl": "", "vaultwardenToken": "",
+        "wolDevices": [], "gameServers": [], "composeProjects": [],
+        # RSS triggers
+        "rssTriggers": [],
     }
     if not os.path.exists(NOBA_YAML):
         with _settings_cache_lock:

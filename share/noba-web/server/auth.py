@@ -58,6 +58,26 @@ def verify_password(stored: str, password: str) -> bool:
     return secrets.compare_digest(expected, actual)
 
 
+# ── TOTP helpers ──────────────────────────────────────────────────────────────
+
+def generate_totp_secret() -> str:
+    """Generate a new TOTP secret for 2FA setup."""
+    try:
+        import pyotp
+        return pyotp.random_base32()
+    except ImportError:
+        return secrets.token_hex(20)
+
+def verify_totp(secret: str, code: str) -> bool:
+    """Verify a TOTP code against a secret."""
+    try:
+        import pyotp
+        totp = pyotp.TOTP(secret)
+        return totp.verify(code, valid_window=1)
+    except ImportError:
+        return False
+
+
 # ── User store ────────────────────────────────────────────────────────────────
 
 class UserStore:
@@ -65,11 +85,11 @@ class UserStore:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._db: dict[str, tuple[str, str]] = {}  # username -> (hash, role)
+        self._db: dict[str, tuple[str, str, str]] = {}  # username -> (hash, role, totp_secret)
         self.load()
 
     def load(self) -> None:
-        new_db: dict[str, tuple[str, str]] = {}
+        new_db: dict[str, tuple[str, str, str]] = {}
         if os.path.exists(USER_DB):
             try:
                 with open(USER_DB, encoding="utf-8") as f:
@@ -81,10 +101,27 @@ class UserStore:
                         if len(user_rest) != 2:
                             continue
                         uname, rest = user_rest
-                        hash_role = rest.rsplit(":", 1)
-                        if len(hash_role) != 2:
-                            continue
-                        new_db[uname] = (hash_role[0], hash_role[1])
+                        # Try 3-field format: hash:role:totp_secret
+                        # The hash itself may contain colons (e.g. pbkdf2:salt:dk),
+                        # so we split from the right to get role and optional totp.
+                        # 2-field legacy: rest = "hash:role"
+                        # 3-field new:    rest = "hash:role:totp_secret"
+                        # Since hash can contain ':', we rsplit to peel off fields.
+                        # Try rsplit with maxsplit=2 to get (hash, role, totp)
+                        parts = rest.rsplit(":", 2)
+                        if len(parts) == 3:
+                            # Could be (hash_part, role, totp) or (prefix, salt_dk, role)
+                            # Determine if parts[1] is a valid role
+                            if parts[1] in ("admin", "operator", "viewer"):
+                                new_db[uname] = (parts[0], parts[1], parts[2])
+                            else:
+                                # Fall back to 2-field parse
+                                hash_role = rest.rsplit(":", 1)
+                                if len(hash_role) == 2:
+                                    new_db[uname] = (hash_role[0], hash_role[1], "")
+                        elif len(parts) == 2:
+                            new_db[uname] = (parts[0], parts[1], "")
+                        # len(parts) == 1 is malformed, skip
             except Exception as e:
                 logger.error("Failed to load users: %s", e)
         with self._lock:
@@ -106,8 +143,8 @@ class UserStore:
             with self._lock:
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 with open(fd, "w", encoding="utf-8") as f:
-                    for username, (hashval, role) in self._db.items():
-                        f.write(f"{username}:{hashval}:{role}\n")
+                    for username, (hashval, role, totp_secret) in self._db.items():
+                        f.write(f"{username}:{hashval}:{role}:{totp_secret}\n")
                 os.replace(tmp, USER_DB)
         except Exception:
             if os.path.exists(tmp):
@@ -118,11 +155,14 @@ class UserStore:
 
     def get(self, username: str) -> tuple[str, str] | None:
         with self._lock:
-            return self._db.get(username)
+            data = self._db.get(username)
+            if data:
+                return (data[0], data[1])
+        return None
 
-    def add(self, username: str, hashval: str, role: str) -> None:
+    def add(self, username: str, hashval: str, role: str, totp_secret: str = "") -> None:
         with self._lock:
-            self._db[username] = (hashval, role)
+            self._db[username] = (hashval, role, totp_secret)
         self.save()
 
     def remove(self, username: str) -> bool:
@@ -137,17 +177,43 @@ class UserStore:
         with self._lock:
             if username not in self._db:
                 return False
-            self._db[username] = (hashval, self._db[username][1])
+            old = self._db[username]
+            self._db[username] = (hashval, old[1], old[2])
         self.save()
         return True
 
     def list_users(self) -> list[dict]:
         with self._lock:
-            return [{"username": u, "role": r} for u, (_, r) in self._db.items()]
+            return [{"username": u, "role": r} for u, (_, r, _totp) in self._db.items()]
 
     def exists(self, username: str) -> bool:
         with self._lock:
             return username in self._db
+
+    def get_totp_secret(self, username: str) -> str | None:
+        """Get the TOTP secret for a user, if set."""
+        with self._lock:
+            data = self._db.get(username)
+            if data and len(data) >= 3:
+                return data[2] if data[2] else None
+        return None
+
+    def set_totp_secret(self, username: str, secret: str | None) -> bool:
+        """Set or clear the TOTP secret for a user."""
+        with self._lock:
+            if username not in self._db:
+                return False
+            old = self._db[username]
+            if len(old) >= 3:
+                self._db[username] = (old[0], old[1], secret or "")
+            else:
+                self._db[username] = (old[0], old[1], secret or "")
+        self.save()
+        return True
+
+    def has_totp(self, username: str) -> bool:
+        """Check if user has TOTP enabled."""
+        return bool(self.get_totp_secret(username))
 
 
 # ── Legacy auth.conf reader ───────────────────────────────────────────────────
@@ -194,19 +260,36 @@ class TokenStore:
         expires = datetime.now() + timedelta(hours=TOKEN_TTL_H)
         with self._lock:
             self._tokens[token] = (username, role, expires)
+        # Mirror to cache for cross-instance sharing
+        from .cache import cache as _cache  # noqa: PLC0415
+
+        if _cache.is_redis:
+            _cache.set(f"noba:token:{token}", {"u": username, "r": role}, ttl=TOKEN_TTL_H * 3600)
         return token
 
     def validate(self, token: str) -> tuple[str | None, str | None]:
+        # Check in-memory first
         with self._lock:
             data = self._tokens.get(token)
             if data and data[2] > datetime.now():
                 return data[0], data[1]
             self._tokens.pop(token, None)
+        # Fall back to cache (Redis)
+        from .cache import cache as _cache  # noqa: PLC0415
+
+        if _cache.is_redis:
+            cached = _cache.get(f"noba:token:{token}")
+            if cached:
+                return cached.get("u"), cached.get("r")
         return None, None
 
     def revoke(self, token: str) -> None:
         with self._lock:
             self._tokens.pop(token, None)
+        from .cache import cache as _cache  # noqa: PLC0415
+
+        if _cache.is_redis:
+            _cache.delete(f"noba:token:{token}")
 
     def list_sessions(self) -> list[dict]:
         """List all active sessions (token prefix only for security)."""
@@ -225,10 +308,14 @@ class TokenStore:
 
     def revoke_by_prefix(self, prefix: str) -> bool:
         """Revoke a token by its first 8 characters."""
+        from .cache import cache as _cache  # noqa: PLC0415
+
         with self._lock:
             for tok in list(self._tokens):
                 if tok[:8] == prefix[:8]:
                     del self._tokens[tok]
+                    if _cache.is_redis:
+                        _cache.delete(f"noba:token:{tok}")
                     return True
             return False
 
@@ -274,10 +361,34 @@ class RateLimiter:
                 return True
         return False
 
+    def record_failure_user(self, ip: str, username: str) -> bool:
+        """Track failures by both IP and username, lock out if either exceeds threshold."""
+        ip_locked = self.record_failure(ip)
+        user_key = f"user:{username}"
+        now = datetime.now()
+        with self._lock:
+            cutoff = now - timedelta(seconds=self.window_s)
+            attempts = [t for t in self._attempts.get(user_key, []) if t > cutoff]
+            attempts.append(now)
+            self._attempts[user_key] = attempts
+            if len(attempts) >= self.max_attempts:
+                self._lockouts[user_key] = now + timedelta(seconds=self.lockout_s)
+                self._attempts.pop(user_key, None)
+                return True
+        return ip_locked
+
+    def is_locked_user(self, username: str) -> bool:
+        """Check if a username is locked out."""
+        return self.is_locked(f"user:{username}")
+
     def reset(self, ip: str) -> None:
         with self._lock:
             self._attempts.pop(ip, None)
             self._lockouts.pop(ip, None)
+
+    def reset_user(self, username: str) -> None:
+        """Reset lockout state for a username."""
+        self.reset(f"user:{username}")
 
     def cleanup(self) -> None:
         now = datetime.now()
@@ -297,14 +408,116 @@ class RateLimiter:
                 del self._lockouts[ip]
 
 
+# ── IP whitelist ──────────────────────────────────────────────────────────────
+
+def check_ip_whitelist(ip: str, read_settings_fn) -> bool:
+    """Return True if IP is allowed (whitelist empty = all allowed)."""
+    cfg = read_settings_fn()
+    whitelist = cfg.get("ipWhitelist", "")
+    if not whitelist:
+        return True
+    allowed = [x.strip() for x in whitelist.split(",") if x.strip()]
+    if not allowed:
+        return True
+    return ip in allowed
+
+
+# ── Permissions ──────────────────────────────────────────────────────────────
+PERMISSIONS: dict[str, frozenset[str]] = {
+    "viewer": frozenset([
+        "stats:read", "history:read", "integrations:read", "alerts:read",
+        "automations:read", "backups:read", "plugins:read", "notifications:read",
+        "dashboard:read", "dashboard:write",
+    ]),
+    "operator": frozenset([
+        "stats:read", "history:read", "integrations:read", "alerts:read",
+        "automations:read", "automations:run", "automations:write",
+        "backups:read", "backups:restore",
+        "plugins:read", "notifications:read",
+        "dashboard:read", "dashboard:write",
+        "services:control", "containers:control", "scripts:run",
+        "webhooks:trigger", "compose:control", "wol:send", "dns:toggle",
+        "hass:control",
+    ]),
+    "admin": frozenset([
+        "stats:read", "history:read", "integrations:read", "alerts:read",
+        "automations:read", "automations:run", "automations:write", "automations:delete",
+        "backups:read", "backups:restore", "backups:manage",
+        "plugins:read", "plugins:install",
+        "notifications:read", "notifications:manage",
+        "dashboard:read", "dashboard:write",
+        "services:control", "containers:control", "scripts:run",
+        "webhooks:trigger", "compose:control", "wol:send", "dns:toggle",
+        "hass:control",
+        "users:manage", "settings:write", "audit:read",
+        "api_keys:manage", "ssh_keys:manage", "terminal:access",
+        "config:backup", "config:restore",
+        "system:governor", "cloud:manage",
+    ]),
+}
+
+
+def has_permission(role: str, permission: str) -> bool:
+    """Check if a role has a specific permission."""
+    return permission in PERMISSIONS.get(role, frozenset())
+
+
+def get_permissions(role: str) -> list[str]:
+    """Get all permissions for a role."""
+    return sorted(PERMISSIONS.get(role, frozenset()))
+
+
 # ── Global singletons ─────────────────────────────────────────────────────────
 users        = UserStore()
 token_store  = TokenStore()
 rate_limiter = RateLimiter()
 
 
+def authenticate_ldap(username: str, password: str, read_settings_fn) -> tuple[str | None, str | None]:
+    """Attempt LDAP authentication. Returns (username, role) or (None, None)."""
+    cfg = read_settings_fn()
+    ldap_url = cfg.get("ldapUrl", "")
+    base_dn = cfg.get("ldapBaseDn", "")
+    bind_dn = cfg.get("ldapBindDn", "")
+    bind_pw = cfg.get("ldapBindPassword", "")
+    if not ldap_url or not base_dn:
+        return None, None
+    try:
+        import ldap3
+        server = ldap3.Server(ldap_url, get_info=ldap3.NONE, connect_timeout=5)
+        # First bind with service account to search for user
+        conn = ldap3.Connection(server, user=bind_dn, password=bind_pw, auto_bind=True)
+        conn.search(base_dn, f"(|(uid={username})(sAMAccountName={username})(mail={username}))",
+                    attributes=["memberOf", "cn"])
+        if not conn.entries:
+            conn.unbind()
+            return None, None
+        user_dn = conn.entries[0].entry_dn
+        conn.unbind()
+        # Bind as the user to verify password
+        user_conn = ldap3.Connection(server, user=user_dn, password=password, auto_bind=True)
+        user_conn.unbind()
+        # Map role -- default to viewer, could check memberOf for admin/operator groups
+        role = "viewer"
+        return username, role
+    except ImportError:
+        logger.debug("ldap3 not installed -- LDAP auth unavailable")
+        return None, None
+    except Exception as e:
+        logger.debug("LDAP auth failed for %s: %s", username, e)
+        return None, None
+
+
 def authenticate(authorization: str = "") -> tuple[str | None, str | None]:
-    """Extract and validate token from Authorization header."""
+    """Extract and validate token from Authorization header or API key."""
     if authorization.startswith("Bearer "):
         return token_store.validate(authorization[7:])
+    # API key support
+    if authorization.startswith("ApiKey "):
+        key = authorization[7:]
+        key_hash = hashlib.sha256(key.encode()).hexdigest()
+        from .db import db
+        key_data = db.get_api_key(key_hash)
+        if key_data:
+            return f"apikey:{key_data['name']}", key_data['role']
     return None, None

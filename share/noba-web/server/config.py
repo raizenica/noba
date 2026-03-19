@@ -5,7 +5,7 @@ import os
 import sys
 
 # ── Version ───────────────────────────────────────────────────────────────────
-VERSION = "1.15.0"
+VERSION = "2.0.0"
 
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT    = int(os.environ.get("PORT",  8080))
@@ -37,6 +37,7 @@ MAX_CONCURRENT_JOBS    = int(os.environ.get("NOBA_MAX_JOBS", 3))
 JOB_TIMEOUT            = int(os.environ.get("NOBA_JOB_TIMEOUT", 300))
 JOB_MAX_OUTPUT         = 256 * 1024
 JOB_RETENTION_DAYS     = int(os.environ.get("NOBA_JOB_RETENTION_DAYS", 30))
+PLUGIN_API_VERSION     = 2
 
 # ── YAML config keys ─────────────────────────────────────────────────────────
 WEB_KEYS = frozenset([
@@ -54,6 +55,40 @@ WEB_KEYS = frozenset([
     "unifiUrl", "unifiUser", "unifiPass", "unifiSite",
     "speedtestUrl",
     "customMetricScripts",
+    # Round 1 – Automation
+    "maintenanceWindows", "fsTriggers",
+    # Round 2 – Monitoring
+    "weatherApiKey", "weatherCity", "certHosts", "domainList",
+    "energySensors", "devicePresenceIps",
+    # Round 3 – Media
+    "tautulliUrl", "tautulliKey", "overseerrUrl", "overseerrKey",
+    "prowlarrUrl", "prowlarrKey", "lidarrUrl", "lidarrKey",
+    "readarrUrl", "readarrKey", "bazarrUrl", "bazarrKey",
+    "nextcloudUrl", "nextcloudUser", "nextcloudPass",
+    # Round 4 – Infra
+    "traefikUrl", "npmUrl", "npmToken",
+    "authentikUrl", "authentikToken",
+    "cloudflareToken", "cloudflareZoneId",
+    "omvUrl", "omvUser", "omvPass",
+    "xcpngUrl", "xcpngUser", "xcpngPass",
+    # Round 5 – IoT
+    "homebridgeUrl", "homebridgeUser", "homebridgePass",
+    "z2mUrl", "esphomeUrl",
+    "unifiProtectUrl", "unifiProtectUser", "unifiProtectPass",
+    "pikvmUrl", "pikvmUser", "pikvmPass",
+    "hassEventTriggers", "hassSensors", "cameraFeeds",
+    # Round 6 – Security
+    "oidcProviderUrl", "oidcClientId", "oidcClientSecret",
+    "ldapUrl", "ldapBaseDn", "ldapBindDn", "ldapBindPassword",
+    "ipWhitelist", "auditRetentionDays",
+    # Round 9 – DevOps
+    "k8sUrl", "k8sToken", "giteaUrl", "giteaToken",
+    "gitlabUrl", "gitlabToken", "githubToken",
+    "paperlessUrl", "paperlessToken",
+    "vaultwardenUrl", "vaultwardenToken",
+    "wolDevices", "gameServers", "composeProjects",
+    # RSS triggers
+    "rssTriggers",
 ])
 _NOTIF_WEB_KEYS = frozenset([
     "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",
@@ -79,13 +114,15 @@ SCRIPT_MAP = {
     "diskcheck":     "disk-sentinel.sh",
     "check_updates": "noba-update.sh",
 }
-ALLOWED_ACTIONS = frozenset({"start", "stop", "restart", "poweroff"})
-VALID_ROLES     = ("viewer", "operator", "admin")
+ALLOWED_ACTIONS    = frozenset({"start", "stop", "restart", "poweroff"})
+ALLOWED_AUTO_TYPES = frozenset(["script", "webhook", "service", "workflow", "condition", "delay", "notify", "http"])
+VALID_ROLES        = ("viewer", "operator", "admin")
 
 HISTORY_METRICS = [
     "cpu_percent", "mem_percent", "cpu_temp", "gpu_temp",
     "disk_percent", "ping_ms", "net_rx_bytes", "net_tx_bytes",
     "disk_io_read_bps", "disk_io_write_bps", "custom_metric",
+    "cert_expiry_days", "domain_expiry_days", "bandwidth_ip", "weather_temp",
 ]
 
 # ── Security headers ──────────────────────────────────────────────────────────
@@ -98,7 +135,7 @@ SECURITY_HEADERS = {
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
         "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
-        "img-src 'self' data:; connect-src 'self' wss: ws: https://cdn.jsdelivr.net"
+        "img-src 'self' data: blob:; connect-src 'self' wss: ws: https://cdn.jsdelivr.net"
     ),
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
 }

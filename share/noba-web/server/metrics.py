@@ -621,3 +621,240 @@ def get_rclone_remotes() -> dict:
         return {"available": True, "remotes": lst}
     except Exception:
         return {"available": False, "remotes": []}
+
+
+# ── Certificate expiry ────────────────────────────────────────────────────────
+def check_cert_expiry(hosts: list[str]) -> list[dict]:
+    import ssl
+    import socket as _socket
+    from datetime import datetime, timezone
+    results = []
+    for host in hosts:
+        try:
+            ctx = ssl.create_default_context()
+            with ctx.wrap_socket(_socket.socket(), server_hostname=host) as s:
+                s.settimeout(5)
+                s.connect((host, 443))
+                cert = s.getpeercert()
+            expires_str = cert.get("notAfter", "")
+            expires = datetime.strptime(expires_str, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+            days = (expires - datetime.now(timezone.utc)).days
+            issuer = dict(x[0] for x in cert.get("issuer", ())).get("organizationName", "")
+            results.append({"host": host, "expires": expires.isoformat(), "days": days, "issuer": issuer})
+        except Exception as e:
+            results.append({"host": host, "error": str(e), "days": None})
+    return results
+
+
+# ── Domain expiry (WHOIS) ────────────────────────────────────────────────────
+def check_domain_expiry(domains: list[str]) -> list[dict]:
+    from datetime import datetime, timezone
+    results = []
+    for domain in domains:
+        try:
+            out = _run(["whois", domain], timeout=10, ignore_rc=True)
+            exp_date = None
+            for line in out.splitlines():
+                low = line.lower()
+                if "expir" in low and ":" in line:
+                    val = line.split(":", 1)[1].strip()
+                    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d", "%d-%b-%Y"):
+                        try:
+                            exp_date = datetime.strptime(val, fmt).replace(tzinfo=timezone.utc)
+                            break
+                        except ValueError:
+                            continue
+                    if exp_date:
+                        break
+            if exp_date:
+                days = (exp_date - datetime.now(timezone.utc)).days
+                results.append({"domain": domain, "expires": exp_date.isoformat(), "days": days})
+            else:
+                results.append({"domain": domain, "error": "Could not parse expiry"})
+        except Exception as e:
+            results.append({"domain": domain, "error": str(e)})
+    return results
+
+
+# ── VPN / WireGuard status ───────────────────────────────────────────────────
+def get_vpn_status() -> dict | None:
+    raw = _run(["wg", "show", "all", "dump"], timeout=3, ignore_rc=True)
+    if not raw:
+        return None
+    peers = []
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 8:
+            peers.append({
+                "interface": parts[0],
+                "endpoint": parts[3] if parts[3] != "(none)" else "",
+                "last_handshake": int(parts[5]) if parts[5] != "0" else 0,
+                "rx_bytes": int(parts[6]),
+                "tx_bytes": int(parts[7]),
+            })
+    return {"peers": peers, "peer_count": len(peers)} if peers else None
+
+
+# ── CPU governor ─────────────────────────────────────────────────────────────
+def get_cpu_governor() -> str:
+    return _read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "unknown").strip()
+
+
+# ── Wake-on-LAN ─────────────────────────────────────────────────────────────
+def send_wol(mac: str) -> bool:
+    mac = mac.replace(":", "").replace("-", "").replace(".", "")
+    if len(mac) != 12:
+        return False
+    try:
+        mac_bytes = bytes.fromhex(mac)
+        magic = b"\xff" * 6 + mac_bytes * 16
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            s.sendto(magic, ("<broadcast>", 9))
+        return True
+    except Exception:
+        return False
+
+
+# ── Game server probe ────────────────────────────────────────────────────────
+def check_docker_updates() -> list[dict]:
+    """Check running containers for available image updates."""
+    import hashlib
+    results = []
+    # Get running containers with their image digests
+    out = _run(["docker", "ps", "--format", "{{.Names}}|{{.Image}}"], timeout=10, ignore_rc=True)
+    if not out:
+        return results
+    for line in out.splitlines():
+        if "|" not in line:
+            continue
+        name, image = line.split("|", 1)
+        try:
+            # Get local digest
+            local = _run(["docker", "image", "inspect", image, "--format", "{{.Id}}"], timeout=5)
+            # Try to get remote digest (without pulling)
+            remote = _run(["docker", "manifest", "inspect", image, "--verbose"], timeout=15, ignore_rc=True)
+            has_update = False
+            if remote and local:
+                # Simple heuristic: if manifest inspect succeeds and content differs
+                remote_hash = hashlib.md5(remote.encode()).hexdigest()[:12]  # noqa: S324
+                has_update = remote_hash not in local
+            results.append({
+                "name": name,
+                "image": image,
+                "has_update": has_update,
+            })
+        except Exception:
+            results.append({"name": name, "image": image, "has_update": False})
+    return results
+
+
+_device_presence: dict[str, dict] = {}
+_device_presence_lock = threading.Lock()
+
+
+def check_device_presence(ips: list[str]) -> list[dict]:
+    """Ping a list of IPs and track online/offline transitions."""
+    results = []
+    for ip in ips:
+        parts = ip.split("|")
+        addr = parts[0].strip()
+        name = parts[1].strip() if len(parts) > 1 else addr
+        if not validate_ip(addr):
+            continue
+        _, up, ms = ping_host(addr)
+        with _device_presence_lock:
+            prev = _device_presence.get(addr, {})
+            was_up = prev.get("up", None)
+            changed = was_up is not None and was_up != up
+            _device_presence[addr] = {"up": up, "ms": ms, "name": name, "changed": changed}
+        results.append({
+            "ip": addr,
+            "name": name,
+            "status": "online" if up else "offline",
+            "ms": ms if up else 0,
+            "changed": changed,
+        })
+    return results
+
+
+def get_ipmi_sensors(host: str, user: str = "", password: str = "") -> list[dict]:
+    """Query IPMI sensors from a remote BMC."""
+    cmd = ["ipmitool"]
+    if host:
+        cmd += ["-H", host, "-I", "lanplus"]
+        if user:
+            cmd += ["-U", user]
+        if password:
+            cmd += ["-P", password]
+    cmd += ["sdr", "list"]
+    out = _run(cmd, timeout=10, ignore_rc=True)
+    if not out:
+        return []
+    sensors = []
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) >= 3:
+            name = parts[0]
+            value = parts[1]
+            status = parts[2]
+            sensors.append({
+                "name": name,
+                "value": value,
+                "status": status.lower(),
+            })
+    return sensors
+
+
+def probe_game_server(host: str, port: int) -> dict:
+    try:
+        t0 = time.time()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(3)
+            s.connect((host, port))
+        ms = round((time.time() - t0) * 1000)
+        return {"host": host, "port": port, "status": "online", "ms": ms}
+    except Exception:
+        return {"host": host, "port": port, "status": "offline", "ms": 0}
+
+
+def query_source_server(host: str, port: int) -> dict:
+    """Query a Valve Source engine game server using A2S_INFO protocol."""
+    import struct  # noqa: F401
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(3)
+            # A2S_INFO request: 4 bytes header (0xFFFFFFFF) + 'T' + "Source Engine Query\0"
+            request = b'\xff\xff\xff\xff\x54Source Engine Query\x00'
+            s.sendto(request, (host, port))
+            data, _ = s.recvfrom(4096)
+            if len(data) < 6:
+                return {"host": host, "port": port, "status": "offline"}
+            # Parse response (skip 4-byte header + 1 byte type)
+            pos = 5
+            # Protocol version
+            pos += 1
+            # Server name (null-terminated string)
+            end = data.index(b'\x00', pos)
+            name = data[pos:end].decode('utf-8', errors='replace')
+            pos = end + 1
+            # Map (null-terminated)
+            end = data.index(b'\x00', pos)
+            map_name = data[pos:end].decode('utf-8', errors='replace')
+            pos = end + 1
+            # Game dir (skip)
+            end = data.index(b'\x00', pos)
+            pos = end + 1
+            # Game name (skip)
+            end = data.index(b'\x00', pos)
+            pos = end + 1
+            # Players, max players
+            players = data[pos]
+            max_players = data[pos + 1]
+            return {
+                "host": host, "port": port, "status": "online",
+                "name": name, "map": map_name,
+                "players": players, "max_players": max_players,
+            }
+    except Exception:
+        return {"host": host, "port": port, "status": "offline"}

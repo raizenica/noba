@@ -120,7 +120,7 @@ for file in "$@"; do
     fi
 
     if [[ "$VERIFY" == true ]]; then
-        sidecar="${file}.${CMD%sum}"
+        sidecar="${file}.${CMD%sum}.txt"
         if [[ -f "$sidecar" ]]; then
             if "$CMD" -c "$sidecar" >/dev/null 2>&1; then
                 if [[ "$QUIET" == false ]]; then
@@ -145,6 +145,11 @@ for file in "$@"; do
         if [[ -z "$FIRST_HASH" ]]; then
             FIRST_HASH=$(echo "$hash_out" | awk '{print $1}')
         fi
+
+        # Write sidecar file (e.g. file.txt.md5.txt)
+        algo_name="${CMD%sum}"
+        sidecar="${file}.${algo_name}.txt"
+        echo "$hash_out" > "$sidecar"
 
         if [[ "$QUIET" == true ]]; then
             echo "$hash_out" | awk '{print $1}'

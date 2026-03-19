@@ -1,4 +1,4 @@
-"""Noba Command Center – FastAPI application v1.15.0"""
+"""Noba Command Center – FastAPI application v1.16.0"""
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import threading
@@ -14,7 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,9 +24,9 @@ from .auth import authenticate, load_legacy_user, pbkdf2_hash, rate_limiter, tok
     users, valid_username, verify_password, check_password_strength
 from .collector import bg_collector, collect_stats, get_shutdown_flag
 from .config import (
-    ACTION_LOG, ALLOWED_ACTIONS, HISTORY_METRICS, LOG_DIR, MAX_BODY_BYTES,
-    NOBA_YAML, PID_FILE, SCRIPT_DIR, SCRIPT_MAP, SECURITY_HEADERS, TRUST_PROXY,
-    VALID_ROLES, VERSION,
+    ACTION_LOG, ALLOWED_ACTIONS, ALLOWED_AUTO_TYPES, HISTORY_METRICS, LOG_DIR,
+    MAX_BODY_BYTES, NOBA_YAML, PID_FILE, SCRIPT_DIR, SCRIPT_MAP,
+    SECURITY_HEADERS, TRUST_PROXY, VALID_ROLES, VERSION,
 )
 from .db import db
 from .metrics import (
@@ -59,6 +60,18 @@ def _cleanup_loop() -> None:
             db.prune_history()
             db.prune_audit()
             db.prune_job_runs()
+        if _prune_counter == 6:  # Every ~30 minutes
+            try:
+                if os.path.exists(NOBA_YAML):
+                    import shutil
+                    bak = f"{NOBA_YAML}.auto.{int(time.time())}"
+                    shutil.copy2(NOBA_YAML, bak)
+                    # Keep only last 10 auto backups
+                    import glob as glob_mod
+                    for old in sorted(glob_mod.glob(f"{NOBA_YAML}.auto.*"))[:-10]:
+                        os.unlink(old)
+            except Exception as e:
+                logger.debug("Auto config backup failed: %s", e)
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -75,8 +88,15 @@ async def lifespan(app: FastAPI):
     plugin_manager.start()
     from .scheduler import scheduler
     scheduler.start()
+    from .scheduler import fs_watcher
+    fs_watcher.start()
+    from .scheduler import rss_watcher
+    rss_watcher.start()
     logger.info("Noba v%s started (%d plugins)", VERSION, plugin_manager.count)
     yield
+    rss_watcher.stop()
+    from .scheduler import fs_watcher as _fw
+    _fw.stop()
     scheduler.stop()
     job_runner.shutdown()
     plugin_manager.stop()
@@ -153,6 +173,17 @@ def _require_admin(request: Request) -> tuple[str, str]:
     return username, role
 
 
+def _require_permission(permission: str):
+    """Create a dependency that checks a specific permission."""
+    def checker(request: Request) -> tuple[str, str]:
+        username, role = _get_auth(request)
+        from .auth import has_permission  # noqa: PLC0415
+        if not has_permission(role, permission):
+            raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
+        return username, role
+    return checker
+
+
 def _client_ip(request: Request) -> str:
     if TRUST_PROXY:
         forwarded = request.headers.get("X-Forwarded-For")
@@ -201,7 +232,15 @@ def api_health():
 @app.get("/api/me")
 def api_me(auth=Depends(_get_auth)):
     username, role = auth
-    return {"username": username, "role": role}
+    from .auth import get_permissions  # noqa: PLC0415
+    return {"username": username, "role": role, "permissions": get_permissions(role)}
+
+
+@app.get("/api/permissions")
+def api_permissions(auth=Depends(_get_auth)):
+    """List all available permissions and which roles have them."""
+    from .auth import PERMISSIONS  # noqa: PLC0415
+    return {role: sorted(perms) for role, perms in PERMISSIONS.items()}
 
 
 # ── /api/plugins ─────────────────────────────────────────────────────────────
@@ -295,6 +334,48 @@ def api_smart(auth=Depends(_get_auth)):
 @app.get("/api/cloud-remotes")
 def api_cloud_remotes(auth=Depends(_get_auth)):
     return get_rclone_remotes()
+
+
+@app.post("/api/cloud-remotes/create")
+async def api_cloud_remote_create(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    body = await _read_body(request)
+    name = body.get("name", "").strip()
+    remote_type = body.get("type", "").strip()
+    params = body.get("params", {})
+    if not name or not remote_type:
+        raise HTTPException(400, "Name and type are required")
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$', name):
+        raise HTTPException(400, "Invalid remote name")
+    cmd = ["rclone", "config", "create", name, remote_type]
+    for k, v in params.items():
+        cmd.append(f"{k}={v}")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            raise HTTPException(422, r.stderr.strip()[:200] or "Failed to create remote")
+        db.audit_log("cloud_remote_create", username, f"Created remote '{name}' ({remote_type})", _client_ip(request))
+        return {"status": "ok"}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Command timed out")
+    except FileNotFoundError:
+        raise HTTPException(424, "rclone not found")
+
+
+@app.delete("/api/cloud-remotes/{name}")
+def api_cloud_remote_delete(name: str, request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$', name):
+        raise HTTPException(400, "Invalid remote name")
+    try:
+        r = subprocess.run(["rclone", "config", "delete", name],
+                          capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            raise HTTPException(422, "Failed to delete remote")
+        db.audit_log("cloud_remote_delete", username, f"Deleted remote '{name}'", _client_ip(request))
+        return {"status": "ok"}
+    except FileNotFoundError:
+        raise HTTPException(424, "rclone not found")
 
 
 # ── /api/history/{metric} ─────────────────────────────────────────────────────
@@ -463,6 +544,41 @@ def api_backup_status(auth=Depends(_get_auth)):
     return {"nas": _build_nas(nas), "cloud": _build_cloud(cloud)}
 
 
+@app.post("/api/backup/report")
+def api_backup_report(request: Request, auth=Depends(_require_admin)):
+    """Send an email summary of the last backup status."""
+    username, _ = auth
+    from .config import BACKUP_STATE_FILE, CLOUD_STATE_FILE
+    nas = _read_state_file(BACKUP_STATE_FILE)
+    cloud = _read_state_file(CLOUD_STATE_FILE)
+    if not nas and not cloud:
+        raise HTTPException(404, "No backup state found")
+    cfg = read_yaml_settings()
+    notif_cfg = cfg.get("notifications", {})
+    email_cfg = notif_cfg.get("email", {})
+    if not email_cfg.get("enabled"):
+        raise HTTPException(400, "Email notifications not configured")
+
+    msg_parts = ["NOBA Backup Report"]
+    if nas:
+        exit_code = nas.get("exit_code", "?")
+        status = "SUCCESS" if exit_code == "0" else "FAILED"
+        msg_parts.append(f"\nNAS Backup: {status}")
+        msg_parts.append(f"  Snapshot: {nas.get('snapshot', 'N/A')}")
+        msg_parts.append(f"  Duration: {nas.get('duration', 'N/A')}s")
+        if nas.get("failed_sources"):
+            msg_parts.append(f"  Failed: {nas['failed_sources']}")
+    if cloud:
+        msg_parts.append(f"\nCloud Sync: {cloud.get('LAST_STATUS', 'N/A')}")
+        msg_parts.append(f"  Last sync: {cloud.get('LAST_SYNC_TIME', 'N/A')}")
+
+    message = "\n".join(msg_parts)
+    threading.Thread(target=dispatch_notifications,
+                    args=("info", message, notif_cfg, ["email"]), daemon=True).start()
+    db.audit_log("backup_report", username, "Sent backup report email", _client_ip(request))
+    return {"status": "ok", "message": "Report sent"}
+
+
 # ── Backup explorer helpers ──────────────────────────────────────────────────
 _SNAP_RE = re.compile(r"^\d{8}-\d{6}$")
 
@@ -609,6 +725,40 @@ def api_snapshot_diff(request: Request, auth=Depends(_get_auth)):
             "unchanged_count": len(unchanged)}
 
 
+# ── /api/backup/file-versions ────────────────────────────────────────────────
+@app.get("/api/backup/file-versions")
+def api_file_versions(request: Request, auth=Depends(_get_auth)):
+    """List all versions of a file across snapshots."""
+    dest = _get_backup_dest()
+    if not dest:
+        raise HTTPException(404, "Backup destination not configured")
+    file_path = request.query_params.get("path", "")
+    if not file_path:
+        raise HTTPException(400, "File path required")
+    versions = []
+    try:
+        for entry in sorted(os.scandir(dest), key=lambda e: e.name, reverse=True):
+            if not entry.is_dir() or not _SNAP_RE.match(entry.name):
+                continue
+            full = _safe_snapshot_path(dest, entry.name, file_path)
+            if full and os.path.isfile(full):
+                st = os.stat(full)
+                versions.append({
+                    "snapshot": entry.name,
+                    "size": st.st_size,
+                    "mtime": int(st.st_mtime),
+                    "inode": st.st_ino,
+                })
+    except OSError as e:
+        raise HTTPException(500, f"Error scanning versions: {e}")
+    # Mark which versions are actually different (different inode = different content)
+    seen_inodes: set = set()
+    for v in versions:
+        v["unique"] = v["inode"] not in seen_inodes
+        seen_inodes.add(v["inode"])
+    return {"path": file_path, "versions": versions[:100]}
+
+
 # ── /api/backup/restore ──────────────────────────────────────────────────────
 @app.post("/api/backup/restore")
 async def api_backup_restore(request: Request, auth=Depends(_require_admin)):
@@ -720,6 +870,39 @@ def api_config_history_download(filename: str, auth=Depends(_require_admin)):
     )
 
 
+# ── /api/backup/restic ───────────────────────────────────────────────────────
+@app.get("/api/backup/restic")
+def api_restic_status(auth=Depends(_get_auth)):
+    """Check restic repository status if configured."""
+    cfg = read_yaml_settings()
+    repo = cfg.get("resticRepo", "")
+    if not repo:
+        return {"configured": False}
+    env = dict(os.environ)
+    password = cfg.get("resticPassword", "")
+    if password:
+        env["RESTIC_PASSWORD"] = password
+    try:
+        r = subprocess.run(["restic", "-r", repo, "snapshots", "--json", "--latest", "5"],
+                          capture_output=True, text=True, timeout=30, env=env)
+        if r.returncode != 0:
+            return {"configured": True, "error": r.stderr.strip()[:200]}
+        snapshots = json.loads(r.stdout)
+        return {
+            "configured": True,
+            "snapshots": [{
+                "id": s.get("short_id", ""),
+                "time": s.get("time", ""),
+                "hostname": s.get("hostname", ""),
+                "paths": s.get("paths", []),
+            } for s in (snapshots or [])],
+        }
+    except FileNotFoundError:
+        return {"configured": True, "error": "restic not installed"}
+    except Exception as e:
+        return {"configured": True, "error": str(e)}
+
+
 # ── /api/log-viewer ───────────────────────────────────────────────────────────
 @app.get("/api/log-viewer")
 def api_log_viewer(request: Request, auth=Depends(_get_auth)):
@@ -784,6 +967,20 @@ def api_run_cancel(run_id: int, request: Request, auth=Depends(_require_operator
     return {"success": True}
 
 
+# ── Round 1: Approval gate for runs ──────────────────────────────────────────
+@app.post("/api/runs/{run_id}/approve")
+async def api_run_approve(run_id: int, request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    run = db.get_job_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run["status"] != "pending_approval":
+        raise HTTPException(400, "Run is not pending approval")
+    db.update_job_run(run_id, "running")
+    db.audit_log("run_approve", username, f"Approved run {run_id}", _client_ip(request))
+    return {"status": "ok"}
+
+
 # ── /api/automations — CRUD + manual trigger ─────────────────────────────────
 def _validate_auto_config(atype: str, config: dict) -> None:
     if atype == "script":
@@ -802,6 +999,19 @@ def _validate_auto_config(atype: str, config: dict) -> None:
         steps = config.get("steps", [])
         if not isinstance(steps, list) or len(steps) < 1:
             raise HTTPException(400, "Workflow requires 'steps' list with at least one automation ID")
+    elif atype == "condition":
+        if not config.get("condition"):
+            raise HTTPException(400, "Condition automation requires 'condition'")
+    elif atype == "delay":
+        if not config.get("seconds") and not config.get("duration"):
+            raise HTTPException(400, "Delay requires 'seconds' or 'duration'")
+    elif atype == "notify":
+        if not config.get("message"):
+            raise HTTPException(400, "Notify requires 'message'")
+    elif atype == "http":
+        url = config.get("url", "")
+        if not url or not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "HTTP step requires a valid URL")
 
 
 def _build_auto_script_process(config: dict) -> subprocess.Popen | None:
@@ -854,9 +1064,87 @@ def _build_auto_service_process(config: dict) -> subprocess.Popen | None:
                             start_new_session=True)
 
 
-_AUTO_BUILDERS = {"script": _build_auto_script_process, "webhook": _build_auto_webhook_process,
-                  "service": _build_auto_service_process}
-_AUTO_TYPES = frozenset(list(_AUTO_BUILDERS) + ["workflow"])
+def _build_auto_delay_process(config: dict) -> subprocess.Popen | None:
+    seconds = int(config.get("seconds", config.get("duration", 10)))
+    return subprocess.Popen(["sleep", str(seconds)], stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, start_new_session=True)
+
+
+def _build_auto_http_process(config: dict) -> subprocess.Popen | None:
+    url = config.get("url", "")
+    method = config.get("method", "GET").upper()
+    cmd = ["curl", "-sS", "-w", "\n--- HTTP %{http_code} (%{time_total}s) ---", "-X", method]
+    for k, v in config.get("headers", {}).items():
+        cmd += ["-H", f"{k}: {v}"]
+    auth_type = config.get("auth_type", "")
+    if auth_type == "bearer":
+        cmd += ["-H", f"Authorization: Bearer {config.get('auth_token', '')}"]
+    elif auth_type == "basic":
+        cmd += ["-u", f"{config.get('auth_user', '')}:{config.get('auth_pass', '')}"]
+    body = config.get("body")
+    if body:
+        if isinstance(body, (dict, list)):
+            cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
+        elif isinstance(body, str):
+            cmd += ["-d", body]
+    cmd.append(url)
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+
+
+def _build_auto_notify_process(config: dict) -> subprocess.Popen | None:
+    """Dispatch a notification and return a trivial process for status tracking."""
+    msg = config.get("message", "Automation notification")
+    level = config.get("level", "info")
+    channels = config.get("channels")
+    try:
+        cfg = read_yaml_settings()
+        notif_cfg = cfg.get("notifications", {})
+        if notif_cfg:
+            threading.Thread(
+                target=dispatch_notifications,
+                args=(level, msg, notif_cfg, channels),
+                daemon=True,
+            ).start()
+    except Exception as e:
+        logger.error("Notify step failed: %s", e)
+    # Return a trivial success process so the runner records the step
+    return subprocess.Popen(["echo", f"Notification sent: {msg}"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            start_new_session=True)
+
+
+def _build_auto_condition_process(config: dict) -> subprocess.Popen | None:
+    """Evaluate a condition and exit 0 (true) or 1 (false).
+
+    Workflow engine treats exit 0 as 'done' (proceed to next step)
+    and non-zero as 'failed' (stop or retry). This lets conditions
+    gate subsequent steps in a sequential workflow.
+    """
+    condition = config.get("condition", "")
+    if not condition:
+        return subprocess.Popen(["false"], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+    # Evaluate condition against current stats
+    from .collector import bg_collector
+    from .alerts import _safe_eval
+    stats = bg_collector.get() or {}
+    flat: dict = {}
+    for k, v in stats.items():
+        if isinstance(v, (int, float, str)):
+            flat[k] = v
+    result = _safe_eval(condition, flat)
+    cmd = ["true"] if result else ["false"]
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            start_new_session=True)
+
+
+_AUTO_BUILDERS = {
+    "script": _build_auto_script_process, "webhook": _build_auto_webhook_process,
+    "service": _build_auto_service_process, "delay": _build_auto_delay_process,
+    "http": _build_auto_http_process, "notify": _build_auto_notify_process,
+    "condition": _build_auto_condition_process,
+}
+_AUTO_TYPES = ALLOWED_AUTO_TYPES  # from config
 
 
 def _run_workflow(auto_id: str, steps: list[str], triggered_by: str,
@@ -984,13 +1272,31 @@ def api_automations_delete(auto_id: str, request: Request, auth=Depends(_require
 
 
 @app.post("/api/automations/{auto_id}/run")
-def api_automations_run(auto_id: str, request: Request, auth=Depends(_require_operator)):
+async def api_automations_run(auto_id: str, request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip = _client_ip(request)
     auto = db.get_automation(auto_id)
     if not auto:
         raise HTTPException(404, "Automation not found")
     config = auto["config"]
+
+    # Variable substitution
+    body_data = {}
+    try:
+        raw = await request.body()
+        if raw:
+            body_data = json.loads(raw)
+    except Exception:
+        pass
+    variables = body_data.get("variables", {}) if isinstance(body_data, dict) else {}
+    if variables and isinstance(config, dict):
+        config = dict(config)  # don't mutate original
+        for key in ("command", "url", "args"):
+            if key in config and isinstance(config[key], str):
+                try:
+                    config[key] = config[key].format_map(variables)
+                except (KeyError, ValueError):
+                    pass
 
     # Workflow: chain execution of steps
     if auto["type"] == "workflow":
@@ -1199,6 +1505,17 @@ async def api_automations_trigger(auto_id: str, request: Request):
     else:
         triggered_by = "api-trigger"
 
+    # HMAC validation
+    hmac_secret = config.get("hmac_secret", "")
+    if hmac_secret:
+        import hashlib
+        import hmac as _hmac
+        raw_body = await request.body()
+        sig_header = request.headers.get("X-Hub-Signature-256", "")
+        expected = "sha256=" + _hmac.new(hmac_secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(sig_header, expected):
+            raise HTTPException(403, "Invalid HMAC signature")
+
     if auto["type"] == "workflow":
         steps = config.get("steps", [])
         if not steps:
@@ -1330,6 +1647,113 @@ async def api_sessions_revoke(request: Request, auth=Depends(_require_admin)):
     return {"success": ok}
 
 
+# ── /api/admin/api-keys — Round 6: API key management ────────────────────────
+@app.get("/api/admin/api-keys")
+def api_keys_list(auth=Depends(_require_admin)):
+    return db.list_api_keys()
+
+
+@app.post("/api/admin/api-keys")
+async def api_keys_create(request: Request, auth=Depends(_require_admin)):
+    import hashlib
+    username, _ = auth
+    body = await _read_body(request)
+    name = body.get("name", "").strip()
+    role = body.get("role", "viewer")
+    if not name:
+        raise HTTPException(400, "Name is required")
+    if role not in VALID_ROLES:
+        raise HTTPException(400, "Invalid role")
+    raw_key = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    key_id = secrets.token_hex(6)
+    expires_days = body.get("expires_days")
+    expires_at = int(time.time()) + int(expires_days) * 86400 if expires_days else None
+    db.insert_api_key(key_id, name, key_hash, role, expires_at)
+    db.audit_log("api_key_create", username, f"Created key '{name}'", _client_ip(request))
+    return {"id": key_id, "key": raw_key, "name": name, "role": role}
+
+
+@app.delete("/api/admin/api-keys/{key_id}")
+def api_keys_delete(key_id: str, request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    if not db.delete_api_key(key_id):
+        raise HTTPException(404, "Key not found")
+    db.audit_log("api_key_delete", username, f"Deleted key {key_id}", _client_ip(request))
+    return {"status": "ok"}
+
+
+# ── /api/admin/ssh-keys ───────────────────────────────────────────────────
+@app.get("/api/admin/ssh-keys")
+def api_ssh_keys_list(auth=Depends(_require_admin)):
+    """List authorized SSH keys."""
+    import pathlib
+    ak_path = pathlib.Path.home() / ".ssh" / "authorized_keys"
+    if not ak_path.exists():
+        return []
+    keys = []
+    for i, line in enumerate(ak_path.read_text().splitlines()):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 2)
+        keys.append({
+            "id": i,
+            "type": parts[0] if parts else "",
+            "comment": parts[2] if len(parts) > 2 else "",
+            "fingerprint": parts[1][:20] + "..." if len(parts) > 1 else "",
+        })
+    return keys
+
+
+@app.post("/api/admin/ssh-keys")
+async def api_ssh_keys_add(request: Request, auth=Depends(_require_admin)):
+    """Add a new SSH authorized key."""
+    import pathlib
+    username, _ = auth
+    body = await _read_body(request)
+    key = body.get("key", "").strip()
+    if not key or not key.startswith(("ssh-", "ecdsa-", "sk-")):
+        raise HTTPException(400, "Invalid SSH public key")
+    ak_path = pathlib.Path.home() / ".ssh" / "authorized_keys"
+    ak_path.parent.mkdir(mode=0o700, exist_ok=True)
+    with open(ak_path, "a") as f:
+        f.write(key + "\n")
+    ak_path.chmod(0o600)
+    db.audit_log("ssh_key_add", username, f"Added SSH key: {key[:30]}...", _client_ip(request))
+    return {"status": "ok"}
+
+
+@app.delete("/api/admin/ssh-keys/{key_id}")
+def api_ssh_keys_delete(key_id: int, request: Request, auth=Depends(_require_admin)):
+    """Remove an SSH authorized key by line index."""
+    import pathlib
+    username, _ = auth
+    ak_path = pathlib.Path.home() / ".ssh" / "authorized_keys"
+    if not ak_path.exists():
+        raise HTTPException(404, "No authorized_keys file")
+    lines = ak_path.read_text().splitlines()
+    real_idx = 0
+    new_lines = []
+    removed = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            new_lines.append(line)
+            continue
+        if real_idx == key_id:
+            removed = True
+            real_idx += 1
+            continue
+        new_lines.append(line)
+        real_idx += 1
+    if not removed:
+        raise HTTPException(404, "Key not found")
+    ak_path.write_text("\n".join(new_lines) + "\n")
+    db.audit_log("ssh_key_remove", username, f"Removed SSH key index {key_id}", _client_ip(request))
+    return {"status": "ok"}
+
+
 # ── /api/login ────────────────────────────────────────────────────────────────
 @app.post("/api/login")
 async def api_login(request: Request):
@@ -1344,9 +1768,28 @@ async def api_login(request: Request):
     user_data = users.get(username)
     if user_data and verify_password(user_data[0], password):
         rate_limiter.reset(ip)
+        # Round 6: 2FA check
+        if users.has_totp(username):
+            totp_code = body.get("totp_code", "")
+            if not totp_code:
+                return {"requires_2fa": True, "username": username}
+            from .auth import verify_totp
+            totp_secret = users.get_totp_secret(username)
+            if not verify_totp(totp_secret, totp_code):
+                raise HTTPException(401, "Invalid 2FA code")
         token = token_store.generate(username, user_data[1])
         db.audit_log("login", username, "success", ip)
         return {"token": token}
+
+    # LDAP fallback
+    if not user_data:
+        from .auth import authenticate_ldap
+        ldap_user, ldap_role = authenticate_ldap(username, password, read_yaml_settings)
+        if ldap_user:
+            rate_limiter.reset(ip)
+            token = token_store.generate(ldap_user, ldap_role)
+            db.audit_log("login", ldap_user, "success (LDAP)", ip)
+            return {"token": token}
 
     # Legacy auth.conf fallback (only when user not in DB)
     if not user_data:
@@ -1375,6 +1818,108 @@ async def api_logout(request: Request):
             db.audit_log("logout", uname, "", ip)
         token_store.revoke(tok)
     return {"status": "ok"}
+
+
+# ── Round 6: TOTP 2FA routes ─────────────────────────────────────────────────
+@app.post("/api/auth/totp/setup")
+async def api_totp_setup(request: Request, auth=Depends(_get_auth)):
+    from .auth import generate_totp_secret
+    username, _ = auth
+    secret = generate_totp_secret()
+    return {"secret": secret, "provisioning_uri": f"otpauth://totp/NOBA:{username}?secret={secret}&issuer=NOBA"}
+
+
+@app.post("/api/auth/totp/enable")
+async def api_totp_enable(request: Request, auth=Depends(_get_auth)):
+    from .auth import verify_totp
+    username, _ = auth
+    body = await _read_body(request)
+    secret = body.get("secret", "")
+    code = body.get("code", "")
+    if not verify_totp(secret, code):
+        raise HTTPException(400, "Invalid TOTP code")
+    users.set_totp_secret(username, secret)
+    db.audit_log("totp_enable", username, "Enabled 2FA", _client_ip(request))
+    return {"status": "ok"}
+
+
+@app.post("/api/auth/totp/disable")
+async def api_totp_disable(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    body = await _read_body(request)
+    target = body.get("username", username)
+    users.set_totp_secret(target, None)
+    db.audit_log("totp_disable", username, f"Disabled 2FA for {target}", _client_ip(request))
+    return {"status": "ok"}
+
+
+# ── Round 6: OIDC routes ─────────────────────────────────────────────────────
+@app.get("/api/auth/oidc/login")
+async def api_oidc_login(request: Request):
+    """Redirect to OIDC provider for authentication."""
+    cfg = read_yaml_settings()
+    provider = cfg.get("oidcProviderUrl", "")
+    client_id = cfg.get("oidcClientId", "")
+    if not provider or not client_id:
+        raise HTTPException(400, "OIDC not configured")
+    import urllib.parse
+    redirect_uri = str(request.url_for("api_oidc_callback"))
+    params = urllib.parse.urlencode({
+        "client_id": client_id,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "redirect_uri": redirect_uri,
+    })
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(f"{provider.rstrip('/')}/authorize?{params}")
+
+
+@app.get("/api/auth/oidc/callback")
+async def api_oidc_callback(request: Request):
+    """Handle OIDC callback -- exchange code for token, create session."""
+    cfg = read_yaml_settings()
+    provider = cfg.get("oidcProviderUrl", "")
+    client_id = cfg.get("oidcClientId", "")
+    client_secret = cfg.get("oidcClientSecret", "")
+    code = request.query_params.get("code", "")
+    if not code:
+        raise HTTPException(400, "Missing authorization code")
+    redirect_uri = str(request.url_for("api_oidc_callback"))
+    # Exchange code for token
+    import httpx as _httpx
+    try:
+        r = _httpx.post(f"{provider.rstrip('/')}/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }, timeout=10)
+        r.raise_for_status()
+        token_data = r.json()
+        # Get user info
+        access_token = token_data.get("access_token", "")
+        userinfo = _httpx.get(
+            f"{provider.rstrip('/')}/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=5,
+        ).json()
+        email = userinfo.get("email", userinfo.get("preferred_username", ""))
+        if not email:
+            raise HTTPException(400, "Could not determine user identity from OIDC")
+        # Create or find user, issue NOBA token
+        if not users.exists(email):
+            users.add(email, "oidc:external", "viewer")
+        noba_token = token_store.generate(email, "viewer")
+        db.audit_log("oidc_login", email, "OIDC login", _client_ip(request))
+        # Redirect to frontend with token
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(f"/?token={noba_token}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("OIDC callback error: %s", e)
+        raise HTTPException(502, "OIDC authentication failed")
 
 
 # ── /api/container-control ────────────────────────────────────────────────────
@@ -1597,6 +2142,383 @@ async def api_service_control(request: Request, auth=Depends(_require_operator))
         logger.error("Service control error: %s", e)
         db.audit_log("service_control", username, f"{action} {svc} failed: {e}", ip)
         raise HTTPException(500, "Service control error")
+
+
+# ── Round 2: Monitoring & Alerting ────────────────────────────────────────────
+@app.get("/api/alert-history")
+def api_alert_history(request: Request, auth=Depends(_get_auth)):
+    limit = _int_param(request, "limit", 100, 1, 1000)
+    rule_id = request.query_params.get("rule_id", "")
+    from_ts = int(request.query_params.get("from", "0") or 0)
+    to_ts = int(request.query_params.get("to", "0") or 0)
+    return db.get_alert_history(limit=limit, rule_id=rule_id, from_ts=from_ts, to_ts=to_ts)
+
+
+@app.get("/api/sla/{rule_id}")
+def api_sla(rule_id: str, request: Request, auth=Depends(_get_auth)):
+    window = _int_param(request, "window", 720, 1, 8760)
+    return db.get_sla(rule_id, window_hours=window)
+
+
+# ── Round 5: Home Automation — HA proxy ───────────────────────────────────────
+@app.post("/api/hass/services/{domain}/{service}")
+async def api_hass_proxy(domain: str, service: str, request: Request, auth=Depends(_require_operator)):
+    username, _ = auth
+    cfg = read_yaml_settings()
+    hass_url = cfg.get("hassUrl", "")
+    hass_token = cfg.get("hassToken", "")
+    if not hass_url or not hass_token:
+        raise HTTPException(400, "Home Assistant not configured")
+    if not re.match(r'^[a-z_]+$', domain) or not re.match(r'^[a-z_]+$', service):
+        raise HTTPException(400, "Invalid domain or service name")
+    body = await _read_body(request)
+    import httpx as _httpx
+    try:
+        r = _httpx.post(f"{hass_url.rstrip('/')}/api/services/{domain}/{service}",
+                       json=body, headers={"Authorization": f"Bearer {hass_token}"}, timeout=10)
+        db.audit_log("hass_service", username, f"{domain}.{service}", _client_ip(request))
+        return {"status": "ok", "http_status": r.status_code}
+    except Exception as e:
+        raise HTTPException(502, f"HA service call failed: {e}")
+
+
+# ── Round 7: Notifications & Dashboards ──────────────────────────────────────
+@app.get("/api/notifications")
+def api_notifications(request: Request, auth=Depends(_get_auth)):
+    username, _ = auth
+    unread = request.query_params.get("unread", "0") == "1"
+    limit = _int_param(request, "limit", 50, 1, 200)
+    return {"notifications": db.get_notifications(username, unread, limit),
+            "unread_count": db.get_unread_count(username)}
+
+
+@app.post("/api/notifications/{notif_id}/read")
+def api_notification_read(notif_id: int, auth=Depends(_get_auth)):
+    username, _ = auth
+    db.mark_notification_read(notif_id, username)
+    return {"status": "ok"}
+
+
+@app.post("/api/notifications/read-all")
+def api_notifications_read_all(auth=Depends(_get_auth)):
+    username, _ = auth
+    db.mark_all_notifications_read(username)
+    return {"status": "ok"}
+
+
+@app.get("/api/dashboard")
+def api_dashboard_get(auth=Depends(_get_auth)):
+    username, _ = auth
+    return db.get_user_dashboard(username) or {}
+
+
+@app.post("/api/dashboard")
+async def api_dashboard_save(request: Request, auth=Depends(_get_auth)):
+    username, _ = auth
+    body = await _read_body(request)
+    db.save_user_dashboard(username, body.get("card_order"), body.get("card_vis"), body.get("card_theme"))
+    return {"status": "ok"}
+
+
+# ── Round 8: Reporting & Extensibility ────────────────────────────────────────
+@app.get("/api/metrics/prometheus")
+def api_prometheus(auth=Depends(_get_auth)):
+    """Expose metrics in Prometheus exposition format."""
+    data = bg_collector.get()
+    if not data:
+        return PlainTextResponse("# no data\n")
+    lines = []
+    lines.append(f'noba_cpu_percent {data.get("cpuPercent", 0)}')
+    lines.append(f'noba_mem_percent {data.get("memPercent", 0)}')
+    for disk in data.get("disks", []):
+        mount = disk["mount"].replace('"', '')
+        lines.append(f'noba_disk_percent{{mount="{mount}"}} {disk["percent"]}')
+    lines.append(f'noba_net_rx_bps {data.get("netRxRaw", 0):.0f}')
+    lines.append(f'noba_net_tx_bps {data.get("netTxRaw", 0):.0f}')
+    for svc in data.get("services", []):
+        val = 1 if svc["status"] == "active" else 0
+        lines.append(f'noba_service_up{{name="{svc["name"]}"}} {val}')
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+
+@app.get("/api/reports/bandwidth")
+def api_bandwidth_report(request: Request, auth=Depends(_get_auth)):
+    """Bandwidth usage report per interface over configurable period."""
+    range_h = _int_param(request, "range", 24, 1, 8760)
+    # Get net_rx and net_tx history
+    rx_points = db.get_history("net_rx_bytes", range_hours=range_h, resolution=3600)
+    tx_points = db.get_history("net_tx_bytes", range_hours=range_h, resolution=3600)
+
+    # Calculate totals (sum of hourly averages * 3600 gives approximate bytes)
+    total_rx = sum(p["value"] * 3600 for p in rx_points)
+    total_tx = sum(p["value"] * 3600 for p in tx_points)
+
+    # Format hourly breakdown
+    hourly = []
+    for rx, tx in zip(rx_points, tx_points):
+        hourly.append({
+            "time": rx["time"],
+            "rx_bps": round(rx["value"]),
+            "tx_bps": round(tx["value"]),
+        })
+
+    from .metrics import _fmt_bytes  # noqa: F811
+    return {
+        "range_hours": range_h,
+        "total_rx": _fmt_bytes(total_rx),
+        "total_tx": _fmt_bytes(total_tx),
+        "total_rx_bytes": round(total_rx),
+        "total_tx_bytes": round(total_tx),
+        "hourly": hourly,
+    }
+
+
+@app.get("/api/reports/anomalies")
+def api_anomaly_report(request: Request, auth=Depends(_get_auth)):
+    """Generate anomaly detection summary for the past week."""
+    range_h = _int_param(request, "range", 168, 1, 8760)
+    metrics = ["cpu_percent", "mem_percent", "cpu_temp"]
+    results = {}
+    for metric in metrics:
+        points = db.get_history(metric, range_hours=range_h, resolution=3600, anomaly=True)
+        anomalies = [p for p in points if p.get("anomaly")]
+        if anomalies:
+            results[metric] = {
+                "count": len(anomalies),
+                "latest": anomalies[-1] if anomalies else None,
+                "values": [a["value"] for a in anomalies[-10:]],
+            }
+    return {
+        "range_hours": range_h,
+        "anomaly_count": sum(r["count"] for r in results.values()),
+        "metrics": results,
+    }
+
+
+@app.post("/api/reports/custom")
+async def api_custom_report(request: Request, auth=Depends(_get_auth)):
+    """Generate a custom report from a template definition."""
+    body = await _read_body(request)
+    metrics = body.get("metrics", ["cpu_percent", "mem_percent"])
+    range_h = int(body.get("range_hours", 24))
+    title = body.get("title", "Custom Report")
+
+    report_data = {}
+    for metric in metrics:
+        if metric not in HISTORY_METRICS:
+            continue
+        points = db.get_history(metric, range_hours=range_h, resolution=3600)
+        if points:
+            values = [p["value"] for p in points]
+            report_data[metric] = {
+                "avg": round(sum(values) / len(values), 2),
+                "max": round(max(values), 2),
+                "min": round(min(values), 2),
+                "current": round(values[-1], 2) if values else 0,
+                "points": len(values),
+                "data": [{"time": p["time"], "value": p["value"]} for p in points],
+            }
+
+    return {
+        "title": title,
+        "range_hours": range_h,
+        "generated_at": datetime.now().isoformat(),
+        "metrics": report_data,
+    }
+
+
+@app.get("/api/grafana/dashboard")
+def api_grafana_template(auth=Depends(_get_auth)):
+    """Return a Grafana dashboard JSON template for NOBA metrics."""
+    return {
+        "dashboard": {
+            "title": "NOBA System Metrics",
+            "panels": [
+                {"title": "CPU Usage", "type": "timeseries",
+                 "targets": [{"expr": "noba_cpu_percent", "legendFormat": "CPU %"}],
+                 "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}},
+                {"title": "Memory Usage", "type": "timeseries",
+                 "targets": [{"expr": "noba_mem_percent", "legendFormat": "Memory %"}],
+                 "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}},
+                {"title": "Disk Usage", "type": "bargauge",
+                 "targets": [{"expr": "noba_disk_percent", "legendFormat": "{{mount}}"}],
+                 "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}},
+                {"title": "Network I/O", "type": "timeseries",
+                 "targets": [
+                     {"expr": "noba_net_rx_bps", "legendFormat": "RX"},
+                     {"expr": "noba_net_tx_bps", "legendFormat": "TX"},
+                 ],
+                 "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}},
+                {"title": "Service Status", "type": "stat",
+                 "targets": [{"expr": "noba_service_up", "legendFormat": "{{name}}"}],
+                 "gridPos": {"x": 0, "y": 16, "w": 24, "h": 4}},
+            ],
+            "time": {"from": "now-24h", "to": "now"},
+            "refresh": "30s",
+        },
+        "datasource": {
+            "type": "prometheus",
+            "url": "http://YOUR_NOBA_HOST:8080/api/metrics/prometheus",
+        },
+    }
+
+
+@app.get("/api/plugins/available")
+def api_plugins_available(auth=Depends(_require_admin)):
+    cfg = read_yaml_settings()
+    catalog_url = cfg.get("pluginCatalogUrl", "")
+    return plugin_manager.get_available(catalog_url)
+
+
+@app.post("/api/plugins/install")
+async def api_plugins_install(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    body = await _read_body(request)
+    url = body.get("url", "")
+    filename = body.get("filename", "")
+    if not url or not filename:
+        raise HTTPException(400, "URL and filename required")
+    ok = plugin_manager.install_plugin(url, filename)
+    if not ok:
+        raise HTTPException(400, "Install failed")
+    db.audit_log("plugin_install", username, f"Installed {filename}", _client_ip(request))
+    return {"status": "ok"}
+
+
+# ── Round 9: DevOps & Misc ───────────────────────────────────────────────────
+@app.post("/api/wol")
+async def api_wol(request: Request, auth=Depends(_require_operator)):
+    from .metrics import send_wol
+    username, _ = auth
+    body = await _read_body(request)
+    mac = body.get("mac", "").strip()
+    if not mac:
+        raise HTTPException(400, "MAC address required")
+    ok = send_wol(mac)
+    db.audit_log("wol", username, f"WOL {mac} -> {ok}", _client_ip(request))
+    return {"success": ok}
+
+
+@app.post("/api/system/cpu-governor")
+async def api_cpu_governor(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    body = await _read_body(request)
+    governor = body.get("governor", "").strip()
+    allowed = ("performance", "powersave", "ondemand", "conservative", "schedutil")
+    if governor not in allowed:
+        raise HTTPException(400, f"Governor must be one of: {', '.join(allowed)}")
+    try:
+        r = subprocess.run(["sudo", "-n", "cpupower", "frequency-set", "-g", governor],
+                          capture_output=True, timeout=10)
+        ok = r.returncode == 0
+    except Exception:
+        ok = False
+    db.audit_log("cpu_governor", username, f"Set {governor} -> {ok}", _client_ip(request))
+    return {"success": ok}
+
+
+@app.post("/api/pihole/toggle")
+async def api_pihole_toggle(request: Request, auth=Depends(_require_operator)):
+    username, _ = auth
+    body = await _read_body(request)
+    action = body.get("action", "disable")  # disable or enable
+    duration = int(body.get("duration", 0))  # seconds, 0 = permanent
+    cfg = read_yaml_settings()
+    ph_url = cfg.get("piholeUrl", "")
+    ph_tok = cfg.get("piholeToken", "")
+    if not ph_url:
+        raise HTTPException(400, "Pi-hole not configured")
+    base = (ph_url if ph_url.startswith("http") else "http://" + ph_url).rstrip("/").replace("/admin", "")
+    import httpx as _httpx
+    try:
+        if action == "disable":
+            url = f"{base}/api/dns/blocking" if ph_tok else f"{base}/admin/api.php?disable={duration or 300}"
+            _httpx.post(url, json={"blocking": False, "timer": duration or None},
+                       headers={"sid": ph_tok} if ph_tok else {}, timeout=5)
+        else:
+            url = f"{base}/api/dns/blocking" if ph_tok else f"{base}/admin/api.php?enable"
+            _httpx.post(url, json={"blocking": True},
+                       headers={"sid": ph_tok} if ph_tok else {}, timeout=5)
+        db.audit_log("pihole_toggle", username, f"{action} (duration={duration}s)", _client_ip(request))
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(502, f"Pi-hole toggle failed: {e}")
+
+
+@app.get("/api/compose/projects")
+def api_compose_projects(auth=Depends(_require_operator)):
+    try:
+        r = subprocess.run(["docker", "compose", "ls", "--format", "json"],
+                          capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return json.loads(r.stdout)
+    except Exception:
+        pass
+    return []
+
+
+@app.post("/api/compose/{project}/{action}")
+async def api_compose_action(project: str, action: str, request: Request, auth=Depends(_require_operator)):
+    username, _ = auth
+    if action not in ("up", "down", "pull", "restart"):
+        raise HTTPException(400, "Invalid action")
+    if not re.match(r'^[a-zA-Z0-9_.-]+$', project):
+        raise HTTPException(400, "Invalid project name")
+    cmd = ["docker", "compose", "-p", project, action]
+    if action == "up":
+        cmd.append("-d")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        ok = r.returncode == 0
+        db.audit_log("compose", username, f"{action} {project} -> {ok}", _client_ip(request))
+        return {"success": ok, "output": r.stdout[-500:] if r.stdout else r.stderr[-500:]}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Command timed out")
+
+
+@app.get("/api/game-servers")
+def api_game_servers(auth=Depends(_get_auth)):
+    from .metrics import probe_game_server, query_source_server
+    cfg = read_yaml_settings()
+    servers = cfg.get("gameServers", [])
+    results = []
+    for s in servers:
+        host = s.get("host", "")
+        port = int(s.get("port", 0))
+        name = s.get("name", f"{host}:{port}")
+        protocol = s.get("protocol", "tcp")
+        if host and port:
+            if protocol == "source":
+                result = query_source_server(host, port)
+            else:
+                result = probe_game_server(host, port)
+            result["name"] = name
+            results.append(result)
+    return results
+
+
+# ── /api/cameras ──────────────────────────────────────────────────────────
+@app.get("/api/cameras")
+def api_cameras(auth=Depends(_get_auth)):
+    """Return configured camera feed URLs."""
+    cfg = read_yaml_settings()
+    feeds = cfg.get("cameraFeeds", [])
+    return [{"name": f.get("name", f"Camera {i+1}"),
+             "url": f.get("url", ""),
+             "type": f.get("type", "snapshot")}
+            for i, f in enumerate(feeds) if f.get("url")]
+
+
+@app.websocket("/api/terminal")
+async def ws_terminal(ws: WebSocket):
+    """WebSocket terminal — admin only."""
+    token = ws.query_params.get("token", "")
+    username, role = token_store.validate(token)
+    if not username or role != "admin":
+        await ws.close(code=4001, reason="Unauthorized")
+        return
+    from .terminal import terminal_handler
+    await terminal_handler(ws, username)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

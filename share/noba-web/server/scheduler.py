@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -62,6 +63,79 @@ def _match_field(field: str, val: int, lo: int, hi: int) -> bool:
     return False
 
 
+class FSTriggerWatcher:
+    """Watches directories for changes and triggers automations."""
+
+    def __init__(self) -> None:
+        self._shutdown = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._watches: dict[str, dict] = {}  # path -> {mtime: float, auto_id: str}
+
+    def start(self) -> None:
+        from .yaml_config import read_yaml_settings
+        cfg = read_yaml_settings()
+        triggers = cfg.get("fsTriggers", [])
+        if not triggers:
+            return
+        for t in triggers:
+            path = t.get("path", "")
+            auto_id = t.get("automation_id", "")
+            if path and auto_id and os.path.exists(path):
+                try:
+                    self._watches[path] = {"mtime": os.path.getmtime(path), "auto_id": auto_id}
+                except OSError:
+                    pass
+        if self._watches:
+            self._thread = threading.Thread(target=self._loop, daemon=True, name="fs-trigger")
+            self._thread.start()
+            logger.info("FS trigger watcher started for %d paths", len(self._watches))
+
+    def stop(self) -> None:
+        self._shutdown.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _loop(self) -> None:
+        while not self._shutdown.wait(5):  # Check every 5 seconds
+            for path, info in list(self._watches.items()):
+                try:
+                    current_mtime = os.path.getmtime(path)
+                    if current_mtime > info["mtime"]:
+                        info["mtime"] = current_mtime
+                        self._trigger_automation(info["auto_id"], path)
+                except OSError:
+                    pass
+
+    def _trigger_automation(self, auto_id: str, path: str) -> None:
+        from .app import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
+        auto = db.get_automation(auto_id)
+        if not auto:
+            return
+        if auto["type"] == "workflow":
+            steps = auto["config"].get("steps", [])
+            if steps:
+                mode = auto["config"].get("mode", "sequential")
+                if mode == "parallel":
+                    _run_parallel_workflow(auto["id"], steps, f"fs-trigger:{path}")
+                else:
+                    _run_workflow(auto["id"], steps, f"fs-trigger:{path}")
+            return
+        builder = _AUTO_BUILDERS.get(auto["type"])
+        if not builder:
+            return
+        config = auto["config"]
+
+        def make_process(_run_id: int):
+            return builder(config)
+
+        try:
+            job_runner.submit(make_process, automation_id=auto_id,
+                              trigger=f"fs-trigger:{path}", triggered_by="fs-watcher")
+            logger.info("FS trigger: '%s' changed, triggered '%s'", path, auto["name"])
+        except RuntimeError as exc:
+            logger.warning("FS trigger submit failed: %s", exc)
+
+
 class Scheduler:
     """Background thread that checks automations every 60s and triggers matching ones."""
 
@@ -102,6 +176,12 @@ class Scheduler:
 
     def _tick(self) -> None:
         now = datetime.now()
+        # Check maintenance windows (reuse alerts.py logic)
+        from .yaml_config import read_yaml_settings
+        from .alerts import in_maintenance_window
+        if in_maintenance_window(read_yaml_settings):
+            logger.info("Maintenance window active, skipping scheduled automations")
+            return
         autos = db.list_automations()
         for auto in autos:
             if not auto["enabled"]:
@@ -152,5 +232,101 @@ class Scheduler:
             logger.warning("Scheduler: cannot run '%s': %s", auto["name"], exc)
 
 
-# Singleton
+class RSSFeedWatcher:
+    """Polls RSS feeds and triggers automations on new items."""
+
+    def __init__(self) -> None:
+        self._shutdown = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._feeds: list[dict] = []
+        self._seen: dict[str, set[str]] = {}  # feed_url -> set of seen item IDs/links
+
+    def start(self) -> None:
+        from .yaml_config import read_yaml_settings
+        cfg = read_yaml_settings()
+        self._feeds = cfg.get("rssTriggers", [])
+        if not self._feeds:
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="rss-trigger")
+        self._thread.start()
+        logger.info("RSS feed watcher started for %d feeds", len(self._feeds))
+
+    def stop(self) -> None:
+        self._shutdown.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _loop(self) -> None:
+        import xml.etree.ElementTree as ET
+        import httpx
+        # Initial scan to populate seen items (don't trigger on first run)
+        for feed in self._feeds:
+            url = feed.get("url", "")
+            if url:
+                self._scan_feed(url, ET, httpx, initial=True)
+        while not self._shutdown.wait(300):  # Check every 5 minutes
+            for feed in self._feeds:
+                url = feed.get("url", "")
+                auto_id = feed.get("automation_id", "")
+                if not url or not auto_id:
+                    continue
+                new_items = self._scan_feed(url, ET, httpx)
+                if new_items:
+                    self._trigger_automation(auto_id, f"rss:{url}")
+
+    def _scan_feed(self, url, ET, httpx, initial=False) -> list[str]:  # noqa: N803
+        try:
+            r = httpx.get(url, timeout=10, follow_redirects=True)
+            r.raise_for_status()
+            root = ET.fromstring(r.text)
+            # Handle both RSS and Atom feeds
+            items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+            current_ids: set[str] = set()
+            for item in items:
+                link = item.findtext("link") or item.findtext("{http://www.w3.org/2005/Atom}id") or ""
+                guid = item.findtext("guid") or link
+                current_ids.add(guid)
+            seen = self._seen.get(url, set())
+            new_items = [i for i in current_ids if i not in seen]
+            self._seen[url] = current_ids
+            if initial:
+                return []
+            return new_items
+        except Exception as e:
+            logger.debug("RSS feed scan failed for %s: %s", url, e)
+            return []
+
+    def _trigger_automation(self, auto_id: str, trigger_source: str) -> None:
+        from .app import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
+        auto = db.get_automation(auto_id)
+        if not auto:
+            return
+        if auto["type"] == "workflow":
+            steps = auto["config"].get("steps", [])
+            if steps:
+                mode = auto["config"].get("mode", "sequential")
+                if mode == "parallel":
+                    _run_parallel_workflow(auto["id"], steps, trigger_source)
+                else:
+                    _run_workflow(auto["id"], steps, trigger_source)
+            return
+        builder = _AUTO_BUILDERS.get(auto["type"])
+        if not builder:
+            return
+        config = auto["config"]
+
+        def make_process(_run_id: int):
+            return builder(config)
+
+        try:
+            job_runner.submit(make_process, automation_id=auto_id,
+                              trigger=trigger_source, triggered_by="rss-watcher")
+            logger.info("RSS trigger: new items in feed, triggered '%s'", auto["name"])
+        except RuntimeError as exc:
+            logger.warning("RSS trigger submit failed: %s", exc)
+
+
+# Singletons
 scheduler = Scheduler()
+fs_watcher = FSTriggerWatcher()
+rss_watcher = RSSFeedWatcher()

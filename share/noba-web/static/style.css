@@ -658,3 +658,236 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
+
+/* ── Notification center ────────────────────────────────────────────────── */
+.notif-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+}
+
+.notif-panel {
+    position: fixed;
+    top: 50px;
+    right: 12px;
+    width: 360px;
+    max-height: 70vh;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.3);
+    z-index: 1100;
+    overflow-y: auto;
+    animation: modalIn .15s ease;
+}
+
+.notif-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 14px;
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+}
+
+.notif-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background .15s;
+}
+.notif-item:hover { background: var(--surface-2); }
+.notif-unread { border-left: 3px solid var(--accent); }
+.notif-title { font-weight: 600; font-size: 13px; }
+.notif-msg { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.notif-time { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+/* ── Context menu ───────────────────────────────────────────────────────── */
+.ctx-menu {
+    position: fixed;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25);
+    z-index: 1200;
+    min-width: 160px;
+    padding: 4px 0;
+}
+.ctx-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text);
+    transition: background .1s;
+}
+.ctx-menu-item:hover { background: var(--surface-2); }
+.ctx-menu-item i { width: 16px; text-align: center; color: var(--text-muted); }
+
+/* ── Mobile bottom nav ──────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+    .mobile-nav {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        z-index: 1000;
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+    .mobile-nav-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 8px 0;
+        font-size: 10px;
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: color .15s;
+    }
+    .mobile-nav-item.active { color: var(--accent); }
+    .mobile-nav-item i { font-size: 18px; margin-bottom: 2px; }
+    /* Add bottom padding to page so content isn't hidden behind nav */
+    .page { padding-bottom: 80px; }
+}
+
+/* ── Pinned alerts ──────────────────────────────────────────────────────── */
+.alert-pinned {
+    border-left: 3px solid var(--warning);
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+/* ── Chart export button ────────────────────────────────────────────────── */
+.chart-export-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: all .15s;
+}
+.chart-export-btn:hover { background: var(--accent); color: #fff; }
+
+/* ── VPN/Cert status badges ─────────────────────────────────────────────── */
+.cert-ok { color: var(--success); }
+.cert-warn { color: var(--warning); }
+.cert-danger { color: var(--danger); }
+
+/* ── Compose project list ───────────────────────────────────────────────── */
+.compose-list .compose-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+}
+.compose-item .compose-name { font-weight: 500; }
+.compose-item .compose-actions { display: flex; gap: 4px; }
+
+/* ── API key management ─────────────────────────────────────────────────── */
+.api-key-display {
+    font-family: monospace;
+    background: var(--surface-2);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    word-break: break-all;
+    border: 1px solid var(--accent);
+}
+
+/* ── 2FA setup ──────────────────────────────────────────────────────────── */
+.totp-secret {
+    font-family: monospace;
+    font-size: 14px;
+    letter-spacing: 2px;
+    background: var(--surface-2);
+    padding: 8px 12px;
+    border-radius: 4px;
+    text-align: center;
+    margin: 8px 0;
+}
+
+/* ── Embedded terminal ──────────────────────────────────────────────────── */
+#terminal-container {
+    width: 100%;
+    height: 100%;
+}
+#terminal-container .xterm {
+    padding: 8px;
+    height: 100%;
+}
+#terminal-container .xterm-viewport {
+    overflow-y: auto !important;
+}
+
+/* ── History modal chart wrapper ────────────────────────────────────────── */
+.history-chart-wrap {
+    position: relative;
+}
+
+/* ── Lidarr/Readarr/Bazarr card icons ──────────────────────────────────── */
+.card[data-id="card-lidarr"] .card-icon { color: #1db954; }
+.card[data-id="card-readarr"] .card-icon { color: #e88c30; }
+.card[data-id="card-bazarr"] .card-icon { color: #a87bff; }
+
+/* ── Docker updates badge ───────────────────────────────────────────────── */
+.card[data-id="card-docker-updates"] .badge.bw {
+    animation: pulse-soft 2s infinite;
+}
+@keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* ── Device presence row ────────────────────────────────────────────────── */
+.card[data-id="card-device-presence"] .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ── Modal close button polish ──────────────────────────────────────────── */
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    transition: color .15s;
+    margin-left: auto;
+}
+.modal-close:hover { color: var(--danger); }
+
+/* ── Terminal modal title ───────────────────────────────────────────────── */
+.modal-box .modal-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}

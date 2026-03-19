@@ -10,6 +10,7 @@ Each plugin is a .py file that defines:
 
 Optional:
   - PLUGIN_INTERVAL (int) — collection interval in seconds (default: 10)
+  - REQUIRED_API_VERSION (int) — minimum API version required (default: 1)
   - setup()              — called once at startup
   - teardown()           — called on shutdown
 """
@@ -20,6 +21,8 @@ import logging
 import os
 import threading
 from pathlib import Path
+
+from .config import PLUGIN_API_VERSION
 
 logger = logging.getLogger("noba")
 
@@ -86,6 +89,11 @@ class PluginManager:
                     continue
                 mod = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
+                required = getattr(mod, "REQUIRED_API_VERSION", 1)
+                if required > PLUGIN_API_VERSION:
+                    logger.warning("Plugin %s requires API v%d but server has v%d — skipping",
+                                   f.name, required, PLUGIN_API_VERSION)
+                    continue
                 plugin = Plugin(mod, str(f))
                 if hasattr(mod, "setup"):
                     mod.setup()
@@ -133,6 +141,39 @@ class PluginManager:
     def count(self) -> int:
         with self._lock:
             return len(self._plugins)
+
+    def get_available(self, catalog_url: str = "") -> list[dict]:
+        """Fetch available plugins from a remote catalog."""
+        if not catalog_url:
+            return []
+        try:
+            import httpx
+            r = httpx.get(catalog_url, timeout=10)
+            r.raise_for_status()
+            plugins = r.json()
+            if isinstance(plugins, list):
+                return plugins
+        except Exception as e:
+            logger.error("Plugin catalog fetch failed: %s", e)
+        return []
+
+    def install_plugin(self, url: str, filename: str) -> bool:
+        """Download a plugin file from URL to the plugin directory."""
+        import re as _re
+        if not _re.match(r'^[a-zA-Z0-9_-]+\.py$', filename):
+            return False
+        try:
+            import httpx
+            r = httpx.get(url, timeout=30)
+            r.raise_for_status()
+            dest = PLUGIN_DIR / filename
+            PLUGIN_DIR.mkdir(parents=True, exist_ok=True)
+            dest.write_text(r.text, encoding="utf-8")
+            logger.info("Installed plugin: %s", filename)
+            return True
+        except Exception as e:
+            logger.error("Plugin install failed: %s", e)
+            return False
 
 
 # Singleton

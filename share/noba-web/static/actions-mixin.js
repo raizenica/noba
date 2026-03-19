@@ -31,6 +31,11 @@ function actionsMixin() {
         historyChart: null,
         showAuditModal: false,
         auditLog: [],
+        auditPage: 1,
+        auditPageSize: 50,
+        auditTotal: 0,
+        auditSortField: 'time',
+        auditSortDir: 'desc',
         historyAnomalyEnabled: false,
 
         // ── SMART disk health ──────────────────────────────────────────────────
@@ -370,10 +375,23 @@ function actionsMixin() {
             }
         },
 
+        /** Reset zoom on the history chart. */
+        resetChartZoom() {
+            if (this.historyChart) this.historyChart.resetZoom();
+        },
+
         /** Render or re-render the Chart.js history chart. */
         renderHistoryChart() {
             const canvas = document.getElementById('historyChart');
             if (!canvas) return;
+
+            // Load zoom plugin if needed
+            if (typeof window.ChartZoom === 'undefined' && !window._chartZoomLoading) {
+                window._chartZoomLoading = true;
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js';
+                document.head.appendChild(script);
+            }
 
             if (this.historyChart instanceof Chart) {
                 this.historyChart.destroy();
@@ -440,7 +458,18 @@ function actionsMixin() {
                                     return d && d.anomaly ? '\u26a0 Anomaly detected' : '';
                                 }
                             }
-                        }
+                        },
+                        zoom: {
+                            zoom: {
+                                wheel: { enabled: true },
+                                pinch: { enabled: true },
+                                mode: 'x',
+                            },
+                            pan: {
+                                enabled: true,
+                                mode: 'x',
+                            },
+                        },
                     },
                     animation: { duration: 0 }
                 }
@@ -456,17 +485,69 @@ function actionsMixin() {
             this.fetchHistory();
         },
 
-        /** Fetch the audit log (admin only). */
-        async fetchAuditLog() {
+        /** Fetch the audit log (admin only) with pagination. */
+        async fetchAuditLog(page) {
+            if (page !== undefined) this.auditPage = page;
+            const offset = (this.auditPage - 1) * this.auditPageSize;
             try {
-                const res = await fetch('/api/audit?limit=100', {
-                    headers: { 'Authorization': 'Bearer ' + this._token() }
+                const res = await fetch(`/api/audit?limit=${this.auditPageSize}&offset=${offset}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
                 });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                this.auditLog = await res.json();
-            } catch (e) {
-                this.addToast('Failed to load audit log: ' + e.message, 'error');
+                if (!res.ok) return;
+                const data = await res.json();
+                this.auditLog = Array.isArray(data) ? data : [];
+            } catch { /* silent */ }
+        },
+
+        /** Return audit log sorted by the current sort field/direction. */
+        get auditSorted() {
+            const log = [...(this.auditLog || [])];
+            const field = this.auditSortField;
+            const dir = this.auditSortDir === 'asc' ? 1 : -1;
+            return log.sort((a, b) => {
+                const va = a[field] || '';
+                const vb = b[field] || '';
+                if (typeof va === 'number') return (va - vb) * dir;
+                return String(va).localeCompare(String(vb)) * dir;
+            });
+        },
+
+        /** Toggle sort direction or change sort field for the audit log. */
+        toggleAuditSort(field) {
+            if (this.auditSortField === field) {
+                this.auditSortDir = this.auditSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.auditSortField = field;
+                this.auditSortDir = 'desc';
             }
+        },
+
+        /** Export the current audit log data as a CSV file download. */
+        exportAuditCsv() {
+            const rows = this.auditLog || [];
+            const header = 'timestamp,username,action,details,ip';
+            const lines = rows.map(r => {
+                const ts = new Date((r.time || 0) * 1000).toISOString();
+                const details = (r.details || '').replace(/"/g, '""');
+                return `${ts},"${r.username}","${r.action}","${details}","${r.ip || ''}"`;
+            });
+            const csv = [header, ...lines].join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'noba-audit.csv'; a.click();
+            URL.revokeObjectURL(url);
+        },
+
+        /** Go to the next audit log page. */
+        auditNextPage() {
+            this.auditPage++;
+            this.fetchAuditLog();
+        },
+
+        /** Go to the previous audit log page. */
+        auditPrevPage() {
+            if (this.auditPage > 1) { this.auditPage--; this.fetchAuditLog(); }
         },
 
         /** Open the audit log modal. */
@@ -530,6 +611,87 @@ function actionsMixin() {
                 }
             } catch (e) {
                 this.addToast('Config backup failed: ' + e.message, 'error');
+            }
+        },
+
+        /** Encrypt config backup with a password before download. */
+        async downloadEncryptedConfig() {
+            const password = prompt('Enter encryption password:');
+            if (!password) return;
+            try {
+                const res = await fetch('/api/config/backup', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                const data = await res.arrayBuffer();
+
+                // Derive key from password
+                const enc = new TextEncoder();
+                const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+                const salt = crypto.getRandomValues(new Uint8Array(16));
+                const key = await crypto.subtle.deriveKey(
+                    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+                    keyMaterial,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['encrypt']
+                );
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+
+                // Pack: salt(16) + iv(12) + ciphertext
+                const packed = new Uint8Array(16 + 12 + encrypted.byteLength);
+                packed.set(salt, 0);
+                packed.set(iv, 16);
+                packed.set(new Uint8Array(encrypted), 28);
+
+                const blob = new Blob([packed], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'noba-config-encrypted.bin';
+                a.click();
+                URL.revokeObjectURL(url);
+                this.addToast('Encrypted config downloaded', 'success');
+            } catch (e) {
+                this.addToast('Encryption failed: ' + e.message, 'error');
+            }
+        },
+
+        /** Decrypt and restore an encrypted config backup. */
+        async restoreEncryptedConfig(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const password = prompt('Enter decryption password:');
+            if (!password) return;
+            try {
+                const packed = new Uint8Array(await file.arrayBuffer());
+                if (packed.length < 29) throw new Error('File too small');
+
+                const salt = packed.slice(0, 16);
+                const iv = packed.slice(16, 28);
+                const ciphertext = packed.slice(28);
+
+                const enc = new TextEncoder();
+                const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+                const key = await crypto.subtle.deriveKey(
+                    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+                    keyMaterial,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['decrypt']
+                );
+                const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+
+                // Upload decrypted YAML
+                const res = await fetch('/api/config/restore', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                    body: new Uint8Array(decrypted),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.addToast('Encrypted config restored', 'success');
+            } catch (e) {
+                this.addToast('Decryption failed: ' + (e.message || 'Wrong password?'), 'error');
             }
         },
 
@@ -1292,6 +1454,277 @@ function actionsMixin() {
                     }
                 } catch { /* non-fatal */ }
             }, 1000);
+        },
+
+
+        // ── Home Assistant Control (Round 5) ────────────────────────────────
+
+        /** Toggle a Home Assistant entity via the backend proxy. */
+        async hassToggle(domain, entityId) {
+            if (!confirm(`Toggle ${entityId}?`)) return;
+            try {
+                const res = await fetch(`/api/hass/services/${domain}/toggle`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ entity_id: entityId }),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.addToast(`Toggled ${entityId}`, 'success');
+            } catch (e) {
+                this.addToast('HA toggle failed: ' + e.message, 'error');
+            }
+        },
+
+
+        // ── Wake-on-LAN (Round 9) ──────────────────────────────────────────
+
+        /** Send a Wake-on-LAN magic packet to a MAC address. */
+        async sendWol(mac, name) {
+            try {
+                const res = await fetch('/api/wol', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ mac }),
+                });
+                const d = await res.json();
+                this.addToast(d.success ? `WOL sent to ${name || mac}` : 'WOL failed', d.success ? 'success' : 'error');
+            } catch (e) {
+                this.addToast('WOL failed: ' + e.message, 'error');
+            }
+        },
+
+
+        // ── Pi-hole / AdGuard DNS Toggle (Round 9) ─────────────────────────
+
+        /** Enable or disable DNS filtering (Pi-hole / AdGuard). */
+        async toggleDns(action, duration) {
+            try {
+                const res = await fetch('/api/pihole/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ action: action || 'disable', duration: duration || 300 }),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.addToast(`DNS filtering ${action === 'enable' ? 'enabled' : 'disabled'}`, 'success');
+            } catch (e) {
+                this.addToast('DNS toggle failed: ' + e.message, 'error');
+            }
+        },
+
+
+        // ── Docker Compose (Round 9) ────────────────────────────────────────
+
+        composeProjectList: [],
+        composeLoading: false,
+
+        /** Fetch the list of Docker Compose projects. */
+        async fetchComposeProjects() {
+            this.composeLoading = true;
+            try {
+                const res = await fetch('/api/compose/projects', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.composeProjectList = await res.json();
+            } catch { /* silent */ }
+            this.composeLoading = false;
+        },
+
+        /** Run an action (up, down, restart, pull) on a Compose project. */
+        async composeAction(project, action) {
+            if (!confirm(`${action} compose project "${project}"?`)) return;
+            try {
+                const res = await fetch(`/api/compose/${encodeURIComponent(project)}/${action}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                const d = await res.json();
+                this.addToast(d.success ? `${action} ${project}: OK` : `${action} ${project}: failed`, d.success ? 'success' : 'error');
+                this.fetchComposeProjects();
+            } catch (e) {
+                this.addToast(`Compose action failed: ${e.message}`, 'error');
+            }
+        },
+
+
+        // ── Alert History (Round 2) ─────────────────────────────────────────
+
+        alertHistory: [],
+        alertHistoryLoading: false,
+        showAlertHistoryModal: false,
+
+        /** Fetch recent alert history entries. */
+        async fetchAlertHistory() {
+            this.alertHistoryLoading = true;
+            try {
+                const res = await fetch('/api/alert-history?limit=100', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.alertHistory = await res.json();
+            } catch { /* silent */ }
+            this.alertHistoryLoading = false;
+        },
+
+
+        // ── SLA Reporting (Round 2) ─────────────────────────────────────────
+
+        slaData: null,
+        slaLoading: false,
+
+        /** Fetch SLA uptime data for a given alert rule. */
+        async fetchSla(ruleId, windowHours) {
+            this.slaLoading = true;
+            try {
+                const res = await fetch(`/api/sla/${encodeURIComponent(ruleId)}?window=${windowHours || 720}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.slaData = await res.json();
+            } catch { /* silent */ }
+            this.slaLoading = false;
+        },
+
+
+        // ── CPU Governor (Round 9) ──────────────────────────────────────────
+
+        /** Set the CPU frequency scaling governor. */
+        async setCpuGovernor(governor) {
+            if (!confirm(`Set CPU governor to ${governor}?`)) return;
+            try {
+                const res = await fetch('/api/system/cpu-governor', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ governor }),
+                });
+                const d = await res.json();
+                this.addToast(d.success ? `Governor set to ${governor}` : 'Failed to set governor', d.success ? 'success' : 'error');
+            } catch (e) {
+                this.addToast('Governor change failed: ' + e.message, 'error');
+            }
+        },
+
+
+        // ── API Key Management (Round 6) ────────────────────────────────────
+
+        apiKeys: [],
+        showApiKeysModal: false,
+        newApiKeyName: '',
+        newApiKeyRole: 'viewer',
+        lastCreatedKey: '',
+
+        /** Fetch all API keys (admin only). */
+        async fetchApiKeys() {
+            try {
+                const res = await fetch('/api/admin/api-keys', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.apiKeys = await res.json();
+                else this.addToast('Failed to load API keys', 'error');
+            } catch (e) {
+                this.addToast('Failed to fetch API keys: ' + e.message, 'error');
+            }
+        },
+
+        /** Create a new API key. */
+        async createApiKey() {
+            if (!this.newApiKeyName.trim()) return;
+            try {
+                const res = await fetch('/api/admin/api-keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ name: this.newApiKeyName, role: this.newApiKeyRole }),
+                });
+                const d = await res.json();
+                if (!res.ok) {
+                    this.addToast(d.detail || 'Failed to create key', 'error');
+                    return;
+                }
+                if (!d.key) {
+                    this.addToast('Server returned no key', 'error');
+                    return;
+                }
+                this.lastCreatedKey = d.key;
+                this.addToast('API key created — copy it now, it won\'t be shown again', 'success');
+                this.newApiKeyName = '';
+                this.fetchApiKeys();
+            } catch (e) {
+                this.addToast('Failed to create key: ' + e.message, 'error');
+            }
+        },
+
+        /** Delete an API key by ID. */
+        async deleteApiKey(keyId) {
+            if (!confirm('Delete this API key?')) return;
+            try {
+                await fetch(`/api/admin/api-keys/${keyId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                this.addToast('API key deleted', 'success');
+            } catch (e) {
+                this.addToast('Delete failed: ' + e.message, 'error');
+            }
+            this.fetchApiKeys();
+        },
+
+
+        // ── TOTP 2FA Setup (Round 6) ────────────────────────────────────────
+
+        totpSecret: '',
+        totpUri: '',
+        totpCode: '',
+        showTotpSetup: false,
+
+        /** Initiate TOTP 2FA setup (generates secret & provisioning URI). */
+        async setupTotp() {
+            try {
+                const res = await fetch('/api/auth/totp/setup', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                const d = await res.json();
+                this.totpSecret = d.secret;
+                this.totpUri = d.provisioning_uri;
+                this.showTotpSetup = true;
+            } catch (e) {
+                this.addToast('TOTP setup failed: ' + e.message, 'error');
+            }
+        },
+
+        /** Verify a TOTP code and enable 2FA for the current user. */
+        async enableTotp() {
+            try {
+                const res = await fetch('/api/auth/totp/enable', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ secret: this.totpSecret, code: this.totpCode }),
+                });
+                if (!res.ok) { this.addToast('Invalid code', 'error'); return; }
+                this.addToast('2FA enabled', 'success');
+                this.showTotpSetup = false;
+            } catch (e) {
+                this.addToast('Failed: ' + e.message, 'error');
+            }
+        },
+
+
+        // ── Prometheus Export (Round 8) ──────────────────────────────────────
+
+        /** Return the Prometheus metrics endpoint URL. */
+        get prometheusUrl() {
+            return '/api/metrics/prometheus';
+        },
+
+
+        // ── Chart Export (Round 7) ──────────────────────────────────────────
+
+        /** Export the currently displayed history chart as a PNG download. */
+        exportChart() {
+            const canvas = document.querySelector('.history-chart canvas');
+            if (!canvas) return;
+            const url = canvas.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'noba-chart.png';
+            a.click();
         },
     };
 }
