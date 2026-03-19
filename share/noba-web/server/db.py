@@ -1,6 +1,7 @@
 """Noba – Thread-safe SQLite database layer."""
 from __future__ import annotations
 
+import json
 import logging
 import math
 import sqlite3
@@ -8,7 +9,7 @@ import threading
 import time
 from datetime import datetime
 
-from .config import AUDIT_RETENTION_DAYS, HISTORY_DB, HISTORY_RETENTION_DAYS
+from .config import AUDIT_RETENTION_DAYS, HISTORY_DB, HISTORY_RETENTION_DAYS, JOB_RETENTION_DAYS
 
 logger = logging.getLogger("noba")
 
@@ -54,6 +55,34 @@ class Database:
                     details   TEXT,
                     ip        TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS automations (
+                    id         TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    type       TEXT NOT NULL,
+                    config     TEXT NOT NULL DEFAULT '{}',
+                    schedule   TEXT,
+                    enabled    INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS job_runs (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    automation_id TEXT,
+                    trigger       TEXT NOT NULL,
+                    status        TEXT NOT NULL DEFAULT 'queued',
+                    started_at    INTEGER,
+                    finished_at   INTEGER,
+                    exit_code     INTEGER,
+                    output        TEXT,
+                    triggered_by  TEXT,
+                    error         TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_job_runs_auto
+                    ON job_runs(automation_id, started_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_job_runs_status
+                    ON job_runs(status);
             """)
 
     # ── Metrics ───────────────────────────────────────────────────────────────
@@ -241,6 +270,234 @@ class Database:
             "slope": round(slope, 8), "r_squared": round(r_squared, 4),
             "trend": trend, "projection": projection, "full_at": full_at,
         }
+
+    # ── Automations ───────────────────────────────────────────────────────────
+    def insert_automation(self, auto_id: str, name: str, atype: str,
+                          config: dict, schedule: str | None = None,
+                          enabled: bool = True) -> bool:
+        now = int(time.time())
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "INSERT OR IGNORE INTO automations "
+                    "(id, name, type, config, schedule, enabled, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (auto_id, name, atype, json.dumps(config), schedule,
+                     1 if enabled else 0, now, now),
+                )
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error("insert_automation failed: %s", e)
+            return False
+
+    def update_automation(self, auto_id: str, **kwargs) -> bool:
+        allowed = {"name", "type", "config", "schedule", "enabled"}
+        sets = []
+        params: list = []
+        for k, v in kwargs.items():
+            if k not in allowed:
+                continue
+            if k == "config" and isinstance(v, dict):
+                v = json.dumps(v)
+            if k == "enabled":
+                v = 1 if v else 0
+            sets.append(f"{k} = ?")
+            params.append(v)
+        if not sets:
+            return False
+        sets.append("updated_at = ?")
+        params.append(int(time.time()))
+        params.append(auto_id)
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    f"UPDATE automations SET {', '.join(sets)} WHERE id = ?",
+                    params,
+                )
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error("update_automation failed: %s", e)
+            return False
+
+    def delete_automation(self, auto_id: str) -> bool:
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                cur = conn.execute("DELETE FROM automations WHERE id = ?", (auto_id,))
+                conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            logger.error("delete_automation failed: %s", e)
+            return False
+
+    def list_automations(self, type_filter: str | None = None) -> list[dict]:
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                if type_filter:
+                    rows = conn.execute(
+                        "SELECT id, name, type, config, schedule, enabled, created_at, updated_at "
+                        "FROM automations WHERE type = ? ORDER BY name",
+                        (type_filter,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT id, name, type, config, schedule, enabled, created_at, updated_at "
+                        "FROM automations ORDER BY name"
+                    ).fetchall()
+            return [
+                {
+                    "id": r[0], "name": r[1], "type": r[2],
+                    "config": json.loads(r[3]) if r[3] else {},
+                    "schedule": r[4], "enabled": bool(r[5]),
+                    "created_at": r[6], "updated_at": r[7],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error("list_automations failed: %s", e)
+            return []
+
+    def get_automation(self, auto_id: str) -> dict | None:
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                r = conn.execute(
+                    "SELECT id, name, type, config, schedule, enabled, created_at, updated_at "
+                    "FROM automations WHERE id = ?",
+                    (auto_id,),
+                ).fetchone()
+            if not r:
+                return None
+            return {
+                "id": r[0], "name": r[1], "type": r[2],
+                "config": json.loads(r[3]) if r[3] else {},
+                "schedule": r[4], "enabled": bool(r[5]),
+                "created_at": r[6], "updated_at": r[7],
+            }
+        except Exception as e:
+            logger.error("get_automation failed: %s", e)
+            return None
+
+    # ── Job Runs ──────────────────────────────────────────────────────────────
+    def insert_job_run(self, automation_id: str | None, trigger: str,
+                       triggered_by: str) -> int | None:
+        now = int(time.time())
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                cur = conn.execute(
+                    "INSERT INTO job_runs "
+                    "(automation_id, trigger, status, started_at, triggered_by) "
+                    "VALUES (?,?,?,?,?)",
+                    (automation_id, trigger, "running", now, triggered_by),
+                )
+                conn.commit()
+                return cur.lastrowid
+        except Exception as e:
+            logger.error("insert_job_run failed: %s", e)
+            return None
+
+    def update_job_run(self, run_id: int, status: str,
+                       output: str | None = None, exit_code: int | None = None,
+                       error: str | None = None) -> None:
+        now = int(time.time())
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "UPDATE job_runs SET status=?, finished_at=?, output=?, "
+                    "exit_code=?, error=? WHERE id=?",
+                    (status, now, output, exit_code, error, run_id),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("update_job_run failed: %s", e)
+
+    def get_job_runs(self, automation_id: str | None = None,
+                     limit: int = 50, status: str | None = None) -> list[dict]:
+        try:
+            clauses = []
+            params: list = []
+            if automation_id:
+                clauses.append("automation_id = ?")
+                params.append(automation_id)
+            if status:
+                clauses.append("status = ?")
+                params.append(status)
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            params.append(limit)
+            with self._lock:
+                conn = self._get_conn()
+                rows = conn.execute(
+                    "SELECT id, automation_id, trigger, status, started_at, "
+                    "finished_at, exit_code, triggered_by, error "
+                    f"FROM job_runs{where} ORDER BY id DESC LIMIT ?",
+                    params,
+                ).fetchall()
+            return [
+                {
+                    "id": r[0], "automation_id": r[1], "trigger": r[2],
+                    "status": r[3], "started_at": r[4], "finished_at": r[5],
+                    "exit_code": r[6], "triggered_by": r[7], "error": r[8],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error("get_job_runs failed: %s", e)
+            return []
+
+    def get_job_run(self, run_id: int) -> dict | None:
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                r = conn.execute(
+                    "SELECT id, automation_id, trigger, status, started_at, "
+                    "finished_at, exit_code, output, triggered_by, error "
+                    "FROM job_runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+            if not r:
+                return None
+            return {
+                "id": r[0], "automation_id": r[1], "trigger": r[2],
+                "status": r[3], "started_at": r[4], "finished_at": r[5],
+                "exit_code": r[6], "output": r[7], "triggered_by": r[8],
+                "error": r[9],
+            }
+        except Exception as e:
+            logger.error("get_job_run failed: %s", e)
+            return None
+
+    def prune_job_runs(self) -> None:
+        cutoff = int(time.time()) - JOB_RETENTION_DAYS * 86400
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "DELETE FROM job_runs WHERE finished_at IS NOT NULL AND finished_at < ?",
+                    (cutoff,),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("prune_job_runs failed: %s", e)
+
+    def mark_stale_jobs(self) -> None:
+        """Mark any 'running' jobs as 'failed' on startup (leftover from crash)."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "UPDATE job_runs SET status='failed', error='Server restarted' "
+                    "WHERE status IN ('running', 'queued')"
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("mark_stale_jobs failed: %s", e)
 
 
 # Singleton shared instance

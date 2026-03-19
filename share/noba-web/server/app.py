@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import shlex
-import signal
 import subprocess
 import threading
 import time
@@ -34,14 +33,11 @@ from .metrics import (
 )
 from .alerts import dispatch_notifications
 from .plugins import plugin_manager
+from .runner import job_runner
 from .yaml_config import read_yaml_settings, write_yaml_settings
 
 logger = logging.getLogger("noba")
 _server_start_time = time.time()
-
-# ── Job state (thread-safe) ───────────────────────────────────────────────────
-_active_job: dict | None = None
-_job_lock = threading.Lock()
 
 # ── Static files directory ────────────────────────────────────────────────────
 _WEB_DIR = Path(__file__).parent.parent   # share/noba-web/
@@ -61,11 +57,13 @@ def _cleanup_loop() -> None:
             _prune_counter = 0
             db.prune_history()
             db.prune_audit()
+            db.prune_job_runs()
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    db.mark_stale_jobs()
     db.audit_log("system_start", "system", f"Noba v{VERSION} starting (FastAPI)")
     bg_collector.start()
     threading.Thread(target=_cleanup_loop, daemon=True, name="token-cleanup").start()
@@ -76,6 +74,7 @@ async def lifespan(app: FastAPI):
     plugin_manager.start()
     logger.info("Noba v%s started (%d plugins)", VERSION, plugin_manager.count)
     yield
+    job_runner.shutdown()
     plugin_manager.stop()
     get_shutdown_flag().set()
     db.audit_log("system_stop", "system", "Server stopping")
@@ -428,11 +427,43 @@ def api_action_log(auth=Depends(_get_auth)):
     return PlainTextResponse(strip_ansi(_read_file(ACTION_LOG, "Waiting for output…")))
 
 
-# ── /api/run-status ───────────────────────────────────────────────────────────
+# ── /api/run-status (legacy compat) ──────────────────────────────────────────
 @app.get("/api/run-status")
 def api_run_status(auth=Depends(_get_auth)):
-    with _job_lock:
-        return dict(_active_job) if _active_job else {"status": "idle"}
+    active = job_runner.get_active_ids()
+    if not active:
+        return {"status": "idle"}
+    run = db.get_job_run(active[0])
+    if run:
+        return {"status": run["status"], "run_id": run["id"],
+                "trigger": run["trigger"], "started": run["started_at"]}
+    return {"status": "running", "run_ids": active}
+
+
+# ── /api/runs — job run history & details ────────────────────────────────────
+@app.get("/api/runs")
+def api_runs(request: Request, auth=Depends(_get_auth)):
+    limit = int(request.query_params.get("limit", "50"))
+    status = request.query_params.get("status")
+    auto_id = request.query_params.get("automation_id")
+    return db.get_job_runs(automation_id=auto_id, limit=limit, status=status)
+
+
+@app.get("/api/runs/{run_id}")
+def api_run_detail(run_id: int, auth=Depends(_get_auth)):
+    run = db.get_job_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    return run
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def api_run_cancel(run_id: int, request: Request, auth=Depends(_require_operator)):
+    username, _ = auth
+    if not job_runner.cancel(run_id):
+        raise HTTPException(404, "Run not active")
+    db.audit_log("job_cancel", username, f"Cancelled run {run_id}", _client_ip(request))
+    return {"success": True}
 
 
 # ── /api/admin/users ──────────────────────────────────────────────────────────
@@ -654,6 +685,24 @@ async def api_webhook(request: Request, auth=Depends(_require_operator)):
 
 
 # ── /api/run ──────────────────────────────────────────────────────────────────
+def _build_command(script: str, safe_args: list[str], args_in) -> list[str] | None:
+    """Resolve a script name to a command list.  Returns None on failure."""
+    if script == "custom":
+        cfg = read_yaml_settings()
+        custom_id = args_in if isinstance(args_in, str) else (safe_args[0] if safe_args else "")
+        act = next((a for a in cfg.get("customActions", []) if a.get("id") == custom_id), None)
+        if act and act.get("command"):
+            return ["bash", "-c", act["command"]]
+        return None
+    if script == "speedtest":
+        return ["speedtest-cli", "--simple"] + safe_args
+    if script in SCRIPT_MAP:
+        sfile = os.path.join(SCRIPT_DIR, SCRIPT_MAP[script])
+        if os.path.isfile(sfile):
+            return [sfile, "--verbose"] + safe_args
+    return None
+
+
 @app.post("/api/run")
 async def api_run(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
@@ -662,7 +711,7 @@ async def api_run(request: Request, auth=Depends(_require_operator)):
     script   = body.get("script", "")
     args_in  = body.get("args",   "")
 
-    safe_args = []
+    safe_args: list[str] = []
     if isinstance(args_in, str) and args_in.strip():
         try:
             safe_args = shlex.split(args_in)
@@ -671,84 +720,28 @@ async def api_run(request: Request, auth=Depends(_require_operator)):
     elif isinstance(args_in, list):
         safe_args = [str(a) for a in args_in if str(a).strip()]
 
-    global _active_job
-    with _job_lock:
-        if _active_job and _active_job.get("status") == "running":
-            raise HTTPException(409, "A script is already running")
-        _active_job = {"script": script, "status": "running", "started": datetime.now().isoformat()}
+    cmd = _build_command(script, safe_args, args_in)
+    if cmd is None:
+        raise HTTPException(400, f"Unknown or invalid script: {script}")
 
-    def _run_script():
-        global _active_job
-        status = "error"
-        p = None
-        try:
-            ts = datetime.now().strftime("%H:%M:%S")
-            with open(ACTION_LOG, "w") as f:
-                f.write(f">> [{ts}] Initiating: {script} {' '.join(safe_args)}\n\n")
+    def make_process(_run_id: int) -> subprocess.Popen | None:
+        """Called by the runner inside the job thread."""
+        return subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True, cwd=SCRIPT_DIR if script in SCRIPT_MAP else None,
+        )
 
-            if script == "custom":
-                cfg = read_yaml_settings()
-                custom_id = args_in if isinstance(args_in, str) else (safe_args[0] if safe_args else "")
-                act = next((a for a in cfg.get("customActions", []) if a.get("id") == custom_id), None)
-                if act and act.get("command"):
-                    with open(ACTION_LOG, "a") as f:
-                        p = subprocess.Popen(["bash", "-c", act["command"]], stdout=f, stderr=subprocess.STDOUT,
-                                             start_new_session=True)
-                else:
-                    with open(ACTION_LOG, "a") as f:
-                        f.write(f"[ERROR] Custom action not found: {args_in}\n")
-                    db.audit_log("script_run", username, f"custom action not found: {args_in}", ip)
-                    status = "failed"
-            elif script == "speedtest":
-                with open(ACTION_LOG, "a") as f:
-                    p = subprocess.Popen(["speedtest-cli", "--simple"] + safe_args, stdout=f, stderr=subprocess.STDOUT,
-                                         start_new_session=True)
-            elif script in SCRIPT_MAP:
-                sfile = os.path.join(SCRIPT_DIR, SCRIPT_MAP[script])
-                if os.path.isfile(sfile):
-                    with open(ACTION_LOG, "a") as f:
-                        p = subprocess.Popen([sfile, "--verbose"] + safe_args, stdout=f,
-                                             stderr=subprocess.STDOUT, cwd=SCRIPT_DIR,
-                                             start_new_session=True)
-                else:
-                    with open(ACTION_LOG, "a") as f:
-                        f.write(f"[ERROR] Script not found: {sfile}\n")
-                    status = "failed"
-            else:
-                with open(ACTION_LOG, "a") as f:
-                    f.write(f"[ERROR] Unknown script: {script}\n")
-                status = "failed"
+    try:
+        run_id = job_runner.submit(
+            make_process,
+            trigger=f"script:{script}",
+            triggered_by=username,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
 
-            if p:
-                try:
-                    p.wait(timeout=300)
-                    status = "done" if p.returncode == 0 else "failed"
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-                        p.wait(timeout=5)
-                    except (ProcessLookupError, subprocess.TimeoutExpired):
-                        try:
-                            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        p.wait()
-                    with open(ACTION_LOG, "a") as f:
-                        f.write("\n[ERROR] Script timed out after 300s.\n")
-                    status = "timeout"
-        except Exception as e:
-            logger.exception("Script runner error: %s", e)
-        finally:
-            with open(ACTION_LOG, "a") as f:
-                f.write(f"\n>> [{datetime.now().strftime('%H:%M:%S')}] {status.upper()}\n")
-            with _job_lock:
-                if _active_job and _active_job.get("script") == script:
-                    _active_job["status"]   = status
-                    _active_job["finished"] = datetime.now().isoformat()
-            db.audit_log("script_run", username, f"{script} {args_in} -> {status}", ip)
-
-    threading.Thread(target=_run_script, daemon=True, name=f"run-{script}").start()
-    return {"success": True, "status": "running", "script": script}
+    db.audit_log("script_run", username, f"{script} {args_in} -> run_id={run_id}", ip)
+    return {"success": True, "status": "running", "script": script, "run_id": run_id}
 
 
 # ── /api/cloud-test ───────────────────────────────────────────────────────────

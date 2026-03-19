@@ -955,6 +955,9 @@
                         :aria-expanded="!collapsed.actions"
                         aria-controls="body-actions"
                         aria-label="Toggle Quick Actions"></button>
+                <button class="icon-btn" style="width:auto; padding:0 .3rem; margin-right:.3rem;" x-show="userRole !== 'viewer'" @click="openRunHistory()" title="Run History" aria-label="View Run History">
+                    <i class="fas fa-history"></i>
+                </button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
             </div>
             <div class="card-body action-list" id="body-actions" x-show="!collapsed.actions">
@@ -1350,11 +1353,53 @@
         </div>
         <pre id="console-out" class="console-out" x-text="modalOutput" aria-live="polite" aria-label="Script output"></pre>
         <div class="modal-footer">
+            <button x-show="runningScript && activeRunId" class="btn btn-sm btn-danger" @click="cancelActiveRun()">Cancel</button>
             <button class="btn btn-sm" @click="showModal=false" :disabled="runningScript">Close</button>
         </div>
     </div>
 </div>
 
+<!-- Run History Modal -->
+<div x-show="showRunHistoryModal"
+     class="modal-overlay"
+     style="display:none"
+     @click.self="showRunHistoryModal=false"
+     role="dialog"
+     aria-modal="true"
+     aria-label="Run History"
+     x-cloak>
+    <div class="modal-box" style="max-width:700px">
+        <div class="modal-title">
+            <i class="fas fa-history" style="color:var(--accent)" aria-hidden="true"></i>
+            Run History
+        </div>
+        <div style="max-height:400px; overflow-y:auto">
+            <div x-show="runHistoryLoading" style="text-align:center; padding:1rem; opacity:.6">Loading...</div>
+            <div x-show="!runHistoryLoading && runHistory.length === 0" class="empty-msg">No runs recorded yet.</div>
+            <table x-show="!runHistoryLoading && runHistory.length > 0" class="audit-table" style="width:100%">
+                <thead>
+                    <tr><th>ID</th><th>Trigger</th><th>By</th><th>Status</th><th>Started</th><th>Duration</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="run in runHistory" :key="run.id">
+                        <tr>
+                            <td x-text="run.id"></td>
+                            <td x-text="run.trigger"></td>
+                            <td x-text="run.triggered_by || '\u2014'"></td>
+                            <td><span class="badge" :class="runStatusClass(run.status)" x-text="run.status"></span></td>
+                            <td x-text="fmtRunTime(run.started_at)"></td>
+                            <td x-text="run.finished_at && run.started_at ? ((run.finished_at - run.started_at) + 's') : (run.status === 'running' ? 'running' : '\u2014')"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm" @click="fetchRunHistory()" :disabled="runHistoryLoading">Refresh</button>
+            <button class="btn btn-sm" @click="showRunHistoryModal=false">Close</button>
+        </div>
+    </div>
+</div>
 
 <div x-show="showSettings"
      class="modal-overlay"

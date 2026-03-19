@@ -16,6 +16,12 @@ function actionsMixin() {
         showModal: false, modalTitle: '', modalOutput: '', runningScript: false,
         showConfirmModal: false, confirmMessage: '', _pendingAction: null,
 
+        // ── Job runner state ─────────────────────────────────────────────────
+        activeRunId: null,
+        showRunHistoryModal: false,
+        runHistory: [],
+        runHistoryLoading: false,
+
         // ── History & Audit state ──────────────────────────────────────────────
         showHistoryModal: false,
         historyMetric: '',
@@ -179,22 +185,13 @@ function actionsMixin() {
         async runScript(script, argStr = '') {
             if (!this.authenticated || this.runningScript) return;
             this.runningScript = true;
+            this.activeRunId   = null;
             this.modalTitle    = `Running: ${script}`;
             this.modalOutput   = `>> [${new Date().toLocaleTimeString()}] Starting action...\n`;
             this.showModal     = true;
 
             const token = this._token();
-
-            const poll = setInterval(async () => {
-                try {
-                    const r = await fetch('/api/action-log', { headers: { 'Authorization': 'Bearer ' + token } });
-                    if (r.ok) {
-                        this.modalOutput = await r.text();
-                        const el = document.getElementById('console-out');
-                        if (el) el.scrollTop = el.scrollHeight;
-                    }
-                } catch { /* non-fatal */ }
-            }, 800);
+            let runId = null;
 
             try {
                 const res = await fetch('/api/run', {
@@ -202,26 +199,108 @@ function actionsMixin() {
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
                     body: JSON.stringify({ script, args: argStr }),
                 });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    this.modalTitle = '\u2717 Failed';
+                    this.modalOutput += (err.detail || 'Request failed') + '\n';
+                    this.addToast(err.detail || `${script} failed to start`, 'error');
+                    this.runningScript = false;
+                    return;
+                }
                 const result = await res.json();
-                this.modalTitle = result.success ? '\u2713 Completed' : '\u2717 Failed';
-                this.addToast(`${script} ${result.success ? 'completed' : 'failed'}`,
-                              result.success ? 'success' : 'error');
+                runId = result.run_id;
+                this.activeRunId = runId;
             } catch {
                 this.modalTitle = '\u2717 Connection Error';
                 this.addToast('Connection error', 'error');
-            } finally {
-                clearInterval(poll);
+                this.runningScript = false;
+                return;
+            }
+
+            // Poll for job output until completion
+            const poll = setInterval(async () => {
                 try {
-                    const r = await fetch('/api/action-log', { headers: { 'Authorization': 'Bearer ' + token } });
-                    if (r.ok) {
-                        this.modalOutput = await r.text();
+                    const r = await fetch(`/api/runs/${runId}`, {
+                        headers: { 'Authorization': 'Bearer ' + token },
+                    });
+                    if (!r.ok) return;
+                    const run = await r.json();
+                    if (run.output) {
+                        this.modalOutput = run.output;
                         const el = document.getElementById('console-out');
                         if (el) el.scrollTop = el.scrollHeight;
                     }
+                    if (run.status !== 'running') {
+                        clearInterval(poll);
+                        const ok = run.status === 'done';
+                        this.modalTitle = ok ? '\u2713 Completed'
+                            : run.status === 'cancelled' ? '\u2718 Cancelled'
+                            : '\u2717 ' + (run.status === 'timeout' ? 'Timed Out' : 'Failed');
+                        if (run.error) this.modalOutput += '\n' + run.error + '\n';
+                        this.addToast(`${script} ${run.status}`, ok ? 'success' : 'error');
+                        this.runningScript = false;
+                        this.activeRunId = null;
+                        await this.refreshStats();
+                    }
                 } catch { /* non-fatal */ }
-                this.runningScript = false;
-                await this.refreshStats();
+            }, 1000);
+        },
+
+        /** Cancel the currently active job run. */
+        async cancelActiveRun() {
+            if (!this.activeRunId) return;
+            try {
+                const res = await fetch(`/api/runs/${this.activeRunId}/cancel`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) {
+                    this.addToast('Cancellation requested', 'info');
+                } else {
+                    const d = await res.json().catch(() => ({}));
+                    this.addToast(d.detail || 'Cancel failed', 'error');
+                }
+            } catch {
+                this.addToast('Cancel request failed', 'error');
             }
+        },
+
+        // ── Run History ───────────────────────────────────────────────────────
+
+        /** Open the run history modal and fetch recent runs. */
+        async openRunHistory() {
+            this.showRunHistoryModal = true;
+            await this.fetchRunHistory();
+        },
+
+        /** Fetch recent job runs from the API. */
+        async fetchRunHistory() {
+            this.runHistoryLoading = true;
+            try {
+                const res = await fetch('/api/runs?limit=50', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.runHistory = await res.json();
+            } catch (e) {
+                this.addToast('Failed to load run history: ' + e.message, 'error');
+            } finally {
+                this.runHistoryLoading = false;
+            }
+        },
+
+        /** Format a Unix timestamp for display. */
+        fmtRunTime(ts) {
+            if (!ts) return '\u2014';
+            return new Date(ts * 1000).toLocaleString();
+        },
+
+        /** Return a CSS badge class for a job status. */
+        runStatusClass(status) {
+            if (status === 'done') return 'bs';
+            if (status === 'running') return 'bi';
+            if (status === 'cancelled') return 'bw';
+            return 'bd';
         },
 
 
