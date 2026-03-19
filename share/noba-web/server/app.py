@@ -72,8 +72,11 @@ async def lifespan(app: FastAPI):
     psutil.cpu_percent(interval=None)
     plugin_manager.discover()
     plugin_manager.start()
+    from .scheduler import scheduler
+    scheduler.start()
     logger.info("Noba v%s started (%d plugins)", VERSION, plugin_manager.count)
     yield
+    scheduler.stop()
     job_runner.shutdown()
     plugin_manager.stop()
     get_shutdown_flag().set()
