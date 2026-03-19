@@ -2328,5 +2328,87 @@ function actionsMixin() {
                 if (res.ok) this.serviceMap = await res.json();
             } catch { /* silent */ }
         },
+
+
+        // ── Uptime Dashboard ─────────────────────────────────────────────────
+        uptimeItems: [],
+        showUptimeModal: false,
+
+        async fetchUptime() {
+            try {
+                const res = await fetch('/api/uptime', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.uptimeItems = await res.json();
+            } catch { /* silent */ }
+        },
+
+        get uptimePercent() {
+            if (!this.uptimeItems.length) return 100;
+            const up = this.uptimeItems.filter(i => i.status === 'up').length;
+            return Math.round(up / this.uptimeItems.length * 100);
+        },
+
+        // ── Journal Viewer ───────────────────────────────────────────────────
+        journalOutput: '',
+        journalUnit: '',
+        journalPriority: '',
+        journalLines: 100,
+        journalGrep: '',
+        journalUnits: [],
+        showJournalModal: false,
+
+        async fetchJournal() {
+            const params = new URLSearchParams({ lines: this.journalLines });
+            if (this.journalUnit) params.set('unit', this.journalUnit);
+            if (this.journalPriority) params.set('priority', this.journalPriority);
+            if (this.journalGrep) params.set('grep', this.journalGrep);
+            try {
+                const res = await fetch('/api/journal?' + params, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                this.journalOutput = res.ok ? await res.text() : 'Failed to fetch journal.';
+            } catch (e) { this.journalOutput = 'Error: ' + e.message; }
+        },
+
+        async fetchJournalUnits() {
+            try {
+                const res = await fetch('/api/journal/units', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.journalUnits = await res.json();
+            } catch { /* silent */ }
+        },
+
+        openJournal() {
+            this.showJournalModal = true;
+            this.fetchJournalUnits();
+            this.fetchJournal();
+        },
+
+        // ── Disk Prediction ──────────────────────────────────────────────────
+        diskPredictions: [],
+
+        async fetchDiskPredictions() {
+            try {
+                const res = await fetch('/api/disks/prediction', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.diskPredictions = await res.json();
+            } catch { /* silent */ }
+        },
+
+        // ── System Info ──────────────────────────────────────────────────────
+        systemInfo: null,
+        showSystemInfoModal: false,
+
+        async fetchSystemInfo() {
+            try {
+                const res = await fetch('/api/system/info', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.systemInfo = await res.json();
+            } catch { /* silent */ }
+        },
     };
 }

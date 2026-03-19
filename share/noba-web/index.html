@@ -291,6 +291,27 @@
             </div>
         </div>
 
+        <div class="card" data-id="card-uptime" x-show="authenticated" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-check-circle card-icon" style="color:#9ece6a"></i><span class="card-title">Uptime Status</span>
+                <button class="svc-btn" title="Details" @click="showUptimeModal=true; fetchUptime()" style="margin-left:auto;margin-right:4px"><i class="fas fa-expand-alt"></i></button>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.uptime?'is-collapsed':''" @click="toggleCollapse('uptime')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.uptime" x-init="fetchUptime(); setInterval(() => fetchUptime(), 30000)">
+                <div style="text-align:center;margin:4px 0">
+                    <span style="font-size:1.8rem;font-weight:700" :style="'color:var(--'+(uptimePercent>=95?'success':uptimePercent>=80?'warning':'danger')+')'">
+                        <span x-text="uptimePercent"></span>%
+                    </span>
+                    <div style="font-size:.7rem;color:var(--text-dim)" x-text="uptimeItems.filter(i=>i.status==='up').length + '/' + uptimeItems.length + ' services up'"></div>
+                </div>
+                <template x-for="item in uptimeItems.filter(i => i.status !== 'up').slice(0, 5)" :key="item.name">
+                    <div class="row" style="font-size:.8rem">
+                        <span class="row-label"><i class="fas fa-times-circle" style="color:var(--danger);margin-right:4px"></i><span x-text="item.name"></span></span>
+                        <span class="badge bd">down</span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
         <div class="card" data-id="card-netio" x-show="vis.netio" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-network-wired card-icon" aria-hidden="true"></i>
@@ -317,7 +338,7 @@
                 </div>
                 <div class="row">
                     <span class="row-label">Hostname</span>
-                    <span class="row-val copy-hover" @click="copyVal(hostname, $event)" x-text="hostname || '--'" title="Copy hostname" role="button" tabindex="0" @keyup.enter="copyVal(hostname, $event)"></span>
+                    <span class="row-val copy-hover" @click="showSystemInfoModal=true; fetchSystemInfo()" style="cursor:pointer" x-text="hostname || '--'" title="Click for system info" role="button" tabindex="0" @keyup.enter="showSystemInfoModal=true; fetchSystemInfo()"></span>
                 </div>
                 <div class="row">
                     <span class="row-label">Default IP</span>
@@ -635,6 +656,14 @@
                             <div class="prog-track" role="progressbar" :aria-valuenow="d.percent" aria-valuemin="0" aria-valuemax="100" :aria-label="d.mount + ' ' + d.percent + '% full'">
                                 <div class="prog-fill" :class="'f-'+d.barClass" :style="'width:'+d.percent+'%'"></div>
                             </div>
+                        </div>
+                    </template>
+                </div>
+                <div style="margin-top:.5rem" x-init="fetchDiskPredictions()">
+                    <template x-for="dp in diskPredictions.filter(d => d.full_at)" :key="dp.mount">
+                        <div class="row" style="font-size:.7rem;color:var(--warning)">
+                            <span class="row-label"><i class="fas fa-exclamation-triangle" style="margin-right:4px"></i><span x-text="dp.mount"></span></span>
+                            <span class="row-val" x-text="'Full by ' + (dp.full_at ? new Date(dp.full_at).toLocaleDateString() : 'N/A')"></span>
                         </div>
                     </template>
                 </div>
@@ -1546,6 +1575,7 @@
                         :aria-expanded="!collapsed.logs"
                         aria-controls="body-logs"
                         aria-label="Toggle System Logs"></button>
+                <button class="svc-btn" title="System Journal" @click="openJournal()" style="margin-left:auto;margin-right:4px" x-show="userRole!=='viewer'"><i class="fas fa-file-alt"></i></button>
                 <button class="icon-btn" style="width:auto; padding:0 .3rem; margin-right:.3rem;" x-show="userRole === 'admin'" @click="openAuditModal()" title="View Audit Log" aria-label="View Audit Log">
                     <i class="fas fa-user-secret"></i>
                 </button>
@@ -4561,6 +4591,60 @@
                 </div>
             </template>
         </div>
+    </div>
+</div>
+
+<!-- Journal Viewer Modal -->
+<div class="modal-overlay" x-show="showJournalModal" x-cloak @keydown.escape.window="showJournalModal=false">
+    <div class="modal-box" style="max-width:1000px;height:85vh;display:flex;flex-direction:column">
+        <div class="modal-title">
+            <i class="fas fa-file-alt"></i> System Journal
+            <button class="modal-close" @click="showJournalModal=false">&times;</button>
+        </div>
+        <div style="padding:8px 16px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);font-size:.8rem">
+            <select x-model="journalUnit" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:4px">
+                <option value="">All units</option>
+                <template x-for="u in journalUnits" :key="u.name"><option :value="u.name" x-text="u.name"></option></template>
+            </select>
+            <select x-model="journalPriority" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:4px">
+                <option value="">All priorities</option>
+                <option value="0">Emergency</option><option value="1">Alert</option><option value="2">Critical</option>
+                <option value="3">Error</option><option value="4">Warning</option><option value="5">Notice</option>
+                <option value="6">Info</option><option value="7">Debug</option>
+            </select>
+            <input type="text" x-model="journalGrep" placeholder="grep..." style="width:120px;padding:3px 6px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:4px">
+            <select x-model.number="journalLines" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:4px">
+                <option value="50">50 lines</option><option value="100">100</option><option value="200">200</option><option value="500">500</option>
+            </select>
+            <button class="btn-sm" @click="fetchJournal()"><i class="fas fa-search"></i> Query</button>
+        </div>
+        <pre class="log-pre" style="flex:1;overflow:auto;margin:0;padding:12px;font-size:.75rem" x-text="journalOutput"></pre>
+    </div>
+</div>
+
+<!-- System Info Modal -->
+<div class="modal-overlay" x-show="showSystemInfoModal" x-cloak @keydown.escape.window="showSystemInfoModal=false">
+    <div class="modal-box" style="max-width:600px">
+        <div class="modal-title">
+            <i class="fas fa-server"></i> System Information
+            <button class="modal-close" @click="showSystemInfoModal=false">&times;</button>
+        </div>
+        <template x-if="systemInfo"><div style="padding:16px">
+            <div class="row"><span class="row-label">Hostname</span><span class="row-val" x-text="systemInfo.hostname"></span></div>
+            <div class="row"><span class="row-label">OS</span><span class="row-val" x-text="systemInfo.os"></span></div>
+            <div class="row"><span class="row-label">Kernel</span><span class="row-val" x-text="systemInfo.kernel"></span></div>
+            <div class="row"><span class="row-label">Architecture</span><span class="row-val" x-text="systemInfo.arch"></span></div>
+            <div class="row"><span class="row-label">CPU</span><span class="row-val" x-text="systemInfo.cpu_model"></span></div>
+            <div class="row"><span class="row-label">Cores</span><span class="row-val" x-text="systemInfo.cpu_cores"></span></div>
+            <div class="row"><span class="row-label">GPU</span><span class="row-val" x-text="systemInfo.gpu"></span></div>
+            <div class="row"><span class="row-label">RAM</span><span class="row-val" x-text="(systemInfo.ram_total_gb||0) + ' GB total, ' + (systemInfo.ram_available_gb||0) + ' GB free'"></span></div>
+            <div class="row"><span class="row-label">Swap</span><span class="row-val" x-text="(systemInfo.swap_total_gb||0) + ' GB total, ' + (systemInfo.swap_used_gb||0) + ' GB used'"></span></div>
+            <div class="row"><span class="row-label">Governor</span><span class="row-val" x-text="systemInfo.governor"></span></div>
+            <div class="row"><span class="row-label">Uptime</span><span class="row-val" x-text="systemInfo.uptime"></span></div>
+            <div class="row"><span class="row-label">IP</span><span class="row-val" x-text="systemInfo.ip"></span></div>
+            <div class="row"><span class="row-label">Python</span><span class="row-val" x-text="systemInfo.python"></span></div>
+            <div class="row"><span class="row-label">NOBA</span><span class="row-val" x-text="'v' + systemInfo.noba_version"></span></div>
+        </div></template>
     </div>
 </div>
 

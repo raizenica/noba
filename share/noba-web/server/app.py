@@ -3471,6 +3471,157 @@ def api_pmx_console_url(node: str, vmid: int, request: Request, auth=Depends(_re
     return {"url": console_url}
 
 
+# ── Disk usage prediction ────────────────────────────────────────────────────
+@app.get("/api/disks/prediction")
+def api_disk_prediction(request: Request, auth=Depends(_get_auth)):
+    """Predict when each disk will be full based on usage trends."""
+    results = []
+    stats = bg_collector.get() or {}
+    for disk in stats.get("disks", []):
+        mount = disk.get("mount", "")
+        trend = db.get_trend("disk_percent", range_hours=168, projection_hours=720)
+        results.append({
+            "mount": mount,
+            "current_percent": disk.get("percent", 0),
+            "full_at": trend.get("full_at"),
+            "slope_per_day": round((trend.get("slope", 0) or 0) * 86400, 3),
+            "r_squared": trend.get("r_squared", 0),
+        })
+    return results
+
+
+# ── Uptime SLA dashboard ────────────────────────────────────────────────────
+@app.get("/api/uptime")
+def api_uptime_dashboard(auth=Depends(_get_auth)):
+    """Get uptime statistics for all monitored services and integrations."""
+    stats = bg_collector.get() or {}
+
+    items = []
+    # Services
+    for svc in stats.get("services", []):
+        items.append({
+            "name": svc["name"],
+            "type": "service",
+            "status": "up" if svc.get("status") == "active" else "down",
+        })
+    # Integrations
+    integration_checks = [
+        ("pihole", "Pi-hole"), ("plex", "Plex"), ("jellyfin", "Jellyfin"),
+        ("truenas", "TrueNAS"), ("proxmox", "Proxmox"), ("adguard", "AdGuard"),
+        ("hass", "Home Assistant"), ("unifi", "UniFi"), ("nextcloud", "Nextcloud"),
+        ("tautulli", "Tautulli"), ("overseerr", "Overseerr"), ("gitea", "Gitea"),
+        ("gitlab", "GitLab"), ("traefik", "Traefik"), ("k8s", "Kubernetes"),
+    ]
+    for key, label in integration_checks:
+        data = stats.get(key)
+        if data is None:
+            continue
+        if isinstance(data, dict):
+            status = "up" if data.get("status") == "online" else "down"
+        else:
+            status = "up" if data else "down"
+        items.append({"name": label, "type": "integration", "status": status})
+    # Radar hosts
+    for r in stats.get("radar", []):
+        items.append({
+            "name": r.get("ip", ""),
+            "type": "host",
+            "status": "up" if r.get("status") == "Up" else "down",
+            "ms": r.get("ms", 0),
+        })
+    return items
+
+
+# ── Systemd journal viewer ───────────────────────────────────────────────────
+@app.get("/api/journal")
+def api_journal(request: Request, auth=Depends(_require_operator)):
+    """Query systemd journal with filters."""
+    unit = request.query_params.get("unit", "")
+    priority = request.query_params.get("priority", "")
+    lines = _int_param(request, "lines", 50, 1, 500)
+    since = request.query_params.get("since", "")
+    grep_pattern = request.query_params.get("grep", "")
+
+    cmd = ["journalctl", "--no-pager", "-n", str(lines), "--output", "short-iso"]
+    if unit:
+        if not re.match(r'^[a-zA-Z0-9_.@-]+$', unit):
+            raise HTTPException(400, "Invalid unit name")
+        cmd += ["-u", unit]
+    if priority:
+        if priority in ("0", "1", "2", "3", "4", "5", "6", "7",
+                        "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"):
+            cmd += ["-p", priority]
+    if since:
+        if re.match(r'^\d+\s*(min|hour|day|sec)\s*ago$', since):
+            cmd += ["--since", since]
+    if grep_pattern:
+        cmd += ["-g", grep_pattern[:100]]
+
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return PlainTextResponse(r.stdout[-65536:] or "No entries.")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Journal query timed out")
+    except FileNotFoundError:
+        return PlainTextResponse("journalctl not available")
+
+
+@app.get("/api/journal/units")
+def api_journal_units(auth=Depends(_require_operator)):
+    """List systemd units for the journal filter."""
+    try:
+        r = subprocess.run(
+            ["systemctl", "list-units", "--type=service", "--no-pager", "--plain", "--no-legend"],
+            capture_output=True, text=True, timeout=5,
+        )
+        units = []
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            if parts:
+                units.append({"name": parts[0], "status": parts[3] if len(parts) > 3 else ""})
+        return units[:200]
+    except Exception:
+        return []
+
+
+# ── Extended system info ─────────────────────────────────────────────────────
+@app.get("/api/system/info")
+def api_system_info(auth=Depends(_get_auth)):
+    """Extended system information."""
+    import platform
+
+    from .metrics import get_cpu_governor
+    stats = bg_collector.get() or {}
+
+    info = {
+        "hostname": stats.get("hostname", ""),
+        "os": stats.get("osName", ""),
+        "kernel": stats.get("kernel", ""),
+        "arch": platform.machine(),
+        "python": platform.python_version(),
+        "cpu_model": stats.get("hwCpu", ""),
+        "cpu_cores": os.cpu_count(),
+        "gpu": stats.get("hwGpu", ""),
+        "uptime": stats.get("uptime", ""),
+        "load": stats.get("loadavg", ""),
+        "ip": stats.get("defaultIp", ""),
+        "governor": get_cpu_governor(),
+        "noba_version": VERSION,
+    }
+    # Memory details
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        sw = psutil.swap_memory()
+        info["ram_total_gb"] = round(vm.total / (1024**3), 1)
+        info["ram_available_gb"] = round(vm.available / (1024**3), 1)
+        info["swap_total_gb"] = round(sw.total / (1024**3), 1)
+        info["swap_used_gb"] = round(sw.used / (1024**3), 1)
+    except Exception:
+        pass
+    return info
+
+
 @app.websocket("/api/terminal")
 async def ws_terminal(ws: WebSocket):
     """WebSocket terminal — admin only."""
