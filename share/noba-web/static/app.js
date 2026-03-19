@@ -392,8 +392,18 @@ function dashboard() {
         _dismissedAlerts: {},
         _allCollapsed: false,
 
+        // ── Context menu ─────────────────────────────────────────────────────
+        ctxMenu: { show: false, x: 0, y: 0, card: '' },
+
 
         // ── 2. Computed Properties ─────────────────────────────────────────────
+
+        get nowPlayingCount() {
+            let count = 0;
+            if (this.plex && this.plex.sessions) count += this.plex.sessions;
+            if (this.jellyfin && this.jellyfin.streams) count += this.jellyfin.streams;
+            return count;
+        },
 
         get cpuTempClass() {
             const t = parseInt(this.cpuTemp) || 0;
@@ -462,6 +472,7 @@ function dashboard() {
             try { this.initMasonry();   } catch (e) { console.warn('Masonry init skipped', e); }
             try { this.initTouch();     } catch (e) { console.warn('Touch init skipped', e); }
             this.$watch('showTerminal', (val) => { if (val) this.openTerminal(); });
+            document.addEventListener('click', () => { this.ctxMenu.show = false; });
 
             if (!this.authenticated) return;
 
@@ -688,6 +699,30 @@ function dashboard() {
 
         dismissAlert(msg) {
             this._dismissedAlerts = { ...this._dismissedAlerts, [msg]: true };
+        },
+
+        showContextMenu(e, cardId) {
+            e.preventDefault();
+            this.ctxMenu = { show: true, x: e.clientX, y: e.clientY, card: cardId };
+        },
+
+        ctxAction(action) {
+            const card = this.ctxMenu.card;
+            this.ctxMenu.show = false;
+            if (action === 'collapse') this.toggleCollapse(card);
+            else if (action === 'hide') {
+                this.vis[card] = false;
+                localStorage.setItem('noba-vis', JSON.stringify(this.vis));
+            }
+            else if (action === 'history' && card === 'core') {
+                this.showHistoryModal = true;
+                this.historyMetric = 'cpu_percent';
+                this.fetchHistory('cpu_percent');
+            }
+            else if (action === 'settings') {
+                this.showSettings = true;
+                this.settingsTab = 'integrations';
+            }
         },
 
         addToast(msg, type = 'info') {

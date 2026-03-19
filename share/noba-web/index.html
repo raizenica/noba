@@ -74,6 +74,12 @@
                 <span class="badge" :class="userRole==='admin'?'ba':userRole==='operator'?'bs':'bn'" x-text="userRole"></span>
             </div>
 
+            <div class="user-chip" x-show="authenticated && nowPlayingCount > 0" x-cloak
+                 style="border-color:var(--accent);box-shadow:0 0 8px var(--accent-dim)">
+                <i class="fas fa-play-circle" style="color:var(--accent)" aria-hidden="true"></i>
+                <span x-text="nowPlayingCount + ' streaming'" style="font-size:.75rem"></span>
+            </div>
+
             <label for="theme-selector" class="sr-only">Theme</label>
             <select id="theme-selector" class="theme-select" x-model="theme" @change="localStorage.setItem('noba-theme', theme); if (userRole !== 'viewer') saveSettings()">
                 <option value="auto">System (Auto)</option>
@@ -141,6 +147,21 @@
         </template>
     </div>
 
+    <!-- Context menu -->
+    <div class="ctx-menu" x-show="ctxMenu.show" x-cloak
+         :style="'left:'+ctxMenu.x+'px;top:'+ctxMenu.y+'px'"
+         @click.outside="ctxMenu.show=false">
+        <div class="ctx-menu-item" @click="ctxAction('collapse')">
+            <i class="fas fa-compress"></i> Toggle Collapse
+        </div>
+        <div class="ctx-menu-item" @click="ctxAction('hide')">
+            <i class="fas fa-eye-slash"></i> Hide Card
+        </div>
+        <div class="ctx-menu-item" @click="ctxAction('settings')">
+            <i class="fas fa-cog"></i> Settings
+        </div>
+    </div>
+
     <div class="alerts" role="alert" x-show="visibleAlerts && visibleAlerts.length > 0" x-cloak>
         <template x-for="a in visibleAlerts" :key="a.msg">
             <div class="alert" :class="a.level" :data-msg="a.msg" style="transition:transform .2s,opacity .2s">
@@ -154,7 +175,7 @@
     <main>
     <div class="grid" id="sortable-grid" x-cloak>
 
-        <div class="card" data-id="card-core" x-show="vis.core">
+        <div class="card" data-id="card-core" x-show="vis.core" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-microchip card-icon" aria-hidden="true"></i>
                 <span class="card-title" id="hdr-core">Core System</span>
@@ -219,7 +240,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-netio" x-show="vis.netio">
+        <div class="card" data-id="card-netio" x-show="vis.netio" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-network-wired card-icon" aria-hidden="true"></i>
                 <span class="card-title">Network I/O</span>
@@ -266,7 +287,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-hw" x-show="vis.hw">
+        <div class="card" data-id="card-hw" x-show="vis.hw" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-memory card-icon" aria-hidden="true"></i>
                 <span class="card-title">Hardware</span>
@@ -294,7 +315,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-truenas" x-show="vis.truenas && truenasUrl">
+        <div class="card" data-id="card-truenas" x-show="vis.truenas && truenasUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-server card-icon" aria-hidden="true"></i>
                 <span class="card-title">TrueNAS Integration</span>
@@ -352,7 +373,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-plex" x-show="vis.plex && plexUrl">
+        <div class="card" data-id="card-plex" x-show="vis.plex && plexUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-film card-icon" aria-hidden="true"></i>
                 <span class="card-title">Media Stack</span>
@@ -390,7 +411,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-downloads" x-show="vis.downloads && (qbitUrl || radarrUrl || sonarrUrl)">
+        <div class="card" data-id="card-downloads" x-show="vis.downloads && (qbitUrl || radarrUrl || sonarrUrl)" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-download card-icon" aria-hidden="true"></i>
                 <span class="card-title">Download Stack</span>
@@ -434,7 +455,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-battery" x-show="vis.battery && battery && !battery.desktop">
+        <div class="card" data-id="card-battery" x-show="vis.battery && battery && !battery.desktop" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-battery-half card-icon" aria-hidden="true"></i>
                 <span class="card-title">Power State</span>
@@ -467,7 +488,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-pihole" x-show="vis.pihole && piholeUrl">
+        <div class="card" data-id="card-pihole" x-show="vis.pihole && piholeUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-shield-alt card-icon" aria-hidden="true"></i>
                 <span class="card-title">Pi-hole DNS</span>
@@ -513,7 +534,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-storage" x-show="vis.storage">
+        <div class="card" data-id="card-storage" x-show="vis.storage" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon" aria-hidden="true"></i>
                 <span class="card-title">Storage</span>
@@ -558,7 +579,7 @@
         </div>
 
         <!-- ── Disk I/O ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-diskio" x-show="vis.diskIo">
+        <div class="card" data-id="card-diskio" x-show="vis.diskIo" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-hdd card-icon" aria-hidden="true"></i>
                 <span class="card-title">Disk I/O</span>
@@ -583,7 +604,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-radar" x-show="vis.radar">
+        <div class="card" data-id="card-radar" x-show="vis.radar" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-satellite-dish card-icon" aria-hidden="true"></i>
                 <span class="card-title">Network Radar</span>
@@ -608,7 +629,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-kuma" x-show="vis.kuma && kumaUrl">
+        <div class="card" data-id="card-kuma" x-show="vis.kuma && kumaUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-heartbeat card-icon" aria-hidden="true"></i>
                 <span class="card-title">Uptime Kuma</span>
@@ -634,7 +655,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-procs" x-show="vis.procs">
+        <div class="card" data-id="card-procs" x-show="vis.procs" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-chart-bar card-icon" aria-hidden="true"></i>
                 <span class="card-title">Resource Hogs</span>
@@ -680,7 +701,7 @@
         </div>
 
         <!-- ── AdGuard Home ──────────────────────────────────────────────── -->
-        <div class="card" data-id="card-adguard" x-show="vis.adguard && adguardUrl">
+        <div class="card" data-id="card-adguard" x-show="vis.adguard && adguardUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-shield-alt card-icon" aria-hidden="true"></i>
                 <span class="card-title">AdGuard Home</span>
@@ -701,7 +722,7 @@
         </div>
 
         <!-- ── Jellyfin ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-jellyfin" x-show="vis.jellyfin && jellyfinUrl">
+        <div class="card" data-id="card-jellyfin" x-show="vis.jellyfin && jellyfinUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-film card-icon" aria-hidden="true"></i>
                 <span class="card-title">Jellyfin</span>
@@ -723,7 +744,7 @@
         </div>
 
         <!-- ── Home Assistant ────────────────────────────────────────────── -->
-        <div class="card" data-id="card-hass" x-show="vis.hass && hassUrl">
+        <div class="card" data-id="card-hass" x-show="vis.hass && hassUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-home card-icon" aria-hidden="true"></i>
                 <span class="card-title">Home Assistant</span>
@@ -745,7 +766,7 @@
         </div>
 
         <!-- ── UniFi Network ─────────────────────────────────────────────── -->
-        <div class="card" data-id="card-unifi" x-show="vis.unifi && unifiUrl">
+        <div class="card" data-id="card-unifi" x-show="vis.unifi && unifiUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-wifi card-icon" aria-hidden="true"></i>
                 <span class="card-title">UniFi Network</span>
@@ -765,7 +786,7 @@
         </div>
 
         <!-- ── Speedtest ─────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-speedtest" x-show="vis.speedtest && speedtestUrl">
+        <div class="card" data-id="card-speedtest" x-show="vis.speedtest && speedtestUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-tachometer-alt card-icon" aria-hidden="true"></i>
                 <span class="card-title">Speedtest</span>
@@ -787,7 +808,7 @@
         </div>
 
         <!-- ── Weather ────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-weather" x-show="vis.weather && weather">
+        <div class="card" data-id="card-weather" x-show="vis.weather && weather" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-cloud-sun card-icon" aria-hidden="true"></i>
                 <span class="card-title">Weather</span>
@@ -808,7 +829,7 @@
         </div>
 
         <!-- ── Tautulli ───────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-tautulli" x-show="vis.tautulli && tautulliUrl">
+        <div class="card" data-id="card-tautulli" x-show="vis.tautulli && tautulliUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-chart-bar card-icon" aria-hidden="true"></i><span class="card-title">Tautulli</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.tautulli?'is-collapsed':''" @click="toggleCollapse('tautulli')" :aria-expanded="!collapsed.tautulli" aria-label="Toggle Tautulli"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -822,7 +843,7 @@
         </div>
 
         <!-- ── Overseerr ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-overseerr" x-show="vis.overseerr && overseerrUrl">
+        <div class="card" data-id="card-overseerr" x-show="vis.overseerr && overseerrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-hand-paper card-icon" aria-hidden="true"></i><span class="card-title">Overseerr</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.overseerr?'is-collapsed':''" @click="toggleCollapse('overseerr')" :aria-expanded="!collapsed.overseerr" aria-label="Toggle Overseerr"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -838,7 +859,7 @@
         </div>
 
         <!-- ── Prowlarr ───────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-prowlarr" x-show="vis.prowlarr && prowlarrUrl">
+        <div class="card" data-id="card-prowlarr" x-show="vis.prowlarr && prowlarrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-search card-icon" aria-hidden="true"></i><span class="card-title">Prowlarr</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.prowlarr?'is-collapsed':''" @click="toggleCollapse('prowlarr')" :aria-expanded="!collapsed.prowlarr" aria-label="Toggle Prowlarr"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -852,7 +873,7 @@
         </div>
 
         <!-- ── Nextcloud ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-nextcloud" x-show="vis.nextcloud && nextcloudUrl">
+        <div class="card" data-id="card-nextcloud" x-show="vis.nextcloud && nextcloudUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-cloud card-icon" aria-hidden="true"></i><span class="card-title">Nextcloud</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.nextcloud?'is-collapsed':''" @click="toggleCollapse('nextcloud')" :aria-expanded="!collapsed.nextcloud" aria-label="Toggle Nextcloud"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -868,7 +889,7 @@
         </div>
 
         <!-- ── Traefik ────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-traefik" x-show="vis.traefik && traefikUrl">
+        <div class="card" data-id="card-traefik" x-show="vis.traefik && traefikUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-route card-icon" aria-hidden="true"></i><span class="card-title">Traefik</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.traefik?'is-collapsed':''" @click="toggleCollapse('traefik')" :aria-expanded="!collapsed.traefik" aria-label="Toggle Traefik"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -884,7 +905,7 @@
         </div>
 
         <!-- ── Nginx Proxy Manager ────────────────────────────────────────── -->
-        <div class="card" data-id="card-npm" x-show="vis.npm && npmUrl">
+        <div class="card" data-id="card-npm" x-show="vis.npm && npmUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-globe card-icon" aria-hidden="true"></i><span class="card-title">Nginx Proxy Manager</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.npm?'is-collapsed':''" @click="toggleCollapse('npm')" :aria-expanded="!collapsed.npm" aria-label="Toggle NPM"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -898,7 +919,7 @@
         </div>
 
         <!-- ── Authentik ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-authentik" x-show="vis.authentik && authentikUrl">
+        <div class="card" data-id="card-authentik" x-show="vis.authentik && authentikUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-id-badge card-icon" aria-hidden="true"></i><span class="card-title">Authentik</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.authentik?'is-collapsed':''" @click="toggleCollapse('authentik')" :aria-expanded="!collapsed.authentik" aria-label="Toggle Authentik"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -913,7 +934,7 @@
         </div>
 
         <!-- ── Cloudflare ─────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-cloudflare" x-show="vis.cloudflare && cloudflareToken">
+        <div class="card" data-id="card-cloudflare" x-show="vis.cloudflare && cloudflareToken" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-cloud-meatball card-icon" aria-hidden="true"></i><span class="card-title">Cloudflare</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.cloudflare?'is-collapsed':''" @click="toggleCollapse('cloudflare')" :aria-expanded="!collapsed.cloudflare" aria-label="Toggle Cloudflare"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -930,7 +951,7 @@
         </div>
 
         <!-- ── OpenMediaVault ─────────────────────────────────────────────── -->
-        <div class="card" data-id="card-omv" x-show="vis.omv && omvUrl">
+        <div class="card" data-id="card-omv" x-show="vis.omv && omvUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-hdd card-icon" aria-hidden="true"></i><span class="card-title">OpenMediaVault</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.omv?'is-collapsed':''" @click="toggleCollapse('omv')" :aria-expanded="!collapsed.omv" aria-label="Toggle OMV"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -949,7 +970,7 @@
         </div>
 
         <!-- ── XCP-ng ─────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-xcpng" x-show="vis.xcpng && xcpngUrl">
+        <div class="card" data-id="card-xcpng" x-show="vis.xcpng && xcpngUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-server card-icon" aria-hidden="true"></i><span class="card-title">XCP-ng</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.xcpng?'is-collapsed':''" @click="toggleCollapse('xcpng')" :aria-expanded="!collapsed.xcpng" aria-label="Toggle XCP-ng"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -964,7 +985,7 @@
         </div>
 
         <!-- ── Homebridge ─────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-homebridge" x-show="vis.homebridge && homebridgeUrl">
+        <div class="card" data-id="card-homebridge" x-show="vis.homebridge && homebridgeUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-home card-icon" aria-hidden="true"></i><span class="card-title">Homebridge</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.homebridge?'is-collapsed':''" @click="toggleCollapse('homebridge')" :aria-expanded="!collapsed.homebridge" aria-label="Toggle Homebridge"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -979,7 +1000,7 @@
         </div>
 
         <!-- ── Zigbee2MQTT ────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-z2m" x-show="vis.z2m && z2mUrl">
+        <div class="card" data-id="card-z2m" x-show="vis.z2m && z2mUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-broadcast-tower card-icon" aria-hidden="true"></i><span class="card-title">Zigbee2MQTT</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.z2m?'is-collapsed':''" @click="toggleCollapse('z2m')" :aria-expanded="!collapsed.z2m" aria-label="Toggle Zigbee2MQTT"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -995,7 +1016,7 @@
         </div>
 
         <!-- ── ESPHome ────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-esphome" x-show="vis.esphome && esphomeUrl">
+        <div class="card" data-id="card-esphome" x-show="vis.esphome && esphomeUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-microchip card-icon" aria-hidden="true"></i><span class="card-title">ESPHome</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.esphome?'is-collapsed':''" @click="toggleCollapse('esphome')" :aria-expanded="!collapsed.esphome" aria-label="Toggle ESPHome"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1010,7 +1031,7 @@
         </div>
 
         <!-- ── UniFi Protect ──────────────────────────────────────────────── -->
-        <div class="card" data-id="card-unifiProtect" x-show="vis.unifiProtect && unifiProtectUrl">
+        <div class="card" data-id="card-unifiProtect" x-show="vis.unifiProtect && unifiProtectUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-video card-icon" aria-hidden="true"></i><span class="card-title">UniFi Protect</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.unifiProtect?'is-collapsed':''" @click="toggleCollapse('unifiProtect')" :aria-expanded="!collapsed.unifiProtect" aria-label="Toggle UniFi Protect"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1025,7 +1046,7 @@
         </div>
 
         <!-- ── PiKVM ──────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-pikvm" x-show="vis.pikvm && pikvmUrl">
+        <div class="card" data-id="card-pikvm" x-show="vis.pikvm && pikvmUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-desktop card-icon" aria-hidden="true"></i><span class="card-title">PiKVM</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.pikvm?'is-collapsed':''" @click="toggleCollapse('pikvm')" :aria-expanded="!collapsed.pikvm" aria-label="Toggle PiKVM"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1038,7 +1059,7 @@
         </div>
 
         <!-- ── Kubernetes ─────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-k8s" x-show="vis.k8s && k8sUrl">
+        <div class="card" data-id="card-k8s" x-show="vis.k8s && k8sUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-dharmachakra card-icon" aria-hidden="true"></i><span class="card-title">Kubernetes</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.k8s?'is-collapsed':''" @click="toggleCollapse('k8s')" :aria-expanded="!collapsed.k8s" aria-label="Toggle Kubernetes"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1054,7 +1075,7 @@
         </div>
 
         <!-- ── Gitea ──────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-gitea" x-show="vis.gitea && giteaUrl">
+        <div class="card" data-id="card-gitea" x-show="vis.gitea && giteaUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-code-branch card-icon" aria-hidden="true"></i><span class="card-title">Gitea</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.gitea?'is-collapsed':''" @click="toggleCollapse('gitea')" :aria-expanded="!collapsed.gitea" aria-label="Toggle Gitea"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1068,7 +1089,7 @@
         </div>
 
         <!-- ── GitLab ─────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-gitlab" x-show="vis.gitlab && gitlabUrl">
+        <div class="card" data-id="card-gitlab" x-show="vis.gitlab && gitlabUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fab fa-gitlab card-icon" aria-hidden="true"></i><span class="card-title">GitLab</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.gitlab?'is-collapsed':''" @click="toggleCollapse('gitlab')" :aria-expanded="!collapsed.gitlab" aria-label="Toggle GitLab"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1082,7 +1103,7 @@
         </div>
 
         <!-- ── GitHub ─────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-github" x-show="vis.github && githubToken">
+        <div class="card" data-id="card-github" x-show="vis.github && githubToken" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fab fa-github card-icon" aria-hidden="true"></i><span class="card-title">GitHub</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.github?'is-collapsed':''" @click="toggleCollapse('github')" :aria-expanded="!collapsed.github" aria-label="Toggle GitHub"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1096,7 +1117,7 @@
         </div>
 
         <!-- ── Paperless-ngx ──────────────────────────────────────────────── -->
-        <div class="card" data-id="card-paperless" x-show="vis.paperless && paperlessUrl">
+        <div class="card" data-id="card-paperless" x-show="vis.paperless && paperlessUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-file-alt card-icon" aria-hidden="true"></i><span class="card-title">Paperless-ngx</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.paperless?'is-collapsed':''" @click="toggleCollapse('paperless')" :aria-expanded="!collapsed.paperless" aria-label="Toggle Paperless"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1110,7 +1131,7 @@
         </div>
 
         <!-- ── Vaultwarden ────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-vaultwarden" x-show="vis.vaultwarden && vaultwardenUrl">
+        <div class="card" data-id="card-vaultwarden" x-show="vis.vaultwarden && vaultwardenUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-lock card-icon" aria-hidden="true"></i><span class="card-title">Vaultwarden</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.vaultwarden?'is-collapsed':''" @click="toggleCollapse('vaultwarden')" :aria-expanded="!collapsed.vaultwarden" aria-label="Toggle Vaultwarden"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1123,7 +1144,7 @@
         </div>
 
         <!-- ── VPN ────────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-vpn" x-show="vis.vpn && vpn">
+        <div class="card" data-id="card-vpn" x-show="vis.vpn && vpn" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-shield-alt card-icon" aria-hidden="true"></i><span class="card-title">VPN</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.vpn?'is-collapsed':''" @click="toggleCollapse('vpn')" :aria-expanded="!collapsed.vpn" aria-label="Toggle VPN"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1137,7 +1158,7 @@
         </div>
 
         <!-- ── Cert Expiry ────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-certExpiry" x-show="vis.certExpiry && certExpiry && certExpiry.length > 0">
+        <div class="card" data-id="card-certExpiry" x-show="vis.certExpiry && certExpiry && certExpiry.length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-certificate card-icon" aria-hidden="true"></i><span class="card-title">Cert Expiry</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.certExpiry?'is-collapsed':''" @click="toggleCollapse('certExpiry')" :aria-expanded="!collapsed.certExpiry" aria-label="Toggle Cert Expiry"></button>
                 <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i></div>
@@ -1153,7 +1174,7 @@
         </div>
 
         <!-- ── Docker Updates ──────────────────────────────────────────────── -->
-        <div class="card" data-id="card-docker-updates" x-show="dockerUpdates && dockerUpdates.length > 0">
+        <div class="card" data-id="card-docker-updates" x-show="dockerUpdates && dockerUpdates.length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-box-open card-icon"></i><span class="card-title">Docker Updates</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.dockerUpdates?'is-collapsed':''" @click="toggleCollapse('dockerUpdates')"></button>
                 <i class="fas fa-grip-lines drag-handle"></i></div>
@@ -1169,7 +1190,7 @@
         </div>
 
         <!-- ── Device Presence ─────────────────────────────────────────────── -->
-        <div class="card" data-id="card-device-presence" x-show="devicePresence && devicePresence.length > 0">
+        <div class="card" data-id="card-device-presence" x-show="devicePresence && devicePresence.length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-mobile-alt card-icon"></i><span class="card-title">Device Presence</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.devicePresence?'is-collapsed':''" @click="toggleCollapse('devicePresence')"></button>
                 <i class="fas fa-grip-lines drag-handle"></i></div>
@@ -1184,8 +1205,26 @@
             </div>
         </div>
 
+        <!-- ── Camera Feeds ────────────────────────────────────────────────── -->
+        <div class="card" data-id="card-cameras" x-show="(cameraFeeds||[]).length > 0" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
+            <div class="card-hdr"><i class="fas fa-video card-icon"></i><span class="card-title">Camera Feeds</span>
+                <button class="collapse-btn fas fa-chevron-down" :class="collapsed.cameras?'is-collapsed':''" @click="toggleCollapse('cameras')"></button>
+                <i class="fas fa-grip-lines drag-handle"></i></div>
+            <div class="card-body" x-show="!collapsed.cameras">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">
+                    <template x-for="cam in cameraFeeds" :key="cam.url">
+                        <div style="text-align:center">
+                            <img :src="cam.url" :alt="cam.name" style="width:100%;border-radius:4px;background:#000"
+                                 onerror="this.style.display='none'" loading="lazy">
+                            <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px" x-text="cam.name"></div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
         <!-- ── Lidarr ──────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-lidarr" x-show="vis.lidarr && lidarrUrl">
+        <div class="card" data-id="card-lidarr" x-show="vis.lidarr && lidarrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-music card-icon"></i><span class="card-title">Lidarr</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.lidarr?'is-collapsed':''" @click="toggleCollapse('lidarr')"></button>
                 <i class="fas fa-grip-lines drag-handle"></i></div>
@@ -1199,7 +1238,7 @@
         </div>
 
         <!-- ── Readarr ─────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-readarr" x-show="vis.readarr && readarrUrl">
+        <div class="card" data-id="card-readarr" x-show="vis.readarr && readarrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-book card-icon"></i><span class="card-title">Readarr</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.readarr?'is-collapsed':''" @click="toggleCollapse('readarr')"></button>
                 <i class="fas fa-grip-lines drag-handle"></i></div>
@@ -1213,7 +1252,7 @@
         </div>
 
         <!-- ── Bazarr ──────────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-bazarr" x-show="vis.bazarr && bazarrUrl">
+        <div class="card" data-id="card-bazarr" x-show="vis.bazarr && bazarrUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr"><i class="fas fa-closed-captioning card-icon"></i><span class="card-title">Bazarr</span>
                 <button class="collapse-btn fas fa-chevron-down" :class="collapsed.bazarr?'is-collapsed':''" @click="toggleCollapse('bazarr')"></button>
                 <i class="fas fa-grip-lines drag-handle"></i></div>
@@ -1226,7 +1265,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-containers" x-show="vis.containers">
+        <div class="card" data-id="card-containers" x-show="vis.containers" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-boxes card-icon" aria-hidden="true"></i>
                 <span class="card-title">Containers</span>
@@ -1260,7 +1299,7 @@
         </div>
 
         <!-- ── Proxmox VE ──────────────────────────────────────────────────── -->
-        <div class="card" data-id="card-proxmox" x-show="vis.proxmox && proxmoxUrl">
+        <div class="card" data-id="card-proxmox" x-show="vis.proxmox && proxmoxUrl" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-server card-icon" aria-hidden="true"></i>
                 <span class="card-title">Proxmox VE</span>
@@ -1315,7 +1354,7 @@
             </div>
         </div>
 
-        <div class="card span-full" data-id="card-services" x-show="vis.services">
+        <div class="card span-full" data-id="card-services" x-show="vis.services" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-cogs card-icon" aria-hidden="true"></i>
                 <span class="card-title">Services</span>
@@ -1363,7 +1402,7 @@
             </div>
         </div>
 
-        <div class="card span-full" data-id="card-logs" x-show="vis.logs">
+        <div class="card span-full" data-id="card-logs" x-show="vis.logs" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-scroll card-icon" aria-hidden="true"></i>
                 <span class="card-title">System Logs</span>
@@ -1395,7 +1434,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-automations" x-show="vis.automations">
+        <div class="card" data-id="card-automations" x-show="vis.automations" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-robot card-icon" aria-hidden="true"></i>
                 <span class="card-title">Automation Deck</span>
@@ -1481,7 +1520,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-actions" x-show="vis.actions">
+        <div class="card" data-id="card-actions" x-show="vis.actions" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-terminal card-icon" aria-hidden="true"></i>
                 <span class="card-title">Quick Actions</span>
@@ -1676,7 +1715,7 @@
             </div>
         </div>
 
-        <div class="card" data-id="card-bookmarks" x-show="vis.bookmarks">
+        <div class="card" data-id="card-bookmarks" x-show="vis.bookmarks" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
             <div class="card-hdr">
                 <i class="fas fa-bookmark card-icon" aria-hidden="true"></i>
                 <span class="card-title">Homelab Links</span>
@@ -1702,7 +1741,7 @@
 
         <!-- ── Plugin Cards ──────────────────────────────────────────────── -->
         <template x-for="plug in plugins" :key="plug.id">
-            <div class="card" :data-id="'card-plugin-' + plug.id">
+            <div class="card" :data-id="'card-plugin-' + plug.id" @contextmenu="showContextMenu($event, $el.dataset.id?.replace('card-','') || '')">
                 <div class="card-hdr">
                     <i class="fas card-icon" :class="plug.icon || 'fa-puzzle-piece'" aria-hidden="true"></i>
                     <span class="card-title" x-text="plug.name"></span>
@@ -1834,15 +1873,15 @@
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th scope="col">Time</th>
-                        <th scope="col">User</th>
-                        <th scope="col">Action</th>
-                        <th scope="col">Details</th>
-                        <th scope="col">IP</th>
+                        <th @click="toggleAuditSort('time')" style="cursor:pointer">Time <i class="fas" :class="auditSortField==='time' ? (auditSortDir==='asc' ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'" style="opacity:.5"></i></th>
+                        <th @click="toggleAuditSort('username')" style="cursor:pointer">User <i class="fas" :class="auditSortField==='username' ? (auditSortDir==='asc' ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'" style="opacity:.5"></i></th>
+                        <th @click="toggleAuditSort('action')" style="cursor:pointer">Action</th>
+                        <th>Details</th>
+                        <th>IP</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="entry in auditLog" :key="entry.time + entry.action">
+                    <template x-for="entry in auditSorted" :key="entry.time + entry.action">
                         <tr>
                             <td x-text="new Date(entry.time*1000).toLocaleString()"></td>
                             <td x-text="entry.username"></td>
@@ -1854,8 +1893,13 @@
                 </tbody>
             </table>
         </div>
-        <div class="modal-footer">
-            <button class="btn btn-sm" @click="showAuditModal=false">Close</button>
+        <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center">
+            <button class="btn-sm" @click="exportAuditCsv()"><i class="fas fa-download"></i> Export CSV</button>
+            <div style="display:flex;gap:8px;align-items:center">
+                <button class="btn-sm" @click="auditPrevPage()" :disabled="auditPage <= 1"><i class="fas fa-chevron-left"></i></button>
+                <span style="font-size:.8rem" x-text="'Page ' + auditPage"></span>
+                <button class="btn-sm" @click="auditNextPage()"><i class="fas fa-chevron-right"></i></button>
+            </div>
         </div>
     </div>
 </div>

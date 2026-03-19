@@ -31,6 +31,11 @@ function actionsMixin() {
         historyChart: null,
         showAuditModal: false,
         auditLog: [],
+        auditPage: 1,
+        auditPageSize: 50,
+        auditTotal: 0,
+        auditSortField: 'time',
+        auditSortDir: 'desc',
         historyAnomalyEnabled: false,
 
         // ── SMART disk health ──────────────────────────────────────────────────
@@ -456,17 +461,69 @@ function actionsMixin() {
             this.fetchHistory();
         },
 
-        /** Fetch the audit log (admin only). */
-        async fetchAuditLog() {
+        /** Fetch the audit log (admin only) with pagination. */
+        async fetchAuditLog(page) {
+            if (page !== undefined) this.auditPage = page;
+            const offset = (this.auditPage - 1) * this.auditPageSize;
             try {
-                const res = await fetch('/api/audit?limit=100', {
-                    headers: { 'Authorization': 'Bearer ' + this._token() }
+                const res = await fetch(`/api/audit?limit=${this.auditPageSize}&offset=${offset}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
                 });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                this.auditLog = await res.json();
-            } catch (e) {
-                this.addToast('Failed to load audit log: ' + e.message, 'error');
+                if (!res.ok) return;
+                const data = await res.json();
+                this.auditLog = Array.isArray(data) ? data : [];
+            } catch { /* silent */ }
+        },
+
+        /** Return audit log sorted by the current sort field/direction. */
+        get auditSorted() {
+            const log = [...(this.auditLog || [])];
+            const field = this.auditSortField;
+            const dir = this.auditSortDir === 'asc' ? 1 : -1;
+            return log.sort((a, b) => {
+                const va = a[field] || '';
+                const vb = b[field] || '';
+                if (typeof va === 'number') return (va - vb) * dir;
+                return String(va).localeCompare(String(vb)) * dir;
+            });
+        },
+
+        /** Toggle sort direction or change sort field for the audit log. */
+        toggleAuditSort(field) {
+            if (this.auditSortField === field) {
+                this.auditSortDir = this.auditSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.auditSortField = field;
+                this.auditSortDir = 'desc';
             }
+        },
+
+        /** Export the current audit log data as a CSV file download. */
+        exportAuditCsv() {
+            const rows = this.auditLog || [];
+            const header = 'timestamp,username,action,details,ip';
+            const lines = rows.map(r => {
+                const ts = new Date((r.time || 0) * 1000).toISOString();
+                const details = (r.details || '').replace(/"/g, '""');
+                return `${ts},"${r.username}","${r.action}","${details}","${r.ip || ''}"`;
+            });
+            const csv = [header, ...lines].join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'noba-audit.csv'; a.click();
+            URL.revokeObjectURL(url);
+        },
+
+        /** Go to the next audit log page. */
+        auditNextPage() {
+            this.auditPage++;
+            this.fetchAuditLog();
+        },
+
+        /** Go to the previous audit log page. */
+        auditPrevPage() {
+            if (this.auditPage > 1) { this.auditPage--; this.fetchAuditLog(); }
         },
 
         /** Open the audit log modal. */

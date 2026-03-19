@@ -60,6 +60,18 @@ def _cleanup_loop() -> None:
             db.prune_history()
             db.prune_audit()
             db.prune_job_runs()
+        if _prune_counter == 6:  # Every ~30 minutes
+            try:
+                if os.path.exists(NOBA_YAML):
+                    import shutil
+                    bak = f"{NOBA_YAML}.auto.{int(time.time())}"
+                    shutil.copy2(NOBA_YAML, bak)
+                    # Keep only last 10 auto backups
+                    import glob as glob_mod
+                    for old in sorted(glob_mod.glob(f"{NOBA_YAML}.auto.*"))[:-10]:
+                        os.unlink(old)
+            except Exception as e:
+                logger.debug("Auto config backup failed: %s", e)
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -1508,6 +1520,77 @@ def api_keys_delete(key_id: str, request: Request, auth=Depends(_require_admin))
     return {"status": "ok"}
 
 
+# ── /api/admin/ssh-keys ───────────────────────────────────────────────────
+@app.get("/api/admin/ssh-keys")
+def api_ssh_keys_list(auth=Depends(_require_admin)):
+    """List authorized SSH keys."""
+    import pathlib
+    ak_path = pathlib.Path.home() / ".ssh" / "authorized_keys"
+    if not ak_path.exists():
+        return []
+    keys = []
+    for i, line in enumerate(ak_path.read_text().splitlines()):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 2)
+        keys.append({
+            "id": i,
+            "type": parts[0] if parts else "",
+            "comment": parts[2] if len(parts) > 2 else "",
+            "fingerprint": parts[1][:20] + "..." if len(parts) > 1 else "",
+        })
+    return keys
+
+
+@app.post("/api/admin/ssh-keys")
+async def api_ssh_keys_add(request: Request, auth=Depends(_require_admin)):
+    """Add a new SSH authorized key."""
+    import pathlib
+    username, _ = auth
+    body = await _read_body(request)
+    key = body.get("key", "").strip()
+    if not key or not key.startswith(("ssh-", "ecdsa-", "sk-")):
+        raise HTTPException(400, "Invalid SSH public key")
+    ak_path = pathlib.Path.home() / ".ssh" / "authorized_keys"
+    ak_path.parent.mkdir(mode=0o700, exist_ok=True)
+    with open(ak_path, "a") as f:
+        f.write(key + "\n")
+    ak_path.chmod(0o600)
+    db.audit_log("ssh_key_add", username, f"Added SSH key: {key[:30]}...", _client_ip(request))
+    return {"status": "ok"}
+
+
+@app.delete("/api/admin/ssh-keys/{key_id}")
+def api_ssh_keys_delete(key_id: int, request: Request, auth=Depends(_require_admin)):
+    """Remove an SSH authorized key by line index."""
+    import pathlib
+    username, _ = auth
+    ak_path = pathlib.Path.home() / ".ssh" / "authorized_keys"
+    if not ak_path.exists():
+        raise HTTPException(404, "No authorized_keys file")
+    lines = ak_path.read_text().splitlines()
+    real_idx = 0
+    new_lines = []
+    removed = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            new_lines.append(line)
+            continue
+        if real_idx == key_id:
+            removed = True
+            real_idx += 1
+            continue
+        new_lines.append(line)
+        real_idx += 1
+    if not removed:
+        raise HTTPException(404, "Key not found")
+    ak_path.write_text("\n".join(new_lines) + "\n")
+    db.audit_log("ssh_key_remove", username, f"Removed SSH key index {key_id}", _client_ip(request))
+    return {"status": "ok"}
+
+
 # ── /api/login ────────────────────────────────────────────────────────────────
 @app.post("/api/login")
 async def api_login(request: Request):
@@ -1948,6 +2031,28 @@ def api_bandwidth_report(request: Request, auth=Depends(_get_auth)):
     }
 
 
+@app.get("/api/reports/anomalies")
+def api_anomaly_report(request: Request, auth=Depends(_get_auth)):
+    """Generate anomaly detection summary for the past week."""
+    range_h = _int_param(request, "range", 168, 1, 8760)
+    metrics = ["cpu_percent", "mem_percent", "cpu_temp"]
+    results = {}
+    for metric in metrics:
+        points = db.get_history(metric, range_hours=range_h, resolution=3600, anomaly=True)
+        anomalies = [p for p in points if p.get("anomaly")]
+        if anomalies:
+            results[metric] = {
+                "count": len(anomalies),
+                "latest": anomalies[-1] if anomalies else None,
+                "values": [a["value"] for a in anomalies[-10:]],
+            }
+    return {
+        "range_hours": range_h,
+        "anomaly_count": sum(r["count"] for r in results.values()),
+        "metrics": results,
+    }
+
+
 @app.get("/api/grafana/dashboard")
 def api_grafana_template(auth=Depends(_get_auth)):
     """Return a Grafana dashboard JSON template for NOBA metrics."""
@@ -2112,6 +2217,18 @@ def api_game_servers(auth=Depends(_get_auth)):
             result["name"] = name
             results.append(result)
     return results
+
+
+# ── /api/cameras ──────────────────────────────────────────────────────────
+@app.get("/api/cameras")
+def api_cameras(auth=Depends(_get_auth)):
+    """Return configured camera feed URLs."""
+    cfg = read_yaml_settings()
+    feeds = cfg.get("cameraFeeds", [])
+    return [{"name": f.get("name", f"Camera {i+1}"),
+             "url": f.get("url", ""),
+             "type": f.get("type", "snapshot")}
+            for i, f in enumerate(feeds) if f.get("url")]
 
 
 @app.websocket("/api/terminal")
