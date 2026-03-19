@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date, timedelta
 
 import httpx
 
@@ -339,4 +340,636 @@ def get_speedtest(url: str):
             "status": "online",
         }
     except (httpx.HTTPError, KeyError, ValueError, TypeError):
+        return None
+
+
+# ── Tautulli ─────────────────────────────────────────────────────────────────
+def get_tautulli(url: str, key: str) -> dict | None:
+    if not url or not key:
+        return None
+    try:
+        base = url.rstrip("/")
+        activity = _http_get(
+            f"{base}/api/v2?apikey={key}&cmd=get_activity", timeout=4,
+        )
+        resp = activity.get("response", {}).get("data", {})
+        streams = resp.get("stream_count", 0)
+        direct_play = resp.get("stream_count_direct_play", 0)
+        transcode = resp.get("stream_count_transcode", 0)
+
+        top_users_data = _http_get(
+            f"{base}/api/v2?apikey={key}&cmd=get_home_stats&stat_id=top_users&stats_count=5",
+            timeout=4,
+        )
+        top_resp = top_users_data.get("response", {}).get("data", [])
+        top_users = []
+        # top_resp may be a list of stat groups or a flat list
+        rows = top_resp if isinstance(top_resp, list) else []
+        for item in rows:
+            if isinstance(item, dict) and "rows" in item:
+                # stat group format
+                for row in item["rows"]:
+                    top_users.append({
+                        "user": row.get("friendly_name", row.get("user", "?")),
+                        "total_plays": int(row.get("total_plays", 0)),
+                    })
+                break
+            elif isinstance(item, dict) and "friendly_name" in item:
+                top_users.append({
+                    "user": item.get("friendly_name", "?"),
+                    "total_plays": int(item.get("total_plays", 0)),
+                })
+
+        return {
+            "streams": int(streams),
+            "stream_count_direct_play": int(direct_play),
+            "stream_count_transcode": int(transcode),
+            "top_users": top_users,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Overseerr ────────────────────────────────────────────────────────────────
+def get_overseerr(url: str, key: str) -> dict | None:
+    if not url or not key:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"X-Api-Key": key}
+        data = _http_get(f"{base}/api/v1/request/count", hdrs)
+        return {
+            "pending": data.get("pending", 0),
+            "approved": data.get("approved", 0),
+            "available": data.get("available", 0),
+            "total": data.get("total", 0),
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Prowlarr ─────────────────────────────────────────────────────────────────
+def get_prowlarr(url: str, key: str) -> dict | None:
+    if not url or not key:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"X-Api-Key": key}
+        data = _http_get(f"{base}/api/v1/indexer", hdrs)
+        return {
+            "indexer_count": len(data) if isinstance(data, list) else 0,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Servarr Extended (Radarr / Sonarr — missing + disk) ──────────────────────
+def get_servarr_extended(url: str, key: str, service: str = "radarr") -> dict | None:
+    if not url or not key:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"X-Api-Key": key, "Accept": "application/json"}
+
+        queue = _http_get(f"{base}/api/v3/queue", hdrs, timeout=3)
+        queue_count = queue.get("totalRecords", 0)
+
+        missing_data = _http_get(
+            f"{base}/api/v3/wanted/missing?pageSize=1", hdrs, timeout=3,
+        )
+        missing = missing_data.get("totalRecords", 0)
+
+        rootfolders = _http_get(f"{base}/api/v3/rootfolder", hdrs, timeout=3)
+        total_space = 0.0
+        free_space = 0.0
+        for rf in (rootfolders if isinstance(rootfolders, list) else []):
+            total_space += rf.get("totalSpace", 0)
+            free_space += rf.get("freeSpace", 0)
+
+        return {
+            "queue_count": queue_count,
+            "missing": missing,
+            "total_space_gb": round(total_space / (1024 ** 3), 1),
+            "free_space_gb": round(free_space / (1024 ** 3), 1),
+            "status": "online",
+            "service": service,
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Servarr Calendar (Radarr / Sonarr) ───────────────────────────────────────
+def get_servarr_calendar(url: str, key: str, days: int = 7) -> list | None:
+    if not url or not key:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"X-Api-Key": key, "Accept": "application/json"}
+        today = date.today().isoformat()
+        end = (date.today() + timedelta(days=days)).isoformat()
+        data = _http_get(f"{base}/api/v3/calendar?start={today}&end={end}", hdrs, timeout=4)
+        items = []
+        for entry in (data if isinstance(data, list) else []):
+            title = entry.get("title", "")
+            # Sonarr entries have 'series' and 'episodeFile'; Radarr have 'title'
+            if "series" in entry:
+                title = entry.get("series", {}).get("title", title)
+                item_type = "episode"
+                air_date = entry.get("airDateUtc", entry.get("airDate", ""))
+            else:
+                item_type = "movie"
+                air_date = entry.get("inCinemas", entry.get("digitalRelease", entry.get("physicalRelease", "")))
+            items.append({"title": title, "date": air_date, "type": item_type})
+        return items
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Nextcloud ────────────────────────────────────────────────────────────────
+def get_nextcloud(url: str, user: str, password: str) -> dict | None:
+    if not url or not user:
+        return None
+    try:
+        import base64
+        base = url.rstrip("/")
+        cred = base64.b64encode(f"{user}:{password}".encode()).decode()
+        hdrs = {
+            "Authorization": f"Basic {cred}",
+            "OCS-APIREQUEST": "true",
+        }
+        data = _http_get(
+            f"{base}/ocs/v2.php/apps/serverinfo/api/v1/info?format=json", hdrs,
+        )
+        ocs = data.get("ocs", {}).get("data", {})
+        nc = ocs.get("nextcloud", {})
+        storage = nc.get("storage", {})
+        system = nc.get("system", {})
+        active = ocs.get("activeUsers", {})
+        return {
+            "active_users": active.get("last5minutes", 0),
+            "storage_total_gb": round(system.get("freespacealiased", system.get("mem_total", 0)) / (1024 ** 3), 1) if system.get("freespacealiased") else 0.0,
+            "storage_free_gb": round(system.get("freespace", 0) / (1024 ** 3), 1),
+            "num_files": storage.get("num_files", 0),
+            "version": system.get("version", ""),
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Traefik ──────────────────────────────────────────────────────────────────
+def get_traefik(url: str) -> dict | None:
+    if not url:
+        return None
+    try:
+        base = url.rstrip("/")
+        routers = _http_get(f"{base}/api/http/routers")
+        services = _http_get(f"{base}/api/http/services")
+        router_list = routers if isinstance(routers, list) else []
+        service_list = services if isinstance(services, list) else []
+        errors = sum(
+            1 for s in service_list
+            if s.get("status") == "error" or s.get("serverStatus", {}) != {}
+            and any(v == "DOWN" for v in s.get("serverStatus", {}).values())
+        )
+        return {
+            "routers": len(router_list),
+            "services": len(service_list),
+            "errors": errors,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Nginx Proxy Manager ─────────────────────────────────────────────────────
+def get_npm(url: str, token: str) -> dict | None:
+    if not url or not token:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"Authorization": f"Bearer {token}"}
+        data = _http_get(f"{base}/api/nginx/proxy-hosts", hdrs)
+        return {
+            "proxy_hosts": len(data) if isinstance(data, list) else 0,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Authentik ────────────────────────────────────────────────────────────────
+def get_authentik(url: str, token: str) -> dict | None:
+    if not url or not token:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"Authorization": f"Bearer {token}"}
+        users_data = _http_get(f"{base}/api/v3/core/users/?page_size=1", hdrs)
+        user_count = users_data.get("pagination", {}).get("count", 0)
+        events_data = _http_get(
+            f"{base}/api/v3/events/events/?action=login_failed&ordering=-created&page_size=10",
+            hdrs,
+        )
+        failed_logins = events_data.get("pagination", {}).get("count", 0)
+        return {
+            "users": user_count,
+            "failed_logins": failed_logins,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Cloudflare ───────────────────────────────────────────────────────────────
+def get_cloudflare(token: str, zone_id: str) -> dict | None:
+    if not token or not zone_id:
+        return None
+    try:
+        hdrs = {"Authorization": f"Bearer {token}"}
+        data = _http_get(
+            f"https://api.cloudflare.com/client/v4/zones/{zone_id}/analytics/dashboard?since=-1440",
+            hdrs, timeout=6,
+        )
+        totals = data.get("result", {}).get("totals", {})
+        requests = totals.get("requests", {}).get("all", 0)
+        threats = totals.get("threats", {}).get("all", 0)
+        bandwidth = totals.get("bandwidth", {}).get("all", 0)
+        cached = totals.get("bandwidth", {}).get("cached", 0)
+        cache_ratio = round(cached / bandwidth * 100, 1) if bandwidth else 0.0
+        return {
+            "requests": requests,
+            "threats": threats,
+            "bandwidth_gb": round(bandwidth / (1024 ** 3), 2),
+            "cache_hit_ratio": cache_ratio,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── OpenMediaVault ───────────────────────────────────────────────────────────
+def get_omv(url: str, user: str, password: str) -> dict | None:
+    if not url or not user:
+        return None
+    try:
+        base = url.rstrip("/")
+        with httpx.Client(timeout=6, follow_redirects=True) as omv_client:
+            # Authenticate via JSON-RPC
+            login_resp = omv_client.post(
+                f"{base}/rpc.php",
+                json={
+                    "service": "Session",
+                    "method": "login",
+                    "params": {"username": user, "password": password},
+                },
+            )
+            login_resp.raise_for_status()
+
+            # Fetch filesystems
+            fs_resp = omv_client.post(
+                f"{base}/rpc.php",
+                json={
+                    "service": "FileSystemMgmt",
+                    "method": "enumerateFileSystems",
+                    "params": {},
+                },
+            )
+            fs_resp.raise_for_status()
+            fs_data = fs_resp.json()
+
+        filesystems = []
+        items = fs_data.get("response", fs_data) if isinstance(fs_data, dict) else fs_data
+        if isinstance(items, list):
+            for fs in items:
+                filesystems.append({
+                    "device": fs.get("devicefile", ""),
+                    "label": fs.get("label", fs.get("devicefile", "")),
+                    "percent": float(fs.get("percentage", 0)),
+                })
+        return {"filesystems": filesystems, "status": "online"}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── XCP-ng ───────────────────────────────────────────────────────────────────
+def get_xcpng(url: str, user: str, password: str) -> dict | None:
+    if not url or not user:
+        return None
+    try:
+        base = url.rstrip("/")
+        # Login
+        login_payload = {
+            "jsonrpc": "2.0", "method": "session.login_with_password",
+            "params": [user, password], "id": 1,
+        }
+        r = _client.post(f"{base}/jsonrpc", json=login_payload, timeout=6)
+        r.raise_for_status()
+        session_id = r.json().get("result", "")
+
+        # Get all VM records
+        vm_payload = {
+            "jsonrpc": "2.0", "method": "VM.get_all_records",
+            "params": [session_id], "id": 2,
+        }
+        r2 = _client.post(f"{base}/jsonrpc", json=vm_payload, timeout=6)
+        r2.raise_for_status()
+        vms = r2.json().get("result", {})
+
+        # Filter out control domains and templates
+        real_vms = {
+            k: v for k, v in vms.items()
+            if not v.get("is_control_domain", False) and not v.get("is_a_template", False)
+        }
+        running = sum(
+            1 for v in real_vms.values()
+            if v.get("power_state") == "Running"
+        )
+        return {"vms": len(real_vms), "running_vms": running, "status": "online"}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Homebridge ───────────────────────────────────────────────────────────────
+def get_homebridge(url: str, user: str, password: str) -> dict | None:
+    if not url or not user:
+        return None
+    try:
+        base = url.rstrip("/")
+        with httpx.Client(timeout=4, follow_redirects=True) as hb_client:
+            login_r = hb_client.post(
+                f"{base}/api/auth/login",
+                json={"username": user, "password": password},
+            )
+            login_r.raise_for_status()
+            token = login_r.json().get("access_token", "")
+            hdrs = {"Authorization": f"Bearer {token}"}
+            acc_r = hb_client.get(f"{base}/api/accessories", headers=hdrs)
+            acc_r.raise_for_status()
+            accessories = acc_r.json()
+
+        acc_list = accessories if isinstance(accessories, list) else []
+        battery_devices = []
+        for acc in acc_list:
+            svc_chars = acc.get("serviceCharacteristics", acc.get("values", {}))
+            # Look for battery level in characteristics
+            if isinstance(svc_chars, list):
+                for ch in svc_chars:
+                    if ch.get("type") == "BatteryLevel" or ch.get("description") == "Battery Level":
+                        battery_devices.append({
+                            "name": acc.get("serviceName", acc.get("name", "?")),
+                            "battery": int(ch.get("value", 0)),
+                        })
+                        break
+        return {
+            "accessories": len(acc_list),
+            "battery_devices": battery_devices,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Zigbee2MQTT ──────────────────────────────────────────────────────────────
+def get_z2m(url: str) -> dict | None:
+    if not url:
+        return None
+    try:
+        base = url.rstrip("/")
+        devices = _http_get(f"{base}/api/devices")
+        dev_list = devices if isinstance(devices, list) else []
+        offline = sum(
+            1 for d in dev_list
+            if d.get("availability", {}).get("state") == "offline"
+            or d.get("interview_completed") is False
+        )
+        low_battery = []
+        for d in dev_list:
+            battery = d.get("battery")
+            if battery is not None and int(battery) < 20:
+                low_battery.append({
+                    "name": d.get("friendly_name", d.get("ieee_address", "?")),
+                    "battery": int(battery),
+                })
+        return {
+            "devices": len(dev_list),
+            "offline": offline,
+            "low_battery": low_battery,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── ESPHome ──────────────────────────────────────────────────────────────────
+def get_esphome(url: str) -> dict | None:
+    if not url:
+        return None
+    try:
+        base = url.rstrip("/")
+        data = _http_get(f"{base}/devices")
+        dev_list = data if isinstance(data, list) else []
+        online = sum(
+            1 for d in dev_list
+            if d.get("status") == "ONLINE" or d.get("connected") is True
+        )
+        return {
+            "nodes": len(dev_list),
+            "online": online,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── UniFi Protect ────────────────────────────────────────────────────────────
+def get_unifi_protect(url: str, user: str, password: str) -> dict | None:
+    if not url or not user:
+        return None
+    try:
+        base = url.rstrip("/")
+        with httpx.Client(timeout=6, verify=False, follow_redirects=True) as up_client:
+            login_r = up_client.post(
+                f"{base}/api/auth/login",
+                json={"username": user, "password": password},
+            )
+            login_r.raise_for_status()
+            cam_r = up_client.get(f"{base}/proxy/protect/api/cameras")
+            cam_r.raise_for_status()
+            cameras = cam_r.json()
+
+        cam_list = cameras if isinstance(cameras, list) else []
+        recording = sum(
+            1 for c in cam_list
+            if c.get("isRecording") or c.get("recordingSettings", {}).get("mode") != "never"
+        )
+        return {
+            "cameras": len(cam_list),
+            "recording": recording,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── PiKVM ────────────────────────────────────────────────────────────────────
+def get_pikvm(url: str, user: str, password: str) -> dict | None:
+    if not url:
+        return None
+    try:
+        import base64
+        base = url.rstrip("/")
+        cred = base64.b64encode(f"{user}:{password}".encode()).decode()
+        hdrs = {"Authorization": f"Basic {cred}"}
+        _http_get(f"{base}/api/info", hdrs)
+        return {"online": True, "status": "online"}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Kubernetes ───────────────────────────────────────────────────────────────
+def get_k8s(url: str, token: str) -> dict | None:
+    if not url or not token:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"Authorization": f"Bearer {token}"}
+        r = httpx.get(f"{base}/api/v1/pods", headers=hdrs, timeout=6, verify=False)
+        r.raise_for_status()
+        data = r.json()
+        pods = data.get("items", [])
+        running = sum(
+            1 for p in pods
+            if p.get("status", {}).get("phase") == "Running"
+        )
+        namespaces = len({
+            p.get("metadata", {}).get("namespace", "default") for p in pods
+        })
+        return {
+            "pods": len(pods),
+            "running": running,
+            "namespaces": namespaces,
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Gitea ────────────────────────────────────────────────────────────────────
+def get_gitea(url: str, token: str) -> dict | None:
+    if not url or not token:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"Authorization": f"token {token}"}
+        # Use a raw request to get the x-total-count header
+        r = _client.get(
+            f"{base}/api/v1/repos/search?limit=1", headers=hdrs, timeout=4,
+        )
+        r.raise_for_status()
+        total = int(r.headers.get("x-total-count", 0))
+        if not total:
+            body = r.json()
+            if isinstance(body, dict):
+                total = len(body.get("data", []))
+            elif isinstance(body, list):
+                total = len(body)
+
+        return {"repos": total, "status": "online"}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── GitLab ───────────────────────────────────────────────────────────────────
+def get_gitlab(url: str, token: str) -> dict | None:
+    if not url or not token:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"PRIVATE-TOKEN": token}
+        r = _client.get(
+            f"{base}/api/v4/projects?per_page=1", headers=hdrs, timeout=4,
+        )
+        r.raise_for_status()
+        total = int(r.headers.get("x-total", 0))
+        return {"projects": total, "status": "online"}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── GitHub ───────────────────────────────────────────────────────────────────
+def get_github(token: str) -> dict | None:
+    if not token:
+        return None
+    try:
+        hdrs = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        r = _client.get(
+            "https://api.github.com/user/repos?per_page=5&sort=updated",
+            headers=hdrs, timeout=4,
+        )
+        r.raise_for_status()
+        repos = r.json()
+        total = len(repos) if isinstance(repos, list) else 0
+        return {"repos": total, "status": "online"}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Paperless-ngx ────────────────────────────────────────────────────────────
+def get_paperless(url: str, token: str) -> dict | None:
+    if not url or not token:
+        return None
+    try:
+        base = url.rstrip("/")
+        hdrs = {"Authorization": f"Token {token}"}
+        data = _http_get(f"{base}/api/documents/?page_size=1", hdrs)
+        return {
+            "documents": data.get("count", 0),
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Vaultwarden ──────────────────────────────────────────────────────────────
+def get_vaultwarden(url: str, admin_token: str) -> dict | None:
+    if not url or not admin_token:
+        return None
+    try:
+        base = url.rstrip("/")
+        r = _client.get(
+            f"{base}/admin/users/overview",
+            headers={"Cookie": f"VAULTWARDEN_ADMIN={admin_token}"},
+            timeout=4,
+        )
+        r.raise_for_status()
+        return {"status": "online"}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+# ── Weather (OpenWeatherMap) ─────────────────────────────────────────────────
+def get_weather(api_key: str, city: str) -> dict | None:
+    if not api_key or not city:
+        return None
+    try:
+        data = _http_get(
+            f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric",
+            timeout=4,
+        )
+        weather = data.get("weather", [{}])[0] if data.get("weather") else {}
+        main = data.get("main", {})
+        return {
+            "temp": float(main.get("temp", 0)),
+            "feels_like": float(main.get("feels_like", 0)),
+            "humidity": int(main.get("humidity", 0)),
+            "description": weather.get("description", ""),
+            "icon": weather.get("icon", ""),
+            "city": data.get("name", city),
+            "status": "online",
+        }
+    except (httpx.HTTPError, KeyError, ValueError):
         return None

@@ -38,6 +38,43 @@ function dashboard() {
         'pushoverEnabled', 'pushoverAppToken', 'pushoverUserKey',
         'gotifyEnabled', 'gotifyUrl', 'gotifyAppToken',
         'alertRules',
+        // Round 1: Automation
+        'maintenanceWindows', 'fsTriggers',
+        // Round 2: Monitoring
+        'weatherApiKey', 'weatherCity', 'certHosts', 'domainList',
+        'energySensors', 'devicePresenceIps',
+        // Round 3: Media
+        'tautulliUrl', 'tautulliKey',
+        'overseerrUrl', 'overseerrKey',
+        'prowlarrUrl', 'prowlarrKey',
+        'lidarrUrl', 'lidarrKey',
+        'readarrUrl', 'readarrKey',
+        'bazarrUrl', 'bazarrKey',
+        'nextcloudUrl', 'nextcloudUser', 'nextcloudPass',
+        // Round 4: Infrastructure
+        'traefikUrl',
+        'npmUrl', 'npmToken',
+        'authentikUrl', 'authentikToken',
+        'cloudflareToken', 'cloudflareZoneId',
+        'omvUrl', 'omvUser', 'omvPass',
+        'xcpngUrl', 'xcpngUser', 'xcpngPass',
+        // Round 5: IoT
+        'homebridgeUrl', 'homebridgeUser', 'homebridgePass',
+        'z2mUrl', 'esphomeUrl',
+        'unifiProtectUrl', 'unifiProtectUser', 'unifiProtectPass',
+        'pikvmUrl', 'pikvmUser', 'pikvmPass',
+        'hassEventTriggers', 'hassSensors', 'cameraFeeds',
+        // Round 6: Security
+        'oidcProviderUrl', 'oidcClientId', 'oidcClientSecret',
+        'ldapUrl', 'ldapBaseDn', 'ldapBindDn', 'ldapBindPassword',
+        'ipWhitelist', 'auditRetentionDays',
+        // Round 9: DevOps
+        'k8sUrl', 'k8sToken',
+        'giteaUrl', 'giteaToken',
+        'gitlabUrl', 'gitlabToken', 'githubToken',
+        'paperlessUrl', 'paperlessToken',
+        'vaultwardenUrl', 'vaultwardenToken',
+        'wolDevices', 'gameServers', 'composeProjects',
     ];
 
     /** Keys that live in localStorage as a local mirror.
@@ -70,6 +107,28 @@ function dashboard() {
         unifiUser:     'noba-unifi-user',
         unifiSite:     'noba-unifi-site',
         speedtestUrl:  'noba-speedtest-url',
+        tautulliUrl:   'noba-tautulli-url',
+        overseerrUrl:  'noba-overseerr-url',
+        prowlarrUrl:   'noba-prowlarr-url',
+        lidarrUrl:     'noba-lidarr-url',
+        readarrUrl:    'noba-readarr-url',
+        bazarrUrl:     'noba-bazarr-url',
+        nextcloudUrl:  'noba-nextcloud-url',
+        traefikUrl:    'noba-traefik-url',
+        npmUrl:        'noba-npm-url',
+        authentikUrl:  'noba-authentik-url',
+        omvUrl:        'noba-omv-url',
+        xcpngUrl:      'noba-xcpng-url',
+        homebridgeUrl: 'noba-homebridge-url',
+        z2mUrl:        'noba-z2m-url',
+        esphomeUrl:    'noba-esphome-url',
+        unifiProtectUrl: 'noba-unifi-protect-url',
+        pikvmUrl:      'noba-pikvm-url',
+        k8sUrl:        'noba-k8s-url',
+        giteaUrl:      'noba-gitea-url',
+        gitlabUrl:     'noba-gitlab-url',
+        paperlessUrl:  'noba-paperless-url',
+        vaultwardenUrl:'noba-vaultwarden-url',
     };
 
     // One-time migration: remove any legacy credential keys left in localStorage.
@@ -92,6 +151,12 @@ function dashboard() {
         'truenas', 'radarr', 'sonarr', 'qbit', 'proxmox', 'plugins',
         'adguard', 'jellyfin', 'hass', 'unifi', 'speedtest',
         'diskIo', 'netInterfaces', 'topIo',
+        'tautulli', 'overseerr', 'prowlarr', 'radarrExtended', 'sonarrExtended',
+        'radarrCalendar', 'sonarrCalendar', 'nextcloud',
+        'traefik', 'npm', 'authentik', 'cloudflare', 'omv', 'xcpng',
+        'homebridge', 'z2m', 'esphome', 'unifiProtect', 'pikvm',
+        'k8s', 'gitea', 'gitlab', 'github', 'paperless', 'vaultwarden',
+        'weather', 'certExpiry', 'domainExpiry', 'vpn',
     ]);
 
     const DEF_VIS = {
@@ -100,6 +165,14 @@ function dashboard() {
         services: true, logs: true, actions: true, bookmarks: true, plex: true,
         truenas: true, downloads: true, automations: true, proxmox: true,
         adguard: true, jellyfin: true, hass: true, unifi: true, speedtest: true, diskIo: true,
+        tautulli: true, overseerr: true, prowlarr: true,
+        nextcloud: true, traefik: true, npm: true, authentik: true,
+        cloudflare: true, omv: true, xcpng: true,
+        homebridge: true, z2m: true, esphome: true,
+        unifiProtect: true, pikvm: true,
+        k8s: true, gitea: true, gitlab: true, github: true,
+        paperless: true, vaultwarden: true,
+        weather: true, certExpiry: true, vpn: true,
     };
 
     const DEF_BOOKMARKS = 'Router|http://192.168.1.1|fa-network-wired, Pi-hole|http://pi.hole/admin|fa-shield-alt';
@@ -191,6 +264,80 @@ function dashboard() {
         cloudRemotes: [], selectedCloudRemote: '', cloudRemotesLoading: false,
         rcloneAvailable: null, rcloneVersion: '', cloudTestResults: {},
 
+        // ── Round 1: Automation ──────────────────────────────────────────────
+        maintenanceWindows: [], fsTriggers: [],
+
+        // ── Round 2: Monitoring ──────────────────────────────────────────────
+        weatherApiKey: '', weatherCity: '', certHosts: '', domainList: '',
+        energySensors: '', devicePresenceIps: '',
+
+        // ── Round 3: Media integrations ──────────────────────────────────────
+        tautulliUrl:  localStorage.getItem('noba-tautulli-url')  || '',
+        tautulliKey:  '',   // sensitive
+        overseerrUrl: localStorage.getItem('noba-overseerr-url') || '',
+        overseerrKey: '',   // sensitive
+        prowlarrUrl:  localStorage.getItem('noba-prowlarr-url')  || '',
+        prowlarrKey:  '',   // sensitive
+        lidarrUrl:    localStorage.getItem('noba-lidarr-url')    || '',
+        lidarrKey:    '',   // sensitive
+        readarrUrl:   localStorage.getItem('noba-readarr-url')   || '',
+        readarrKey:   '',   // sensitive
+        bazarrUrl:    localStorage.getItem('noba-bazarr-url')    || '',
+        bazarrKey:    '',   // sensitive
+        nextcloudUrl:  localStorage.getItem('noba-nextcloud-url') || '',
+        nextcloudUser: '',
+        nextcloudPass: '',  // sensitive
+
+        // ── Round 4: Infrastructure ──────────────────────────────────────────
+        traefikUrl:    localStorage.getItem('noba-traefik-url')    || '',
+        npmUrl:        localStorage.getItem('noba-npm-url')        || '',
+        npmToken:      '',  // sensitive
+        authentikUrl:  localStorage.getItem('noba-authentik-url')  || '',
+        authentikToken:'',  // sensitive
+        cloudflareToken: '', cloudflareZoneId: '',  // sensitive
+        omvUrl:        localStorage.getItem('noba-omv-url')        || '',
+        omvUser:       '',
+        omvPass:       '',  // sensitive
+        xcpngUrl:      localStorage.getItem('noba-xcpng-url')      || '',
+        xcpngUser:     '',
+        xcpngPass:     '',  // sensitive
+
+        // ── Round 5: IoT ─────────────────────────────────────────────────────
+        homebridgeUrl:  localStorage.getItem('noba-homebridge-url')  || '',
+        homebridgeUser: '',
+        homebridgePass: '',  // sensitive
+        z2mUrl:         localStorage.getItem('noba-z2m-url')         || '',
+        esphomeUrl:     localStorage.getItem('noba-esphome-url')     || '',
+        unifiProtectUrl:  localStorage.getItem('noba-unifi-protect-url') || '',
+        unifiProtectUser: '',
+        unifiProtectPass: '',  // sensitive
+        pikvmUrl:       localStorage.getItem('noba-pikvm-url')       || '',
+        pikvmUser:      '',
+        pikvmPass:      '',  // sensitive
+        hassEventTriggers: [], hassSensors: '', cameraFeeds: [],
+
+        // ── Round 6: Security ────────────────────────────────────────────────
+        oidcProviderUrl: '', oidcClientId: '', oidcClientSecret: '',
+        ldapUrl: '', ldapBaseDn: '', ldapBindDn: '', ldapBindPassword: '',
+        ipWhitelist: '', auditRetentionDays: 90,
+
+        // ── Round 7: Notification center ─────────────────────────────────────
+        notifCenter: false, notifications: [], unreadCount: 0,
+
+        // ── Round 9: DevOps ──────────────────────────────────────────────────
+        wolDevices: [], gameServers: [], composeProjects: [],
+        k8sUrl:          localStorage.getItem('noba-k8s-url')          || '',
+        k8sToken:        '',  // sensitive
+        giteaUrl:        localStorage.getItem('noba-gitea-url')        || '',
+        giteaToken:      '',  // sensitive
+        gitlabUrl:       localStorage.getItem('noba-gitlab-url')       || '',
+        gitlabToken:     '',  // sensitive
+        githubToken:     '',  // sensitive
+        paperlessUrl:    localStorage.getItem('noba-paperless-url')    || '',
+        paperlessToken:  '',  // sensitive
+        vaultwardenUrl:  localStorage.getItem('noba-vaultwarden-url')  || '',
+        vaultwardenToken:'',  // sensitive
+
         // ── Live data ──────────────────────────────────────────────────────────
         timestamp: '--:--', uptime: '--', loadavg: '--', memory: '--',
         hostname: '--', defaultIp: '--',
@@ -205,6 +352,16 @@ function dashboard() {
         proxmox: null, plugins: [],
         adguard: null, jellyfin: null, hass: null, unifi: null, speedtest: null,
         diskIo: [], netInterfaces: [], topIo: [],
+        tautulli: null, overseerr: null, prowlarr: null,
+        radarrExtended: null, sonarrExtended: null,
+        radarrCalendar: [], sonarrCalendar: [],
+        nextcloud: null, traefik: null, npm: null, authentik: null,
+        cloudflare: null, omv: null, xcpng: null,
+        homebridge: null, z2m: null, esphome: null,
+        unifiProtect: null, pikvm: null,
+        k8s: null, gitea: null, gitlab: null, github: null,
+        paperless: null, vaultwarden: null,
+        weather: null, certExpiry: [], domainExpiry: [], vpn: null,
 
         // ── App state ──────────────────────────────────────────────────────────
         showSettings: false, refreshing: false,
@@ -316,6 +473,8 @@ function dashboard() {
                 this.fetchAutoStats(),
             ]);
 
+            this.fetchNotifications();
+
             this.startJobNotifPoller();
 
             if (this.userRole === 'admin') await this.fetchUsers();
@@ -399,6 +558,25 @@ function dashboard() {
                     this.showShortcutsModal = !this.showShortcutsModal;
                     return;
                 }
+                if (e.key === 'n' && !this.showSettings && !this.showModal) {
+                    this.toggleNotifCenter();
+                    return;
+                }
+                if (e.key === 'h' && !this.showSettings && !this.showModal && this.authenticated) {
+                    this.showHistoryModal = true;
+                    return;
+                }
+                if (e.key === 'a' && !this.showSettings && !this.showModal && this.userRole === 'admin') {
+                    this.showAuditModal = true;
+                    this.fetchAuditLog();
+                    return;
+                }
+                if (e.key === '/' && !this.showSettings && !this.showModal) {
+                    e.preventDefault();
+                    const el = document.querySelector('.svc-filter');
+                    if (el) el.focus();
+                    return;
+                }
                 if (e.key === 's' && !this.showSettings && !this.showModal) {
                     this.showSettings = true;
                 } else if (e.key === 'r' && !this.showSettings && !this.showModal && this.authenticated) {
@@ -415,6 +593,7 @@ function dashboard() {
                     this.showAutoModal = false;
                     this.showRunHistoryModal = false;
                     this.showRunDetailModal = false;
+                    this.notifCenter = false;
                 }
             };
             document.addEventListener('keydown', this._keydownHandler);
@@ -474,6 +653,12 @@ function dashboard() {
 
         toggleCollapse(card) {
             this.collapsed[card] = !this.collapsed[card];
+            localStorage.setItem('noba-collapsed', JSON.stringify(this.collapsed));
+        },
+
+        collapseAll(state) {
+            const cards = Object.keys(this.vis);
+            for (const c of cards) this.collapsed[c] = state;
             localStorage.setItem('noba-collapsed', JSON.stringify(this.collapsed));
         },
 
@@ -803,6 +988,42 @@ function dashboard() {
             } finally {
                 this.notifTesting = false;
             }
+        },
+
+        // ── 6. Notification Center ─────────────────────────────────────────────
+
+        async toggleNotifCenter() {
+            this.notifCenter = !this.notifCenter;
+            if (this.notifCenter) await this.fetchNotifications();
+        },
+
+        async fetchNotifications() {
+            if (!this.authenticated) return;
+            try {
+                const res = await fetch('/api/notifications?limit=50', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) return;
+                const d = await res.json();
+                this.notifications = d.notifications || [];
+                this.unreadCount = d.unread_count || 0;
+            } catch { /* silent */ }
+        },
+
+        async markNotifRead(id) {
+            await fetch(`/api/notifications/${id}/read`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + this._token() },
+            });
+            this.fetchNotifications();
+        },
+
+        async markAllNotifsRead() {
+            await fetch('/api/notifications/read-all', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + this._token() },
+            });
+            this.fetchNotifications();
         },
 
     };

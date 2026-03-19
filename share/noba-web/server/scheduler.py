@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -62,6 +63,79 @@ def _match_field(field: str, val: int, lo: int, hi: int) -> bool:
     return False
 
 
+class FSTriggerWatcher:
+    """Watches directories for changes and triggers automations."""
+
+    def __init__(self) -> None:
+        self._shutdown = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._watches: dict[str, dict] = {}  # path -> {mtime: float, auto_id: str}
+
+    def start(self) -> None:
+        from .yaml_config import read_yaml_settings
+        cfg = read_yaml_settings()
+        triggers = cfg.get("fsTriggers", [])
+        if not triggers:
+            return
+        for t in triggers:
+            path = t.get("path", "")
+            auto_id = t.get("automation_id", "")
+            if path and auto_id and os.path.exists(path):
+                try:
+                    self._watches[path] = {"mtime": os.path.getmtime(path), "auto_id": auto_id}
+                except OSError:
+                    pass
+        if self._watches:
+            self._thread = threading.Thread(target=self._loop, daemon=True, name="fs-trigger")
+            self._thread.start()
+            logger.info("FS trigger watcher started for %d paths", len(self._watches))
+
+    def stop(self) -> None:
+        self._shutdown.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _loop(self) -> None:
+        while not self._shutdown.wait(5):  # Check every 5 seconds
+            for path, info in list(self._watches.items()):
+                try:
+                    current_mtime = os.path.getmtime(path)
+                    if current_mtime > info["mtime"]:
+                        info["mtime"] = current_mtime
+                        self._trigger_automation(info["auto_id"], path)
+                except OSError:
+                    pass
+
+    def _trigger_automation(self, auto_id: str, path: str) -> None:
+        from .app import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
+        auto = db.get_automation(auto_id)
+        if not auto:
+            return
+        if auto["type"] == "workflow":
+            steps = auto["config"].get("steps", [])
+            if steps:
+                mode = auto["config"].get("mode", "sequential")
+                if mode == "parallel":
+                    _run_parallel_workflow(auto["id"], steps, f"fs-trigger:{path}")
+                else:
+                    _run_workflow(auto["id"], steps, f"fs-trigger:{path}")
+            return
+        builder = _AUTO_BUILDERS.get(auto["type"])
+        if not builder:
+            return
+        config = auto["config"]
+
+        def make_process(_run_id: int):
+            return builder(config)
+
+        try:
+            job_runner.submit(make_process, automation_id=auto_id,
+                              trigger=f"fs-trigger:{path}", triggered_by="fs-watcher")
+            logger.info("FS trigger: '%s' changed, triggered '%s'", path, auto["name"])
+        except RuntimeError as exc:
+            logger.warning("FS trigger submit failed: %s", exc)
+
+
 class Scheduler:
     """Background thread that checks automations every 60s and triggers matching ones."""
 
@@ -102,6 +176,15 @@ class Scheduler:
 
     def _tick(self) -> None:
         now = datetime.now()
+        # Check maintenance windows
+        from .yaml_config import read_yaml_settings
+        cfg = read_yaml_settings()
+        windows = cfg.get("maintenanceWindows", [])
+        for window in windows:
+            start_cron = window.get("start", "")
+            if start_cron and _match_cron(start_cron, now):
+                logger.info("Maintenance window active, skipping scheduled automations")
+                return
         autos = db.list_automations()
         for auto in autos:
             if not auto["enabled"]:
@@ -152,5 +235,6 @@ class Scheduler:
             logger.warning("Scheduler: cannot run '%s': %s", auto["name"], exc)
 
 
-# Singleton
+# Singletons
 scheduler = Scheduler()
+fs_watcher = FSTriggerWatcher()

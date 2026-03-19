@@ -621,3 +621,109 @@ def get_rclone_remotes() -> dict:
         return {"available": True, "remotes": lst}
     except Exception:
         return {"available": False, "remotes": []}
+
+
+# ── Certificate expiry ────────────────────────────────────────────────────────
+def check_cert_expiry(hosts: list[str]) -> list[dict]:
+    import ssl
+    import socket as _socket
+    from datetime import datetime, timezone
+    results = []
+    for host in hosts:
+        try:
+            ctx = ssl.create_default_context()
+            with ctx.wrap_socket(_socket.socket(), server_hostname=host) as s:
+                s.settimeout(5)
+                s.connect((host, 443))
+                cert = s.getpeercert()
+            expires_str = cert.get("notAfter", "")
+            expires = datetime.strptime(expires_str, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+            days = (expires - datetime.now(timezone.utc)).days
+            issuer = dict(x[0] for x in cert.get("issuer", ())).get("organizationName", "")
+            results.append({"host": host, "expires": expires.isoformat(), "days": days, "issuer": issuer})
+        except Exception as e:
+            results.append({"host": host, "error": str(e), "days": None})
+    return results
+
+
+# ── Domain expiry (WHOIS) ────────────────────────────────────────────────────
+def check_domain_expiry(domains: list[str]) -> list[dict]:
+    from datetime import datetime, timezone
+    results = []
+    for domain in domains:
+        try:
+            out = _run(["whois", domain], timeout=10, ignore_rc=True)
+            exp_date = None
+            for line in out.splitlines():
+                low = line.lower()
+                if "expir" in low and ":" in line:
+                    val = line.split(":", 1)[1].strip()
+                    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d", "%d-%b-%Y"):
+                        try:
+                            exp_date = datetime.strptime(val, fmt).replace(tzinfo=timezone.utc)
+                            break
+                        except ValueError:
+                            continue
+                    if exp_date:
+                        break
+            if exp_date:
+                days = (exp_date - datetime.now(timezone.utc)).days
+                results.append({"domain": domain, "expires": exp_date.isoformat(), "days": days})
+            else:
+                results.append({"domain": domain, "error": "Could not parse expiry"})
+        except Exception as e:
+            results.append({"domain": domain, "error": str(e)})
+    return results
+
+
+# ── VPN / WireGuard status ───────────────────────────────────────────────────
+def get_vpn_status() -> dict | None:
+    raw = _run(["wg", "show", "all", "dump"], timeout=3, ignore_rc=True)
+    if not raw:
+        return None
+    peers = []
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 8:
+            peers.append({
+                "interface": parts[0],
+                "endpoint": parts[3] if parts[3] != "(none)" else "",
+                "last_handshake": int(parts[5]) if parts[5] != "0" else 0,
+                "rx_bytes": int(parts[6]),
+                "tx_bytes": int(parts[7]),
+            })
+    return {"peers": peers, "peer_count": len(peers)} if peers else None
+
+
+# ── CPU governor ─────────────────────────────────────────────────────────────
+def get_cpu_governor() -> str:
+    return _read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "unknown").strip()
+
+
+# ── Wake-on-LAN ─────────────────────────────────────────────────────────────
+def send_wol(mac: str) -> bool:
+    mac = mac.replace(":", "").replace("-", "").replace(".", "")
+    if len(mac) != 12:
+        return False
+    try:
+        mac_bytes = bytes.fromhex(mac)
+        magic = b"\xff" * 6 + mac_bytes * 16
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            s.sendto(magic, ("<broadcast>", 9))
+        return True
+    except Exception:
+        return False
+
+
+# ── Game server probe ────────────────────────────────────────────────────────
+def probe_game_server(host: str, port: int) -> dict:
+    try:
+        t0 = time.time()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(3)
+            s.connect((host, port))
+        ms = round((time.time() - t0) * 1000)
+        return {"host": host, "port": port, "status": "online", "ms": ms}
+    except Exception:
+        return {"host": host, "port": port, "status": "offline", "ms": 0}

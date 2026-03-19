@@ -24,6 +24,7 @@ class AlertState:
         self._lock        = threading.Lock()
         self._sent:  dict = {}   # key -> last_sent_timestamp
         self._heals: dict = {}   # rule_id -> heal state dict
+        self._group_buffer: dict = {}  # group_key -> list of messages
 
     def cooldown_ok(self, key: str, cooldown: float = NOTIFICATION_COOLDOWN) -> bool:
         """Return True if enough time has passed to send another alert for this key."""
@@ -71,6 +72,14 @@ class AlertState:
             if rule_id in self._heals:
                 self._heals[rule_id]["retries"] = 0
 
+    def buffer_group(self, group: str, msg: str) -> None:
+        with self._lock:
+            self._group_buffer.setdefault(group, []).append(msg)
+
+    def flush_group(self, group: str) -> list[str]:
+        with self._lock:
+            return self._group_buffer.pop(group, [])
+
 
 _alert_state = AlertState()
 
@@ -80,7 +89,8 @@ _OPS = {">": operator.gt, "<": operator.lt, ">=": operator.ge, "<=": operator.le
         "==": operator.eq, "!=": operator.ne}
 
 
-def _safe_eval(condition_str: str, flat: dict) -> bool:
+def _safe_eval_single(condition_str: str, flat: dict) -> bool:
+    """Evaluate a single metric comparison (e.g. 'cpu_percent > 90')."""
     s = condition_str.replace("flat['", "").replace('flat["', "").replace("']", "").replace('"]', "")
     m = re.match(r"^\s*([a-zA-Z0-9_\[\]\.]+)\s*(>|<|>=|<=|==|!=)\s*([0-9\.-]+)\s*$", s)
     if not m:
@@ -94,6 +104,16 @@ def _safe_eval(condition_str: str, flat: dict) -> bool:
     except (ValueError, TypeError):
         logger.warning("Malformed alert condition (bad value): %s=%r", metric, flat[metric])
         return False
+
+
+def _safe_eval(condition_str: str, flat: dict) -> bool:
+    """Evaluate a condition string, supporting AND/OR composite conditions."""
+    # Support AND/OR composite conditions
+    if " AND " in condition_str:
+        return all(_safe_eval_single(part.strip(), flat) for part in condition_str.split(" AND "))
+    if " OR " in condition_str:
+        return any(_safe_eval_single(part.strip(), flat) for part in condition_str.split(" OR "))
+    return _safe_eval_single(condition_str, flat)
 
 
 # ── Self-heal action executor ─────────────────────────────────────────────────
@@ -305,6 +325,44 @@ def send_notification(level: str, msg: str, category: str | None, read_settings_
     ).start()
 
 
+# ── Escalation policies ──────────────────────────────────────────────────────
+def _check_escalation(rule: dict, rule_id: str, severity: str, message: str,
+                      notif_cfg: dict, read_settings_fn) -> None:
+    """Check escalation tiers for a rule."""
+    escalation = rule.get("escalation", [])
+    if not escalation:
+        return
+    state = _alert_state.heal_state(rule_id)
+    first_trigger = state.get("first_trigger_at", 0)
+    if not first_trigger:
+        _alert_state.update_heal(rule_id, first_trigger_at=time.time())
+        return
+    elapsed_min = (time.time() - first_trigger) / 60
+    for tier in escalation:
+        delay = tier.get("delay_minutes", 0)
+        if elapsed_min >= delay:
+            channels = tier.get("channels", [])
+            if channels:
+                dispatch_notifications(severity, f"[ESCALATED] {message}", notif_cfg, channels)
+
+
+# ── Maintenance window check ─────────────────────────────────────────────────
+def in_maintenance_window(read_settings_fn) -> bool:
+    """Check if current time falls within any configured maintenance window."""
+    from datetime import datetime
+
+    from .scheduler import _match_cron
+    cfg = read_settings_fn()
+    windows = cfg.get("maintenanceWindows", [])
+    now = datetime.now()
+    for window in windows:
+        start_cron = window.get("start", "")
+        _duration_min = int(window.get("duration_minutes", 60))  # noqa: F841
+        if start_cron and _match_cron(start_cron, now):
+            return True
+    return False
+
+
 # ── Alert rule evaluator ──────────────────────────────────────────────────────
 def evaluate_alert_rules(stats: dict, read_settings_fn) -> None:
     cfg   = read_settings_fn()
@@ -339,7 +397,15 @@ def evaluate_alert_rules(stats: dict, read_settings_fn) -> None:
             if not _alert_state.cooldown_ok(rule_id):
                 continue
 
-            dispatch_notifications(severity, message, cfg.get("notifications", {}), channels)
+            notif_cfg = cfg.get("notifications", {})
+            dispatch_notifications(severity, message, notif_cfg, channels)
+
+            # Record alert in history
+            from .db import db as _db
+            _db.insert_alert_history(rule_id, severity, message)
+
+            # Check escalation policies
+            _check_escalation(rule, rule_id, severity, message, notif_cfg, read_settings_fn)
 
             action_cfg = rule.get("action")
             if not action_cfg or not isinstance(action_cfg, dict):
@@ -359,7 +425,7 @@ def evaluate_alert_rules(stats: dict, read_settings_fn) -> None:
                         "danger",
                         f'[Circuit Open] Rule "{rule_id}" triggered {_alert_state.trigger_count(rule_id)}× in 1 hour. '
                         "Auto-healing suspended.",
-                        cfg.get("notifications", {}), channels,
+                        notif_cfg, channels,
                     )
                 continue
 
@@ -388,6 +454,9 @@ def evaluate_alert_rules(stats: dict, read_settings_fn) -> None:
 
 # ── Built-in threshold alerts ─────────────────────────────────────────────────
 def build_threshold_alerts(stats: dict, read_settings_fn) -> list:
+    if in_maintenance_window(read_settings_fn):
+        return []
+
     alerts = []
 
     cpu = stats.get("cpuPercent", 0)

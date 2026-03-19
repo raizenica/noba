@@ -84,6 +84,45 @@ class Database:
                     ON job_runs(automation_id, started_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_job_runs_status
                     ON job_runs(status);
+
+                CREATE TABLE IF NOT EXISTS alert_history (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_id     TEXT NOT NULL,
+                    timestamp   INTEGER NOT NULL,
+                    severity    TEXT NOT NULL,
+                    message     TEXT,
+                    resolved_at INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS idx_alert_hist ON alert_history(rule_id, timestamp);
+
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    id         TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    key_hash   TEXT NOT NULL,
+                    role       TEXT NOT NULL DEFAULT 'viewer',
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER,
+                    last_used  INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp  INTEGER NOT NULL,
+                    level      TEXT NOT NULL,
+                    title      TEXT NOT NULL,
+                    message    TEXT,
+                    read       INTEGER NOT NULL DEFAULT 0,
+                    username   TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(username, read);
+
+                CREATE TABLE IF NOT EXISTS user_dashboards (
+                    username    TEXT PRIMARY KEY,
+                    card_order  TEXT,
+                    card_vis    TEXT,
+                    card_theme  TEXT,
+                    updated_at  INTEGER NOT NULL
+                );
             """)
 
     # ── Metrics ───────────────────────────────────────────────────────────────
@@ -530,6 +569,315 @@ class Database:
                 conn.commit()
         except Exception as e:
             logger.error("mark_stale_jobs failed: %s", e)
+
+    # ── Alert History (Round 2) ───────────────────────────────────────────────
+    def insert_alert_history(self, rule_id: str, severity: str, message: str) -> None:
+        """Insert an alert event with the current timestamp."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "INSERT INTO alert_history (rule_id, timestamp, severity, message) "
+                    "VALUES (?,?,?,?)",
+                    (rule_id, int(time.time()), severity, message),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("insert_alert_history failed: %s", e)
+
+    def get_alert_history(self, limit: int = 100, rule_id: str | None = None,
+                          from_ts: int = 0, to_ts: int = 0) -> list[dict]:
+        """Query alert history with optional filters."""
+        try:
+            clauses: list[str] = []
+            params: list = []
+            if rule_id:
+                clauses.append("rule_id = ?")
+                params.append(rule_id)
+            if from_ts:
+                clauses.append("timestamp >= ?")
+                params.append(from_ts)
+            if to_ts:
+                clauses.append("timestamp <= ?")
+                params.append(to_ts)
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            params.append(limit)
+            with self._lock:
+                conn = self._get_conn()
+                rows = conn.execute(
+                    "SELECT id, rule_id, timestamp, severity, message, resolved_at "
+                    f"FROM alert_history{where} ORDER BY timestamp DESC LIMIT ?",
+                    params,
+                ).fetchall()
+            return [
+                {
+                    "id": r[0], "rule_id": r[1], "timestamp": r[2],
+                    "severity": r[3], "message": r[4], "resolved_at": r[5],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error("get_alert_history failed: %s", e)
+            return []
+
+    def resolve_alert(self, rule_id: str) -> None:
+        """Mark all unresolved alerts for a rule as resolved now."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "UPDATE alert_history SET resolved_at = ? "
+                    "WHERE rule_id = ? AND resolved_at IS NULL",
+                    (int(time.time()), rule_id),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("resolve_alert failed: %s", e)
+
+    def get_sla(self, rule_id: str, window_hours: int = 720) -> float:
+        """Calculate uptime percentage for a rule over the given window.
+
+        Counts total seconds in the window minus seconds where an alert was
+        active (timestamp to resolved_at or now if still open).  Returns the
+        uptime as a percentage (0-100).
+        """
+        try:
+            now = int(time.time())
+            window_start = now - window_hours * 3600
+            window_seconds = window_hours * 3600
+            with self._lock:
+                conn = self._get_conn()
+                rows = conn.execute(
+                    "SELECT timestamp, resolved_at FROM alert_history "
+                    "WHERE rule_id = ? AND "
+                    "(resolved_at IS NULL OR resolved_at >= ?) AND timestamp <= ?",
+                    (rule_id, window_start, now),
+                ).fetchall()
+            downtime = 0
+            for alert_start, resolved_at in rows:
+                start = max(alert_start, window_start)
+                end = resolved_at if resolved_at else now
+                end = min(end, now)
+                if end > start:
+                    downtime += end - start
+            if window_seconds == 0:
+                return 100.0
+            uptime = max(0.0, (window_seconds - downtime) / window_seconds * 100)
+            return round(uptime, 4)
+        except Exception as e:
+            logger.error("get_sla failed: %s", e)
+            return 100.0
+
+    # ── API Keys (Round 6) ────────────────────────────────────────────────────
+    def insert_api_key(self, key_id: str, name: str, key_hash: str,
+                       role: str, expires_at: int | None = None) -> None:
+        """Insert a new API key."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "INSERT INTO api_keys (id, name, key_hash, role, created_at, expires_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (key_id, name, key_hash, role, int(time.time()), expires_at),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("insert_api_key failed: %s", e)
+
+    def get_api_key(self, key_hash: str) -> dict | None:
+        """Look up an API key by its hash and update last_used timestamp."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                r = conn.execute(
+                    "SELECT id, name, key_hash, role, created_at, expires_at, last_used "
+                    "FROM api_keys WHERE key_hash = ?",
+                    (key_hash,),
+                ).fetchone()
+                if not r:
+                    return None
+                conn.execute(
+                    "UPDATE api_keys SET last_used = ? WHERE key_hash = ?",
+                    (int(time.time()), key_hash),
+                )
+                conn.commit()
+            return {
+                "id": r[0], "name": r[1], "key_hash": r[2], "role": r[3],
+                "created_at": r[4], "expires_at": r[5], "last_used": r[6],
+            }
+        except Exception as e:
+            logger.error("get_api_key failed: %s", e)
+            return None
+
+    def list_api_keys(self) -> list[dict]:
+        """List all API keys (excluding key_hash from results)."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                rows = conn.execute(
+                    "SELECT id, name, role, created_at, expires_at, last_used "
+                    "FROM api_keys ORDER BY created_at DESC"
+                ).fetchall()
+            return [
+                {
+                    "id": r[0], "name": r[1], "role": r[2],
+                    "created_at": r[3], "expires_at": r[4], "last_used": r[5],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error("list_api_keys failed: %s", e)
+            return []
+
+    def delete_api_key(self, key_id: str) -> bool:
+        """Delete an API key by its id."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                cur = conn.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
+                conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            logger.error("delete_api_key failed: %s", e)
+            return False
+
+    # ── Notifications (Round 7) ───────────────────────────────────────────────
+    def insert_notification(self, level: str, title: str, message: str,
+                            username: str | None = None) -> None:
+        """Insert a notification."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "INSERT INTO notifications (timestamp, level, title, message, username) "
+                    "VALUES (?,?,?,?,?)",
+                    (int(time.time()), level, title, message, username),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("insert_notification failed: %s", e)
+
+    def get_notifications(self, username: str | None = None,
+                          unread_only: bool = False, limit: int = 50) -> list[dict]:
+        """Query notifications with optional filters."""
+        try:
+            clauses: list[str] = []
+            params: list = []
+            if username:
+                clauses.append("(username = ? OR username IS NULL)")
+                params.append(username)
+            if unread_only:
+                clauses.append("read = 0")
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            params.append(limit)
+            with self._lock:
+                conn = self._get_conn()
+                rows = conn.execute(
+                    "SELECT id, timestamp, level, title, message, read, username "
+                    f"FROM notifications{where} ORDER BY timestamp DESC LIMIT ?",
+                    params,
+                ).fetchall()
+            return [
+                {
+                    "id": r[0], "timestamp": r[1], "level": r[2],
+                    "title": r[3], "message": r[4], "read": bool(r[5]),
+                    "username": r[6],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error("get_notifications failed: %s", e)
+            return []
+
+    def mark_notification_read(self, notif_id: int, username: str) -> None:
+        """Mark a single notification as read."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "UPDATE notifications SET read = 1 "
+                    "WHERE id = ? AND (username = ? OR username IS NULL)",
+                    (notif_id, username),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("mark_notification_read failed: %s", e)
+
+    def mark_all_notifications_read(self, username: str) -> None:
+        """Mark all notifications for a user as read."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "UPDATE notifications SET read = 1 "
+                    "WHERE (username = ? OR username IS NULL) AND read = 0",
+                    (username,),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("mark_all_notifications_read failed: %s", e)
+
+    def get_unread_count(self, username: str) -> int:
+        """Return count of unread notifications for a user."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                r = conn.execute(
+                    "SELECT COUNT(*) FROM notifications "
+                    "WHERE (username = ? OR username IS NULL) AND read = 0",
+                    (username,),
+                ).fetchone()
+            return r[0] if r else 0
+        except Exception as e:
+            logger.error("get_unread_count failed: %s", e)
+            return 0
+
+    # ── User Dashboards (Round 7) ─────────────────────────────────────────────
+    def save_user_dashboard(self, username: str, card_order: list | None = None,
+                            card_vis: dict | None = None,
+                            card_theme: dict | None = None) -> None:
+        """Save or update a user's dashboard layout preferences."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                conn.execute(
+                    "INSERT OR REPLACE INTO user_dashboards "
+                    "(username, card_order, card_vis, card_theme, updated_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (
+                        username,
+                        json.dumps(card_order) if card_order is not None else None,
+                        json.dumps(card_vis) if card_vis is not None else None,
+                        json.dumps(card_theme) if card_theme is not None else None,
+                        int(time.time()),
+                    ),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("save_user_dashboard failed: %s", e)
+
+    def get_user_dashboard(self, username: str) -> dict | None:
+        """Retrieve a user's dashboard layout preferences."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                r = conn.execute(
+                    "SELECT username, card_order, card_vis, card_theme, updated_at "
+                    "FROM user_dashboards WHERE username = ?",
+                    (username,),
+                ).fetchone()
+            if not r:
+                return None
+            return {
+                "username": r[0],
+                "card_order": json.loads(r[1]) if r[1] else None,
+                "card_vis": json.loads(r[2]) if r[2] else None,
+                "card_theme": json.loads(r[3]) if r[3] else None,
+                "updated_at": r[4],
+            }
+        except Exception as e:
+            logger.error("get_user_dashboard failed: %s", e)
+            return None
 
 
 # Singleton shared instance
