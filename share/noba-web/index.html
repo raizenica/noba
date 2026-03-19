@@ -82,7 +82,7 @@
 
             <div class="user-chip" x-show="authenticated && username" x-cloak>
                 <i class="fas fa-user-circle" style="color:var(--accent);font-size:.8rem" aria-hidden="true"></i>
-                <span x-text="username" style="color:var(--text)"></span>
+                <span x-text="username" style="color:var(--text);cursor:pointer" @click="showProfileModal=true; fetchProfile()"></span>
                 <span class="badge" :class="userRole==='admin'?'ba':userRole==='operator'?'bs':'bn'" x-text="userRole"></span>
             </div>
 
@@ -1362,6 +1362,7 @@
                 <i class="fas fa-boxes card-icon" aria-hidden="true"></i>
                 <span class="card-title">Containers</span>
                 <span class="card-count" x-show="containers && containers.length > 0" x-text="containers.length + ' total'"></span>
+                <button class="svc-btn" title="Container Stats" @click="openContainerStats()" style="margin-left:auto;margin-right:4px"><i class="fas fa-tachometer-alt"></i></button>
                 <button class="collapse-btn fas fa-chevron-down"
                         :class="collapsed.containers ? 'is-collapsed' : ''"
                         @click="toggleCollapse('containers')"
@@ -1671,6 +1672,14 @@
                                   x-text="backupStatus && backupStatus.exit_code === 0 ? 'Success' : 'Failed'"></span>
                             <span x-show="backupStatus && backupStatus.failed_sources" style="color:var(--danger);font-size:.7rem" x-text="'Failed: ' + (backupStatus ? backupStatus.failed_sources : '')"></span>
                         </div>
+                        <template x-if="backupHealth">
+                            <div style="margin-top:.75rem;border-top:1px solid var(--border);padding-top:.5rem">
+                                <div class="row"><span class="row-label">Destination</span><span class="row-val" style="font-size:.75rem" x-text="backupHealth.path"></span></div>
+                                <div class="row"><span class="row-label">Free Space</span><span class="row-val" x-text="backupHealth.free_gb + ' GB'"></span></div>
+                                <div class="row"><span class="row-label">Snapshots</span><span class="row-val" x-text="backupHealth.snapshot_count"></span></div>
+                                <div class="prog" style="margin-top:4px"><div class="prog-fill" :class="backupHealth.percent_used > 90 ? 'danger' : backupHealth.percent_used > 75 ? 'warning' : 'success'" :style="'width:'+backupHealth.percent_used+'%'"></div></div>
+                            </div>
+                        </template>
                         <div style="margin-bottom:.75rem">
                             <label class="field-label" for="backup-target">Source Target</label>
                             <select id="backup-target" class="theme-select" style="width:100%;margin-bottom:.5rem" x-model="target">
@@ -4357,6 +4366,74 @@
                 </template>
             </template>
             <div class="empty-msg" x-show="!workflowTrace || !workflowTrace.executions?.length">No execution history</div>
+        </div>
+    </div>
+</div>
+
+<!-- User Profile Modal -->
+<div class="modal-overlay" x-show="showProfileModal" x-cloak @keydown.escape.window="showProfileModal=false">
+    <div class="modal-box" style="max-width:600px;max-height:80vh;overflow-y:auto">
+        <div class="modal-title">
+            <i class="fas fa-user-circle"></i> Profile
+            <button class="modal-close" @click="showProfileModal=false">&times;</button>
+        </div>
+        <template x-if="userProfile"><div style="padding:16px">
+            <div class="row"><span class="row-label">Username</span><span class="row-val" x-text="userProfile.username"></span></div>
+            <div class="row"><span class="row-label">Role</span><span class="badge" :class="userProfile.role==='admin'?'ba':'bs'" x-text="userProfile.role"></span></div>
+            <div class="row"><span class="row-label">2FA</span><span class="badge" :class="userProfile.has_2fa?'bs':'bw'" x-text="userProfile.has_2fa?'Enabled':'Disabled'"></span></div>
+            <div style="margin-top:12px"><strong style="font-size:.85rem">Recent Logins</strong></div>
+            <template x-for="l in userProfile.recent_logins||[]" :key="l.time">
+                <div class="row" style="font-size:.8rem">
+                    <span class="row-label" x-text="new Date(l.time*1000).toLocaleString()"></span>
+                    <span class="row-val" x-text="l.ip"></span>
+                </div>
+            </template>
+            <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+                <strong style="font-size:.85rem">Change Password</strong>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+                    <input class="field-input" type="password" x-model="changePasswordCurrent" placeholder="Current password" autocomplete="current-password">
+                    <input class="field-input" type="password" x-model="changePasswordNew" placeholder="New password" autocomplete="new-password">
+                    <input class="field-input" type="password" x-model="changePasswordConfirm" placeholder="Confirm new password" autocomplete="new-password">
+                    <button class="btn-sm" @click="changeOwnPassword()" style="align-self:flex-start"><i class="fas fa-key"></i> Change Password</button>
+                </div>
+            </div>
+            <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+                <strong style="font-size:.85rem">Two-Factor Authentication</strong>
+                <div style="margin-top:8px">
+                    <button class="btn-sm" x-show="!userProfile.has_2fa" @click="setupTotp()"><i class="fas fa-shield-alt"></i> Enable 2FA</button>
+                    <span x-show="userProfile.has_2fa" style="color:var(--success);font-size:.85rem"><i class="fas fa-check-circle"></i> 2FA is active</span>
+                </div>
+            </div>
+        </div></template>
+    </div>
+</div>
+
+<!-- Container Stats Modal -->
+<div class="modal-overlay" x-show="showContainerStatsModal" x-cloak @keydown.escape.window="showContainerStatsModal=false">
+    <div class="modal-box" style="max-width:900px;max-height:80vh;overflow-y:auto">
+        <div class="modal-title">
+            <i class="fas fa-tachometer-alt"></i> Container Resource Usage
+            <button class="modal-close" @click="showContainerStatsModal=false">&times;</button>
+        </div>
+        <div style="padding:12px">
+            <table class="audit-table" style="width:100%">
+                <thead><tr><th>Container</th><th>CPU</th><th>Memory</th><th>Mem %</th><th>Net I/O</th><th>Block I/O</th><th>PIDs</th></tr></thead>
+                <tbody>
+                    <template x-for="s in containerStats" :key="s.name">
+                        <tr>
+                            <td x-text="s.name" style="font-weight:500"></td>
+                            <td x-text="s.cpu"></td>
+                            <td x-text="s.mem_usage" style="font-size:.8rem"></td>
+                            <td x-text="s.mem_percent"></td>
+                            <td x-text="s.net_io" style="font-size:.8rem"></td>
+                            <td x-text="s.block_io" style="font-size:.8rem"></td>
+                            <td x-text="s.pids"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <div class="empty-msg" x-show="containerStats.length===0">No containers running</div>
+            <div class="modal-footer"><button class="btn-sm" @click="fetchContainerStats()"><i class="fas fa-sync"></i> Refresh</button></div>
         </div>
     </div>
 </div>

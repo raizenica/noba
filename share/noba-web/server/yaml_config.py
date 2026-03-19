@@ -88,7 +88,7 @@ def read_yaml_settings() -> dict:
         # ── Round 6: Security ──────────────────────────────────────────────
         "oidcProviderUrl": "", "oidcClientId": "", "oidcClientSecret": "",
         "ldapUrl": "", "ldapBaseDn": "", "ldapBindDn": "", "ldapBindPassword": "",
-        "ipWhitelist": "", "auditRetentionDays": 90,
+        "ipWhitelist": "", "auditRetentionDays": 90, "require2fa": False,
         # ── Round 9: DevOps & Misc ─────────────────────────────────────────
         "k8sUrl": "", "k8sToken": "",
         "giteaUrl": "", "giteaToken": "",

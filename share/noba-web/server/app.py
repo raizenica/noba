@@ -1037,6 +1037,81 @@ def api_restic_status(auth=Depends(_get_auth)):
         return {"configured": True, "error": str(e)}
 
 
+# ── /api/backup/schedules ────────────────────────────────────────────────
+@app.get("/api/backup/schedules")
+def api_backup_schedules(auth=Depends(_get_auth)):
+    """List backup-related automations (scheduled backup jobs)."""
+    autos = db.list_automations()
+    return [a for a in autos if a.get("type") == "script" and
+            a.get("config", {}).get("script") in ("backup", "cloud", "verify")]
+
+
+@app.post("/api/backup/schedule")
+async def api_backup_schedule_create(request: Request, auth=Depends(_require_admin)):
+    """Create a backup schedule with friendly parameters."""
+    import uuid
+    username, _ = auth
+    body = await _read_body(request)
+    backup_type = body.get("type", "backup")  # backup, cloud, verify
+    schedule = body.get("schedule", "0 3 * * *")
+    name = body.get("name", f"Scheduled {backup_type}")
+    if backup_type not in ("backup", "cloud", "verify"):
+        raise HTTPException(400, "Type must be backup, cloud, or verify")
+    auto_id = uuid.uuid4().hex[:12]
+    config = {"script": backup_type, "args": "--verbose"}
+    if not db.insert_automation(auto_id, name, "script", config, schedule, True):
+        raise HTTPException(500, "Failed to create backup schedule")
+    db.audit_log("backup_schedule", username, f"Created {backup_type} schedule: {schedule}", _client_ip(request))
+    return {"id": auto_id, "status": "ok"}
+
+
+# ── /api/backup/progress ────────────────────────────────────────────────
+@app.get("/api/backup/progress")
+def api_backup_progress(auth=Depends(_get_auth)):
+    """Get progress of currently running backup jobs."""
+    active_ids = job_runner.get_active_ids()
+    if not active_ids:
+        return {"running": False}
+    progress = []
+    for rid in active_ids:
+        run = db.get_job_run(rid)
+        if run and run.get("trigger", "").startswith("script:backup"):
+            progress.append({
+                "run_id": rid,
+                "trigger": run.get("trigger", ""),
+                "started_at": run.get("started_at"),
+                "status": run.get("status"),
+            })
+    return {"running": len(progress) > 0, "jobs": progress}
+
+
+# ── /api/backup/health ──────────────────────────────────────────────────
+@app.get("/api/backup/health")
+def api_backup_health(auth=Depends(_get_auth)):
+    """Check backup destination accessibility and space."""
+    cfg = read_yaml_settings()
+    dest = cfg.get("backupDest", "")
+    if not dest or not os.path.isdir(dest):
+        return {"accessible": False, "error": "Destination not configured or not accessible"}
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage(dest)
+        # Count snapshots
+        snapshot_count = sum(1 for e in os.scandir(dest)
+                           if e.is_dir() and re.match(r'^\d{8}-\d{6}$', e.name))
+        return {
+            "accessible": True,
+            "path": dest,
+            "total_gb": round(total / (1024**3), 1),
+            "used_gb": round(used / (1024**3), 1),
+            "free_gb": round(free / (1024**3), 1),
+            "percent_used": round(used / total * 100, 1) if total else 0,
+            "snapshot_count": snapshot_count,
+        }
+    except Exception as e:
+        return {"accessible": False, "error": str(e)}
+
+
 # ── /api/log-viewer ───────────────────────────────────────────────────────────
 @app.get("/api/log-viewer")
 def api_log_viewer(request: Request, auth=Depends(_get_auth)):
@@ -1954,6 +2029,12 @@ async def api_login(request: Request):
             totp_secret = users.get_totp_secret(username)
             if not verify_totp(totp_secret, totp_code):
                 raise HTTPException(401, "Invalid 2FA code")
+        # Check if 2FA is required but not set up
+        cfg_settings = read_yaml_settings()
+        if cfg_settings.get("require2fa") and not users.has_totp(username):
+            rate_limiter.reset(ip)
+            token = token_store.generate(username, user_data[1])
+            return {"token": token, "requires_2fa_setup": True}
         token = token_store.generate(username, user_data[1])
         db.audit_log("login", username, "success", ip)
         return {"token": token}
@@ -2097,6 +2178,57 @@ async def api_oidc_callback(request: Request):
     except Exception as e:
         logger.error("OIDC callback error: %s", e)
         raise HTTPException(502, "OIDC authentication failed")
+
+
+# ── /api/profile ──────────────────────────────────────────────────────────────
+@app.get("/api/profile")
+def api_profile(auth=Depends(_get_auth)):
+    """Get current user's profile with activity summary."""
+    username, role = auth
+    from .auth import get_permissions, users as _users  # noqa: PLC0415
+    has_2fa = _users.has_totp(username)
+    # Get recent login activity from audit log
+    logins = db.get_audit(limit=10, username_filter=username, action_filter="login")
+    failed = db.get_audit(limit=5, username_filter=username, action_filter="login_failed")
+    # Get recent actions
+    actions = db.get_audit(limit=20, username_filter=username)
+    return {
+        "username": username,
+        "role": role,
+        "permissions": get_permissions(role),
+        "has_2fa": has_2fa,
+        "recent_logins": logins,
+        "failed_logins": failed,
+        "recent_actions": actions[:20],
+    }
+
+
+@app.post("/api/profile/password")
+async def api_profile_password(request: Request, auth=Depends(_get_auth)):
+    """Change own password (any authenticated user)."""
+    username, _ = auth
+    body = await _read_body(request)
+    current = body.get("current", "")
+    new_pw = body.get("new", "")
+    # Verify current password
+    user_data = users.get(username)
+    if not user_data or not verify_password(user_data[0], current):
+        raise HTTPException(401, "Current password is incorrect")
+    pw_err = check_password_strength(new_pw)
+    if pw_err:
+        raise HTTPException(400, pw_err)
+    if not users.update_password(username, pbkdf2_hash(new_pw)):
+        raise HTTPException(500, "Failed to update password")
+    db.audit_log("password_change_self", username, "Changed own password", _client_ip(request))
+    return {"status": "ok"}
+
+
+@app.get("/api/profile/sessions")
+def api_profile_sessions(auth=Depends(_get_auth)):
+    """Get active sessions for the current user."""
+    username, _ = auth
+    all_sessions = token_store.list_sessions()
+    return [s for s in all_sessions if s.get("username") == username]
 
 
 # ── /api/container-control ────────────────────────────────────────────────────

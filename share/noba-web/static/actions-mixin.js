@@ -2150,5 +2150,108 @@ function actionsMixin() {
             } catch { /* silent */ }
             return null;
         },
+
+
+        // ── User Profile ─────────────────────────────────────────────────────
+        userProfile: null,
+        showProfileModal: false,
+        changePasswordCurrent: '',
+        changePasswordNew: '',
+        changePasswordConfirm: '',
+
+        async fetchProfile() {
+            try {
+                const res = await fetch('/api/profile', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.userProfile = await res.json();
+            } catch { /* silent */ }
+        },
+
+        async changeOwnPassword() {
+            if (this.changePasswordNew !== this.changePasswordConfirm) {
+                this.addToast('Passwords do not match', 'error');
+                return;
+            }
+            try {
+                const res = await fetch('/api/profile/password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify({ current: this.changePasswordCurrent, new: this.changePasswordNew }),
+                });
+                if (!res.ok) {
+                    const d = await res.json();
+                    this.addToast(d.detail || 'Failed', 'error');
+                    return;
+                }
+                this.addToast('Password changed', 'success');
+                this.changePasswordCurrent = '';
+                this.changePasswordNew = '';
+                this.changePasswordConfirm = '';
+            } catch (e) {
+                this.addToast('Failed: ' + e.message, 'error');
+            }
+        },
+
+        // ── Backup Scheduling ────────────────────────────────────────────────
+        backupSchedules: [],
+        backupHealth: null,
+        backupProgress: null,
+        showBackupScheduleModal: false,
+        newBackupSchedule: { type: 'backup', schedule: '0 3 * * *', name: '' },
+
+        async fetchBackupSchedules() {
+            try {
+                const res = await fetch('/api/backup/schedules', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.backupSchedules = await res.json();
+            } catch { /* silent */ }
+        },
+
+        async createBackupSchedule() {
+            const s = this.newBackupSchedule;
+            if (!s.name) s.name = `Scheduled ${s.type}`;
+            try {
+                const res = await fetch('/api/backup/schedule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this._token() },
+                    body: JSON.stringify(s),
+                });
+                if (res.ok) {
+                    this.addToast('Backup schedule created', 'success');
+                    this.fetchBackupSchedules();
+                    this.fetchAutomations();
+                }
+            } catch (e) {
+                this.addToast('Failed: ' + e.message, 'error');
+            }
+        },
+
+        async fetchBackupHealth() {
+            try {
+                const res = await fetch('/api/backup/health', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.backupHealth = await res.json();
+            } catch { /* silent */ }
+        },
+
+        async fetchBackupProgress() {
+            try {
+                const res = await fetch('/api/backup/progress', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.backupProgress = await res.json();
+            } catch { /* silent */ }
+        },
+
+        // ── Container Stats ──────────────────────────────────────────────────
+        showContainerStatsModal: false,
+
+        openContainerStats() {
+            this.showContainerStatsModal = true;
+            this.fetchContainerStats();
+        },
     };
 }

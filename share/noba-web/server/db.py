@@ -287,6 +287,22 @@ class Database:
             logger.error("get_audit failed: %s", e)
             return []
 
+    def get_login_history(self, username: str, limit: int = 30) -> list[dict]:
+        """Get login history for a specific user."""
+        try:
+            with self._lock:
+                conn = self._get_conn()
+                rows = conn.execute(
+                    "SELECT timestamp, action, details, ip FROM audit "
+                    "WHERE username = ? AND action IN ('login', 'login_failed') "
+                    "ORDER BY timestamp DESC LIMIT ?",
+                    (username, limit),
+                ).fetchall()
+            return [{"time": r[0], "action": r[1], "details": r[2], "ip": r[3]} for r in rows]
+        except Exception as e:
+            logger.error("get_login_history failed: %s", e)
+            return []
+
     def get_trend(self, metric: str, range_hours: int = 168, projection_hours: int = 168) -> dict:
         """Linear regression trend with future projection."""
         points = self.get_history(metric, range_hours=range_hours, resolution=300)

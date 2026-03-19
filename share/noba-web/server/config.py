@@ -80,7 +80,7 @@ WEB_KEYS = frozenset([
     # Round 6 – Security
     "oidcProviderUrl", "oidcClientId", "oidcClientSecret",
     "ldapUrl", "ldapBaseDn", "ldapBindDn", "ldapBindPassword",
-    "ipWhitelist", "auditRetentionDays",
+    "ipWhitelist", "auditRetentionDays", "require2fa",
     # Round 9 – DevOps
     "k8sUrl", "k8sToken", "giteaUrl", "giteaToken",
     "gitlabUrl", "gitlabToken", "githubToken",
