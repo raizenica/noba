@@ -317,6 +317,48 @@ def api_cloud_remotes(auth=Depends(_get_auth)):
     return get_rclone_remotes()
 
 
+@app.post("/api/cloud-remotes/create")
+async def api_cloud_remote_create(request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    body = await _read_body(request)
+    name = body.get("name", "").strip()
+    remote_type = body.get("type", "").strip()
+    params = body.get("params", {})
+    if not name or not remote_type:
+        raise HTTPException(400, "Name and type are required")
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$', name):
+        raise HTTPException(400, "Invalid remote name")
+    cmd = ["rclone", "config", "create", name, remote_type]
+    for k, v in params.items():
+        cmd.append(f"{k}={v}")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            raise HTTPException(422, r.stderr.strip()[:200] or "Failed to create remote")
+        db.audit_log("cloud_remote_create", username, f"Created remote '{name}' ({remote_type})", _client_ip(request))
+        return {"status": "ok"}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Command timed out")
+    except FileNotFoundError:
+        raise HTTPException(424, "rclone not found")
+
+
+@app.delete("/api/cloud-remotes/{name}")
+def api_cloud_remote_delete(name: str, request: Request, auth=Depends(_require_admin)):
+    username, _ = auth
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$', name):
+        raise HTTPException(400, "Invalid remote name")
+    try:
+        r = subprocess.run(["rclone", "config", "delete", name],
+                          capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            raise HTTPException(422, "Failed to delete remote")
+        db.audit_log("cloud_remote_delete", username, f"Deleted remote '{name}'", _client_ip(request))
+        return {"status": "ok"}
+    except FileNotFoundError:
+        raise HTTPException(424, "rclone not found")
+
+
 # ── /api/history/{metric} ─────────────────────────────────────────────────────
 def _int_param(request: Request, name: str, default: int, lo: int, hi: int) -> int:
     try:
@@ -483,6 +525,41 @@ def api_backup_status(auth=Depends(_get_auth)):
     return {"nas": _build_nas(nas), "cloud": _build_cloud(cloud)}
 
 
+@app.post("/api/backup/report")
+def api_backup_report(request: Request, auth=Depends(_require_admin)):
+    """Send an email summary of the last backup status."""
+    username, _ = auth
+    from .config import BACKUP_STATE_FILE, CLOUD_STATE_FILE
+    nas = _read_state_file(BACKUP_STATE_FILE)
+    cloud = _read_state_file(CLOUD_STATE_FILE)
+    if not nas and not cloud:
+        raise HTTPException(404, "No backup state found")
+    cfg = read_yaml_settings()
+    notif_cfg = cfg.get("notifications", {})
+    email_cfg = notif_cfg.get("email", {})
+    if not email_cfg.get("enabled"):
+        raise HTTPException(400, "Email notifications not configured")
+
+    msg_parts = ["NOBA Backup Report"]
+    if nas:
+        exit_code = nas.get("exit_code", "?")
+        status = "SUCCESS" if exit_code == "0" else "FAILED"
+        msg_parts.append(f"\nNAS Backup: {status}")
+        msg_parts.append(f"  Snapshot: {nas.get('snapshot', 'N/A')}")
+        msg_parts.append(f"  Duration: {nas.get('duration', 'N/A')}s")
+        if nas.get("failed_sources"):
+            msg_parts.append(f"  Failed: {nas['failed_sources']}")
+    if cloud:
+        msg_parts.append(f"\nCloud Sync: {cloud.get('LAST_STATUS', 'N/A')}")
+        msg_parts.append(f"  Last sync: {cloud.get('LAST_SYNC_TIME', 'N/A')}")
+
+    message = "\n".join(msg_parts)
+    threading.Thread(target=dispatch_notifications,
+                    args=("info", message, notif_cfg, ["email"]), daemon=True).start()
+    db.audit_log("backup_report", username, "Sent backup report email", _client_ip(request))
+    return {"status": "ok", "message": "Report sent"}
+
+
 # ── Backup explorer helpers ──────────────────────────────────────────────────
 _SNAP_RE = re.compile(r"^\d{8}-\d{6}$")
 
@@ -629,6 +706,40 @@ def api_snapshot_diff(request: Request, auth=Depends(_get_auth)):
             "unchanged_count": len(unchanged)}
 
 
+# ── /api/backup/file-versions ────────────────────────────────────────────────
+@app.get("/api/backup/file-versions")
+def api_file_versions(request: Request, auth=Depends(_get_auth)):
+    """List all versions of a file across snapshots."""
+    dest = _get_backup_dest()
+    if not dest:
+        raise HTTPException(404, "Backup destination not configured")
+    file_path = request.query_params.get("path", "")
+    if not file_path:
+        raise HTTPException(400, "File path required")
+    versions = []
+    try:
+        for entry in sorted(os.scandir(dest), key=lambda e: e.name, reverse=True):
+            if not entry.is_dir() or not _SNAP_RE.match(entry.name):
+                continue
+            full = _safe_snapshot_path(dest, entry.name, file_path)
+            if full and os.path.isfile(full):
+                st = os.stat(full)
+                versions.append({
+                    "snapshot": entry.name,
+                    "size": st.st_size,
+                    "mtime": int(st.st_mtime),
+                    "inode": st.st_ino,
+                })
+    except OSError as e:
+        raise HTTPException(500, f"Error scanning versions: {e}")
+    # Mark which versions are actually different (different inode = different content)
+    seen_inodes: set = set()
+    for v in versions:
+        v["unique"] = v["inode"] not in seen_inodes
+        seen_inodes.add(v["inode"])
+    return {"path": file_path, "versions": versions[:100]}
+
+
 # ── /api/backup/restore ──────────────────────────────────────────────────────
 @app.post("/api/backup/restore")
 async def api_backup_restore(request: Request, auth=Depends(_require_admin)):
@@ -738,6 +849,39 @@ def api_config_history_download(filename: str, auth=Depends(_require_admin)):
         media_type="application/x-yaml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── /api/backup/restic ───────────────────────────────────────────────────────
+@app.get("/api/backup/restic")
+def api_restic_status(auth=Depends(_get_auth)):
+    """Check restic repository status if configured."""
+    cfg = read_yaml_settings()
+    repo = cfg.get("resticRepo", "")
+    if not repo:
+        return {"configured": False}
+    env = dict(os.environ)
+    password = cfg.get("resticPassword", "")
+    if password:
+        env["RESTIC_PASSWORD"] = password
+    try:
+        r = subprocess.run(["restic", "-r", repo, "snapshots", "--json", "--latest", "5"],
+                          capture_output=True, text=True, timeout=30, env=env)
+        if r.returncode != 0:
+            return {"configured": True, "error": r.stderr.strip()[:200]}
+        snapshots = json.loads(r.stdout)
+        return {
+            "configured": True,
+            "snapshots": [{
+                "id": s.get("short_id", ""),
+                "time": s.get("time", ""),
+                "hostname": s.get("hostname", ""),
+                "paths": s.get("paths", []),
+            } for s in (snapshots or [])],
+        }
+    except FileNotFoundError:
+        return {"configured": True, "error": "restic not installed"}
+    except Exception as e:
+        return {"configured": True, "error": str(e)}
 
 
 # ── /api/log-viewer ───────────────────────────────────────────────────────────

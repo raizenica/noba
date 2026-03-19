@@ -778,6 +778,34 @@ def check_device_presence(ips: list[str]) -> list[dict]:
     return results
 
 
+def get_ipmi_sensors(host: str, user: str = "", password: str = "") -> list[dict]:
+    """Query IPMI sensors from a remote BMC."""
+    cmd = ["ipmitool"]
+    if host:
+        cmd += ["-H", host, "-I", "lanplus"]
+        if user:
+            cmd += ["-U", user]
+        if password:
+            cmd += ["-P", password]
+    cmd += ["sdr", "list"]
+    out = _run(cmd, timeout=10, ignore_rc=True)
+    if not out:
+        return []
+    sensors = []
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) >= 3:
+            name = parts[0]
+            value = parts[1]
+            status = parts[2]
+            sensors.append({
+                "name": name,
+                "value": value,
+                "status": status.lower(),
+            })
+    return sensors
+
+
 def probe_game_server(host: str, port: int) -> dict:
     try:
         t0 = time.time()

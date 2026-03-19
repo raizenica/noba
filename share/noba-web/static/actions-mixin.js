@@ -614,6 +614,87 @@ function actionsMixin() {
             }
         },
 
+        /** Encrypt config backup with a password before download. */
+        async downloadEncryptedConfig() {
+            const password = prompt('Enter encryption password:');
+            if (!password) return;
+            try {
+                const res = await fetch('/api/config/backup', {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                const data = await res.arrayBuffer();
+
+                // Derive key from password
+                const enc = new TextEncoder();
+                const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+                const salt = crypto.getRandomValues(new Uint8Array(16));
+                const key = await crypto.subtle.deriveKey(
+                    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+                    keyMaterial,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['encrypt']
+                );
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+
+                // Pack: salt(16) + iv(12) + ciphertext
+                const packed = new Uint8Array(16 + 12 + encrypted.byteLength);
+                packed.set(salt, 0);
+                packed.set(iv, 16);
+                packed.set(new Uint8Array(encrypted), 28);
+
+                const blob = new Blob([packed], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'noba-config-encrypted.bin';
+                a.click();
+                URL.revokeObjectURL(url);
+                this.addToast('Encrypted config downloaded', 'success');
+            } catch (e) {
+                this.addToast('Encryption failed: ' + e.message, 'error');
+            }
+        },
+
+        /** Decrypt and restore an encrypted config backup. */
+        async restoreEncryptedConfig(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const password = prompt('Enter decryption password:');
+            if (!password) return;
+            try {
+                const packed = new Uint8Array(await file.arrayBuffer());
+                if (packed.length < 29) throw new Error('File too small');
+
+                const salt = packed.slice(0, 16);
+                const iv = packed.slice(16, 28);
+                const ciphertext = packed.slice(28);
+
+                const enc = new TextEncoder();
+                const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+                const key = await crypto.subtle.deriveKey(
+                    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+                    keyMaterial,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['decrypt']
+                );
+                const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+
+                // Upload decrypted YAML
+                const res = await fetch('/api/config/restore', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                    body: new Uint8Array(decrypted),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.addToast('Encrypted config restored', 'success');
+            } catch (e) {
+                this.addToast('Decryption failed: ' + (e.message || 'Wrong password?'), 'error');
+            }
+        },
+
         /** Fetch SMART health data for all disks. */
         async fetchSmartData() {
             this.smartLoading = true;
