@@ -19,7 +19,6 @@ import importlib.util
 import logging
 import os
 import threading
-import time
 from pathlib import Path
 
 logger = logging.getLogger("noba")

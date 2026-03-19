@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from server.auth import (
     pbkdf2_hash, verify_password, valid_username, check_password_strength,
-    TokenStore, RateLimiter, UserStore,
+    TokenStore, RateLimiter,
 )
 
 

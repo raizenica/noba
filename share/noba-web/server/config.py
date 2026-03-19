@@ -12,6 +12,7 @@ PORT    = int(os.environ.get("PORT",  8080))
 HOST    = os.environ.get("HOST", "0.0.0.0")
 SSL_CERT = os.environ.get("SSL_CERT", "")
 SSL_KEY  = os.environ.get("SSL_KEY",  "")
+TRUST_PROXY = os.environ.get("NOBA_TRUST_PROXY", "").lower() in ("1", "true", "yes")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.environ.get("NOBA_SCRIPT_DIR", os.path.expanduser("~/.local/libexec/noba"))

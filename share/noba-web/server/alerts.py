@@ -10,7 +10,6 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from typing import Any
 
 from .config import NOTIFICATION_COOLDOWN
 

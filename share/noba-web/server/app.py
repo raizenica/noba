@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,12 +25,12 @@ from .auth import authenticate, load_legacy_user, pbkdf2_hash, rate_limiter, tok
 from .collector import bg_collector, collect_stats, get_shutdown_flag
 from .config import (
     ACTION_LOG, ALLOWED_ACTIONS, HISTORY_METRICS, LOG_DIR, MAX_BODY_BYTES,
-    NOBA_YAML, PID_FILE, SCRIPT_DIR, SCRIPT_MAP, SECURITY_HEADERS, VERSION,
+    NOBA_YAML, PID_FILE, SCRIPT_DIR, SCRIPT_MAP, SECURITY_HEADERS, TRUST_PROXY, VERSION,
 )
 from .db import db
 from .metrics import (
-    _cache, _read_file, bust_container_cache, collect_smart,
-    get_rclone_remotes, get_service_status, strip_ansi, validate_service_name,
+    _read_file, bust_container_cache, collect_smart,
+    get_rclone_remotes, strip_ansi, validate_service_name,
 )
 from .alerts import dispatch_notifications
 from .plugins import plugin_manager
@@ -151,9 +151,11 @@ def _require_admin(request: Request) -> tuple[str, str]:
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
-    return (forwarded.split(",")[0].strip() if forwarded
-            else (request.client.host if request.client else "0.0.0.0"))
+    if TRUST_PROXY:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "0.0.0.0"
 
 
 # ── Static / frontend ─────────────────────────────────────────────────────────
@@ -516,21 +518,22 @@ async def api_login(request: Request):
     username = body.get("username", "")
     password = body.get("password", "")
 
-    # Legacy auth.conf check
-    legacy = load_legacy_user()
-    if legacy and username == legacy[0] and verify_password(legacy[1], password):
-        rate_limiter.reset(ip)
-        token = token_store.generate(username, "admin")
-        db.audit_log("login", username, "success", ip)
-        return {"token": token}
-
-    # User DB check
+    # User DB check (preferred — has up-to-date passwords and roles)
     user_data = users.get(username)
     if user_data and verify_password(user_data[0], password):
         rate_limiter.reset(ip)
         token = token_store.generate(username, user_data[1])
         db.audit_log("login", username, "success", ip)
         return {"token": token}
+
+    # Legacy auth.conf fallback (only when user not in DB)
+    if not user_data:
+        legacy = load_legacy_user()
+        if legacy and username == legacy[0] and verify_password(legacy[1], password):
+            rate_limiter.reset(ip)
+            token = token_store.generate(username, "admin")
+            db.audit_log("login", username, "success (legacy)", ip)
+            return {"token": token}
 
     locked = rate_limiter.record_failure(ip)
     logger.warning("Failed login for '%s' from %s", username, ip)
@@ -694,6 +697,7 @@ async def api_run(request: Request, auth=Depends(_require_operator)):
                 else:
                     with open(ACTION_LOG, "a") as f:
                         f.write(f"[ERROR] Custom action not found: {args_in}\n")
+                    db.audit_log("script_run", username, f"custom action not found: {args_in}", ip)
                     status = "failed"
             elif script == "speedtest":
                 with open(ACTION_LOG, "a") as f:
@@ -760,7 +764,7 @@ async def api_cloud_test(request: Request, auth=Depends(_require_operator)):
         r = subprocess.run(["rclone", "lsd", remote + ":", "--max-depth", "1"],
                            capture_output=True, text=True, timeout=15)
         err_line = next(
-            (l for l in r.stderr.strip().splitlines() if l.strip() and not l.startswith("NOTICE")),
+            (line for line in r.stderr.strip().splitlines() if line.strip() and not line.startswith("NOTICE")),
             r.stderr.strip()[:120],
         )
         success = r.returncode == 0

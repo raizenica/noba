@@ -1,7 +1,6 @@
 """Noba – External service integrations (Plex, Pi-hole, Kuma, TrueNAS, etc.)."""
 from __future__ import annotations
 
-import json
 import logging
 import re
 

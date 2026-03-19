@@ -15,7 +15,6 @@ from collections import deque
 
 import psutil
 
-from .config import VERSION
 
 logger = logging.getLogger("noba")
 
@@ -489,7 +488,7 @@ def get_containers() -> list:
             items = (
                 json.loads(out)
                 if out.lstrip().startswith("[")
-                else [json.loads(l) for l in out.splitlines() if l.strip()]
+                else [json.loads(line) for line in out.splitlines() if line.strip()]
             )
             res = []
             for c in items[:16]:
@@ -553,31 +552,47 @@ def collect_smart() -> list:
             aid      = attr.get("id")
             raw_val  = attr.get("raw", {}).get("value", 0)
             norm_val = attr.get("value", 0)
-            if   aid == 5:   attrs["reallocated_sectors"]   = raw_val
-            elif aid == 9:   poh                            = raw_val
-            elif aid == 177: attrs["wear_leveling_count"]   = norm_val
+            if aid == 5:
+                attrs["reallocated_sectors"] = raw_val
+            elif aid == 9:
+                poh = raw_val
+            elif aid == 177:
+                attrs["wear_leveling_count"] = norm_val
             elif aid == 194:
-                if temp is None: temp = raw_val
-            elif aid == 197: attrs["pending_sectors"]       = raw_val
-            elif aid == 198: attrs["uncorrectable_sectors"] = raw_val
-            elif aid == 231: attrs["ssd_life_left_pct"]     = norm_val
-            elif aid == 233: attrs["nand_writes_gb"]        = raw_val
+                if temp is None:
+                    temp = raw_val
+            elif aid == 197:
+                attrs["pending_sectors"] = raw_val
+            elif aid == 198:
+                attrs["uncorrectable_sectors"] = raw_val
+            elif aid == 231:
+                attrs["ssd_life_left_pct"] = norm_val
+            elif aid == 233:
+                attrs["nand_writes_gb"] = raw_val
 
         nvme = d.get("nvme_smart_health_information_log", {})
         if nvme:
-            if temp is None: temp = nvme.get("temperature")
+            if temp is None:
+                temp = nvme.get("temperature")
             attrs["available_spare_pct"] = nvme.get("available_spare")
             attrs["percentage_used"]     = nvme.get("percentage_used")
             poh = nvme.get("power_on_hours", poh)
 
         risk = 0
-        if not smart_ok:                                        risk = 100
-        if attrs.get("uncorrectable_sectors", 0) > 0:          risk = max(risk, 75)
-        if attrs.get("reallocated_sectors",    0) > 0:         risk = max(risk, 60)
-        if attrs.get("pending_sectors",        0) > 0:         risk = max(risk, 50)
-        if attrs.get("percentage_used", 0) > 90:               risk = max(risk, 50)
-        if attrs.get("available_spare_pct", 100) < 10:         risk = max(risk, 50)
-        if isinstance(temp, (int, float)) and temp > 55:       risk = max(risk, 40)
+        if not smart_ok:
+            risk = 100
+        if attrs.get("uncorrectable_sectors", 0) > 0:
+            risk = max(risk, 75)
+        if attrs.get("reallocated_sectors", 0) > 0:
+            risk = max(risk, 60)
+        if attrs.get("pending_sectors", 0) > 0:
+            risk = max(risk, 50)
+        if attrs.get("percentage_used", 0) > 90:
+            risk = max(risk, 50)
+        if attrs.get("available_spare_pct", 100) < 10:
+            risk = max(risk, 50)
+        if isinstance(temp, (int, float)) and temp > 55:
+            risk = max(risk, 40)
 
         results.append({
             "device":         dev,

@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from .config import AUTH_CONFIG, USER_DB, TOKEN_TTL_H, _PW_MIN_LEN, VALID_ROLES
+from .config import AUTH_CONFIG, USER_DB, TOKEN_TTL_H, _PW_MIN_LEN
 
 logger = logging.getLogger("noba")
 
@@ -103,8 +103,8 @@ class UserStore:
         tmp = USER_DB + ".tmp"
         try:
             os.makedirs(os.path.dirname(USER_DB), exist_ok=True)
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with self._lock:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 with open(fd, "w", encoding="utf-8") as f:
                     for username, (hashval, role) in self._db.items():
                         f.write(f"{username}:{hashval}:{role}\n")
