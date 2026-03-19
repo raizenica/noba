@@ -466,7 +466,13 @@ RSYNC_BASE=(
 )
 [[ -n "$MAX_DELETE" ]] && RSYNC_BASE+=("--max-delete=$MAX_DELETE")
 if [[ "$VERBOSE" == true ]]; then
-    RSYNC_BASE+=("--info=progress2")
+    if [[ -t 1 ]]; then
+        # Interactive terminal: show live progress
+        RSYNC_BASE+=("--info=progress2")
+    else
+        # Non-interactive (job runner, pipe): show file-level info without progress spam
+        RSYNC_BASE+=("--info=name1,stats2")
+    fi
 else
     RSYNC_BASE+=("--quiet")
 fi

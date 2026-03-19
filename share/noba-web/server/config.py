@@ -35,7 +35,7 @@ _WORKER_THREADS        = int(os.environ.get("NOBA_WORKER_THREADS", 24))
 _PW_MIN_LEN            = int(os.environ.get("NOBA_PW_MIN_LEN", 8))
 MAX_CONCURRENT_JOBS    = int(os.environ.get("NOBA_MAX_JOBS", 3))
 JOB_TIMEOUT            = int(os.environ.get("NOBA_JOB_TIMEOUT", 300))
-JOB_MAX_OUTPUT         = 64 * 1024
+JOB_MAX_OUTPUT         = 256 * 1024
 JOB_RETENTION_DAYS     = int(os.environ.get("NOBA_JOB_RETENTION_DAYS", 30))
 
 # ── YAML config keys ─────────────────────────────────────────────────────────

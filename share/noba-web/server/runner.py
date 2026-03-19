@@ -136,11 +136,17 @@ class JobRunner:
             entry["process"] = proc
 
             # Stream stdout/stderr capped at JOB_MAX_OUTPUT
+            # Collapse \r-based progress lines (rsync --info=progress2, etc.)
+            # to keep only the last update per burst.
             total = 0
             for line in iter(proc.stdout.readline, b""):
                 if entry["cancelled"]:
                     break
                 decoded = line.decode("utf-8", errors="replace")
+                # Collapse carriage-return progress: keep only last segment
+                if "\r" in decoded:
+                    parts = decoded.split("\r")
+                    decoded = parts[-1] if parts[-1].strip() else parts[-2] + "\n" if len(parts) > 1 else decoded
                 if total + len(decoded) <= JOB_MAX_OUTPUT:
                     output_buf.append(decoded)
                     total += len(decoded)
