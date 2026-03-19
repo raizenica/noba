@@ -143,10 +143,16 @@ class JobRunner:
                 if entry["cancelled"]:
                     break
                 decoded = line.decode("utf-8", errors="replace")
-                # Collapse carriage-return progress: keep only last segment
+                # Collapse carriage-return progress: keep only the last non-empty segment
                 if "\r" in decoded:
                     parts = decoded.split("\r")
-                    decoded = parts[-1] if parts[-1].strip() else parts[-2] + "\n" if len(parts) > 1 else decoded
+                    # Walk backwards to find the last segment with content
+                    for i in range(len(parts) - 1, -1, -1):
+                        if parts[i].strip():
+                            decoded = parts[i] if parts[i].endswith("\n") else parts[i] + "\n"
+                            break
+                    else:
+                        decoded = "\n"
                 if total + len(decoded) <= JOB_MAX_OUTPUT:
                     output_buf.append(decoded)
                     total += len(decoded)

@@ -597,8 +597,8 @@ def api_snapshot_diff(request: Request, auth=Depends(_get_auth)):
         elif sb and not sa:
             added.append(name)
         elif sa and sb:
-            # Same inode = hardlinked = unchanged
-            if sa.st_ino == sb.st_ino:
+            # Same device + inode = hardlinked = unchanged
+            if sa.st_dev == sb.st_dev and sa.st_ino == sb.st_ino:
                 unchanged.append(name)
             elif sa.st_size != sb.st_size or int(sa.st_mtime) != int(sb.st_mtime):
                 changed.append(name)
@@ -711,8 +711,10 @@ def api_config_history_download(filename: str, auth=Depends(_require_admin)):
         raise HTTPException(400, "Invalid filename")
     if not os.path.exists(path):
         raise HTTPException(404, "File not found")
+    with open(path, "rb") as f:
+        content = f.read()
     return Response(
-        content=open(path, "rb").read(),
+        content=content,
         media_type="application/x-yaml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
