@@ -3884,6 +3884,18 @@ async def api_agent_report(request: Request):
         for h in stale:
             del _agent_data[h]
         _agent_data[hostname] = body
+    # Persist agent metrics to history DB
+    try:
+        agent_metrics = [
+            (f"agent_{hostname}_cpu", body.get("cpu_percent", 0), ""),
+            (f"agent_{hostname}_mem", body.get("mem_percent", 0), ""),
+        ]
+        # Add disk percent for root/main partition
+        for disk in body.get("disks", [])[:1]:
+            agent_metrics.append((f"agent_{hostname}_disk", disk.get("percent", 0), disk.get("mount", "/")))
+        db.insert_metrics(agent_metrics)
+    except Exception:
+        pass
     # Return pending commands (piggybacked on the response)
     pending = []
     with _agent_cmd_lock:
@@ -3958,6 +3970,46 @@ def api_agent_results(hostname: str, auth=Depends(_get_auth)):
     """Get command execution results for an agent."""
     with _agent_cmd_lock:
         return _agent_cmd_results.get(hostname, [])
+
+
+@app.get("/api/agents/{hostname}/history")
+def api_agent_history(hostname: str, request: Request, auth=Depends(_get_auth)):
+    """Get historical metrics for an agent (CPU, RAM, disk)."""
+    hours = min(int(request.query_params.get("hours", "24")), 168)
+    metric = request.query_params.get("metric", "cpu")
+    metric_key = f"agent_{hostname}_{metric}"
+    return db.get_history(metric_key, range_hours=hours, resolution=120)
+
+
+@app.get("/api/sla/summary")
+def api_sla_summary(request: Request, auth=Depends(_get_auth)):
+    """SLA uptime summary across all agents and key services."""
+    hours = min(int(request.query_params.get("hours", "720")), 8760)  # default 30d, max 1yr
+    incidents = db.get_incidents(limit=1000, hours=hours)
+    # Calculate uptime per source
+    total_seconds = hours * 3600
+    downtime_by_source: dict[str, int] = {}
+    for inc in incidents:
+        source = inc.get("source", "unknown")
+        duration = (inc.get("resolved_at") or int(time.time())) - inc.get("timestamp", 0)
+        downtime_by_source[source] = downtime_by_source.get(source, 0) + max(duration, 0)
+    # Build SLA entries
+    sla = []
+    # Add agents
+    with _agent_data_lock:
+        for hostname in _agent_data:
+            down = downtime_by_source.get(hostname, 0)
+            uptime_pct = round(max(0, (total_seconds - down) / total_seconds * 100), 2)
+            sla.append({"name": hostname, "type": "agent", "uptime_pct": uptime_pct,
+                        "downtime_s": down, "incidents": sum(1 for i in incidents if i.get("source") == hostname)})
+    # Add alert-based services
+    for source, down in downtime_by_source.items():
+        if not any(s["name"] == source for s in sla):
+            uptime_pct = round(max(0, (total_seconds - down) / total_seconds * 100), 2)
+            sla.append({"name": source, "type": "service", "uptime_pct": uptime_pct,
+                        "downtime_s": down, "incidents": sum(1 for i in incidents if i.get("source") == source)})
+    sla.sort(key=lambda s: s["uptime_pct"])
+    return {"period_hours": hours, "sla": sla}
 
 
 @app.get("/api/agent/update")

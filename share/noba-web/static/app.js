@@ -380,6 +380,8 @@ function dashboard() {
         showGraylogModal: false, graylogQuery: '*', graylogResults: null, graylogLoading: false,
         agentKeys: '', statusPageServices: '', graylogUrl: '', graylogToken: '',
         agentCmdTarget: '', agentCmdInput: '', agentCmdSending: false, agentCmdOutput: {},
+        showSlaModal: false, slaData: null, slaLoading: false, slaPeriod: 720,
+        agentHistoryHost: '', agentHistoryData: [], agentHistoryMetric: 'cpu',
 
         // ── Live data ──────────────────────────────────────────────────────────
         timestamp: '--:--', uptime: '--', loadavg: '--', memory: '--',
