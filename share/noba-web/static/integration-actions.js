@@ -657,25 +657,30 @@ function integrationActionsMixin() {
         async runPaletteCommand() {
             if (!this.cmdPaletteTarget) return;
             this.agentCmdSending = true;
-            // Build params: convert numeric strings
-            var catEntry = CMD_CATALOG.find(function(c) { return c.type === this.cmdPaletteType; }.bind(this));
-            var cleanParams = {};
-            if (catEntry) {
-                for (var i = 0; i < catEntry.params.length; i++) {
-                    var p = catEntry.params[i];
-                    var val = (this.cmdPaletteParams[p.key] || '').toString().trim();
-                    if (val) {
-                        cleanParams[p.key] = p.numeric ? parseInt(val, 10) || val : val;
+            try {
+                // Build params: convert numeric strings
+                // Use this.CMD_CATALOG (component property) — the const is in app.js's closure
+                var catalog = this.CMD_CATALOG || [];
+                var catEntry = catalog.find(function(c) { return c.type === this.cmdPaletteType; }.bind(this));
+                var cleanParams = {};
+                if (catEntry) {
+                    for (var i = 0; i < catEntry.params.length; i++) {
+                        var p = catEntry.params[i];
+                        var val = (this.cmdPaletteParams[p.key] || '').toString().trim();
+                        if (val) {
+                            cleanParams[p.key] = p.numeric ? parseInt(val, 10) || val : val;
+                        }
                     }
                 }
+                var targets = this.cmdPaletteTarget === '__all__'
+                    ? (this.agents || []).filter(function(a) { return a.online; }).map(function(a) { return a.hostname; })
+                    : [this.cmdPaletteTarget];
+                for (var t = 0; t < targets.length; t++) {
+                    await this.sendAgentCmd(targets[t], this.cmdPaletteType, cleanParams);
+                }
+            } finally {
+                this.agentCmdSending = false;
             }
-            var targets = this.cmdPaletteTarget === '__all__'
-                ? (this.agents || []).filter(function(a) { return a.online; }).map(function(a) { return a.hostname; })
-                : [this.cmdPaletteTarget];
-            for (var t = 0; t < targets.length; t++) {
-                await this.sendAgentCmd(targets[t], this.cmdPaletteType, cleanParams);
-            }
-            this.agentCmdSending = false;
         },
 
         runPaletteCommandDirect(hostname, type, params) {
