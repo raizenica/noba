@@ -2605,6 +2605,45 @@ function actionsMixin() {
             this.installCmd = `irm "${server}/api/agent/update" -Headers @{"X-Agent-Key"="${key}"} -OutFile agent.py; python agent.py --server ${server} --key ${key} --once`;
         },
 
+        async fetchSla(hours) {
+            this.slaLoading = true;
+            try {
+                const res = await fetch(`/api/sla/summary?hours=${hours || this.slaPeriod}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) this.slaData = await res.json();
+            } catch { /* silent */ }
+            finally { this.slaLoading = false; }
+        },
+
+        async fetchAgentHistory(hostname, metric, hours) {
+            try {
+                const res = await fetch(`/api/agents/${encodeURIComponent(hostname)}/history?metric=${metric || 'cpu'}&hours=${hours || 24}`, {
+                    headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (res.ok) {
+                    this.agentHistoryData = await res.json();
+                    this.agentHistoryHost = hostname;
+                    this.agentHistoryMetric = metric || 'cpu';
+                    this.$nextTick(() => this.renderAgentHistoryChart());
+                }
+            } catch { /* silent */ }
+        },
+
+        renderAgentHistoryChart() {
+            const canvas = document.getElementById('agent-history-chart');
+            if (!canvas || !this.agentHistoryData.length) return;
+            if (this._agentHistChart instanceof Chart) this._agentHistChart.destroy();
+            const labels = this.agentHistoryData.map(d => new Date(d.time * 1000).toLocaleTimeString());
+            const values = this.agentHistoryData.map(d => d.value);
+            const colors = { cpu: '#00c8ff', mem: '#00e676', disk: '#ffb300' };
+            this._agentHistChart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: { labels, datasets: [{ label: `${this.agentHistoryHost} ${this.agentHistoryMetric}%`, data: values, borderColor: colors[this.agentHistoryMetric] || '#00c8ff', borderWidth: 1.5, pointRadius: 0, fill: true, backgroundColor: (colors[this.agentHistoryMetric] || '#00c8ff') + '15' }] },
+                options: { responsive: true, animation: { duration: 0 }, scales: { y: { min: 0, max: 100 } }, plugins: { legend: { labels: { color: '#c8dff0' } } } },
+            });
+        },
+
         // -- Incident Timeline (Round 11) ------------------------------------
 
         async fetchIncidents(hours) {

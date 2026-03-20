@@ -143,6 +143,9 @@
             <button class="icon-btn" @click="showCorrelateModal=true" title="Metrics Correlation" x-show="authenticated" x-cloak>
                 <i class="fas fa-chart-line"></i>
             </button>
+            <button class="icon-btn" @click="showSlaModal=true; fetchSla()" title="SLA Dashboard" x-show="authenticated" x-cloak>
+                <i class="fas fa-tachometer-alt"></i>
+            </button>
             <button class="icon-btn" @click="showSyncModal=true; fetchSyncStatus()" title="Cross-Site Status" x-show="authenticated && Object.keys(siteMap).length > 0" x-cloak>
                 <i class="fas fa-sync"></i>
             </button>
@@ -5088,6 +5091,7 @@
                                 </div>
                                 <!-- Quick command buttons -->
                                 <div x-show="a.online && userRole==='admin'" style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.3rem">
+                                    <button class="btn btn-xs" @click="fetchAgentHistory(a.hostname,'cpu')" title="History"><i class="fas fa-chart-area"></i></button>
                                     <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'ping')" title="Ping"><i class="fas fa-heartbeat"></i></button>
                                     <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'df -h'})" title="Disk usage"><i class="fas fa-hdd"></i></button>
                                     <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'uptime && free -h'})" title="System info"><i class="fas fa-info-circle"></i></button>
@@ -5231,6 +5235,56 @@
                     </div>
                 </div>
             </template>
+        </div>
+    </div>
+</div>
+
+<!-- ── SLA Dashboard Modal ───────────────────────────────────────── -->
+<div class="modal-overlay" x-show="showSlaModal" x-cloak @keydown.escape.window="showSlaModal=false" @click.self="showSlaModal=false">
+    <div class="modal-box" style="max-width:700px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title"><i class="fas fa-tachometer-alt"></i> SLA Dashboard<button class="modal-close" @click="showSlaModal=false">&times;</button></div>
+        <div style="padding:16px">
+            <div style="display:flex;gap:.4rem;margin-bottom:1rem">
+                <button class="btn btn-xs" :class="slaPeriod===168?'btn-primary':''" @click="slaPeriod=168; fetchSla(168)">7d</button>
+                <button class="btn btn-xs" :class="slaPeriod===720?'btn-primary':''" @click="slaPeriod=720; fetchSla(720)">30d</button>
+                <button class="btn btn-xs" :class="slaPeriod===2160?'btn-primary':''" @click="slaPeriod=2160; fetchSla(2160)">90d</button>
+            </div>
+            <div x-show="slaLoading" class="empty-msg">Calculating...</div>
+            <template x-if="slaData && !slaLoading">
+                <div>
+                    <template x-for="s in slaData.sla" :key="s.name">
+                        <div style="display:flex;align-items:center;gap:.6rem;padding:.5rem 0;border-bottom:1px solid var(--border)">
+                            <div style="flex:1">
+                                <div style="font-weight:600;font-size:.85rem" x-text="s.name"></div>
+                                <div style="font-size:.65rem;color:var(--text-muted)" x-text="s.type + ' · ' + s.incidents + ' incident(s)'"></div>
+                            </div>
+                            <div style="text-align:right">
+                                <div style="font-size:1.1rem;font-weight:700;font-family:var(--font-data)" :style="s.uptime_pct >= 99.9 ? 'color:var(--success)' : s.uptime_pct >= 99 ? 'color:var(--warning)' : 'color:var(--danger)'" x-text="s.uptime_pct + '%'"></div>
+                                <div style="width:120px;height:4px;background:var(--surface-2);border-radius:2px;margin-top:3px">
+                                    <div style="height:100%;border-radius:2px;transition:width .3s" :style="'width:' + s.uptime_pct + '%;background:' + (s.uptime_pct >= 99.9 ? 'var(--success)' : s.uptime_pct >= 99 ? 'var(--warning)' : 'var(--danger)')"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="slaData.sla.length === 0" class="empty-msg">No SLA data yet. Incidents will populate this over time.</div>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+
+<!-- ── Agent History Modal ──────────────────────────────────────── -->
+<div class="modal-overlay" x-show="agentHistoryHost" x-cloak @keydown.escape.window="agentHistoryHost=''" @click.self="agentHistoryHost=''">
+    <div class="modal-box" style="max-width:700px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title"><i class="fas fa-chart-area"></i> <span x-text="agentHistoryHost"></span> History<button class="modal-close" @click="agentHistoryHost=''">&times;</button></div>
+        <div style="padding:16px">
+            <div style="display:flex;gap:.4rem;margin-bottom:.8rem">
+                <button class="btn btn-xs" :class="agentHistoryMetric==='cpu'?'btn-primary':''" @click="fetchAgentHistory(agentHistoryHost,'cpu')">CPU</button>
+                <button class="btn btn-xs" :class="agentHistoryMetric==='mem'?'btn-primary':''" @click="fetchAgentHistory(agentHistoryHost,'mem')">RAM</button>
+                <button class="btn btn-xs" :class="agentHistoryMetric==='disk'?'btn-primary':''" @click="fetchAgentHistory(agentHistoryHost,'disk')">Disk</button>
+            </div>
+            <canvas id="agent-history-chart" height="250"></canvas>
+            <div x-show="agentHistoryData.length === 0" class="empty-msg">No history data yet. Agent metrics are recorded every 30 seconds.</div>
         </div>
     </div>
 </div>
