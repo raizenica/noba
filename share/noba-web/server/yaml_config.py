@@ -199,9 +199,13 @@ def write_yaml_settings(settings: dict) -> bool:
         else:
             config = {}
 
-        # Build web section (all WEB_KEYS except notification/backup-specific keys)
-        config["web"] = {k: v for k, v in settings.items()
-                         if k in WEB_KEYS and k not in _NOTIF_WEB_KEYS}
+        # Merge web section — only update keys present in the request,
+        # preserving existing values for keys not in this save
+        web = config.get("web") or {}
+        for k, v in settings.items():
+            if k in WEB_KEYS and k not in _NOTIF_WEB_KEYS:
+                web[k] = v
+        config["web"] = web
 
         # Build backup section from settings
         if any(k in settings for k in _BACKUP_WEB_KEYS):
