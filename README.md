@@ -133,6 +133,42 @@ Windows (PowerShell):
 .\install-agent.ps1 -Server "http://noba-server:8080" -Key "YOUR_KEY"
 ```
 
+### Docker
+
+```bash
+git clone https://github.com/raizenica/noba.git
+cd noba
+docker compose up -d
+```
+
+Open `http://localhost:8080` and check the logs for the generated admin password:
+```bash
+docker logs noba 2>&1 | grep password
+```
+
+**Volumes:**
+
+| Mount | Purpose |
+|-------|---------|
+| `./data/config:/app/config` | Settings, users, agent keys |
+| `./data/db:/app/data` | SQLite database (metrics, history, agent registry) |
+| `./data/certs:/app/certs:ro` | TLS certificates (optional) |
+| `/var/run/docker.sock:/var/run/docker.sock:ro` | Container monitoring (optional) |
+
+**Custom port or timezone:**
+```yaml
+ports:
+  - "9090:8080"
+environment:
+  - TZ=America/New_York
+```
+
+For Podman, mount the Podman socket instead of Docker's:
+```yaml
+volumes:
+  - /run/user/1000/podman/podman.sock:/var/run/docker.sock:ro
+```
+
 ## Configuration
 
 ```

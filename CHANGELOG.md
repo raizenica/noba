@@ -17,6 +17,7 @@ All notable changes to NOBA Command Center are documented in this file.
 - **HTML null guards** — Added optional chaining for `disk.attributes.*` SMART fields, null guard on `zfs.pools` iteration, and `typeof Chart` guard in `renderMultiChart()`.
 
 ### Changed
+- **README** — Added Docker section with docker compose instructions, volume table, port/TZ customization, and Podman note.
 - **Troubleshooting docs** — Added 3 new sections: agent commands stuck in queued, dashboard layout corruption, and stale browser cache after updates.
 - **`.gitignore`** — Added `.claude/worktrees/`, `.claude/agents/`, `.claude/skills/` to prevent local tooling state from being committed.
 
