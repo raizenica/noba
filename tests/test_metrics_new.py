@@ -46,7 +46,7 @@ class TestDomainExpiry:
         from server.metrics import check_domain_expiry
         assert check_domain_expiry([]) == []
 
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_parses_whois(self, mock_run):
         mock_run.return_value = "Registry Expiry Date: 2026-12-31T00:00:00Z\n"
         from server.metrics import check_domain_expiry
@@ -55,14 +55,14 @@ class TestDomainExpiry:
         assert result[0]["days"] is not None
         assert result[0]["days"] > 0
 
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_no_expiry_found(self, mock_run):
         mock_run.return_value = "Some random whois output\n"
         from server.metrics import check_domain_expiry
         result = check_domain_expiry(["example.com"])
         assert "error" in result[0]
 
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_parses_dash_date_format(self, mock_run):
         mock_run.return_value = "Expiry Date: 2027-06-15\n"
         from server.metrics import check_domain_expiry
@@ -71,7 +71,7 @@ class TestDomainExpiry:
         assert result[0]["days"] is not None
         assert result[0]["days"] > 0
 
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_multiple_domains(self, mock_run):
         mock_run.side_effect = [
             "Registry Expiry Date: 2026-12-31T00:00:00Z\n",
@@ -86,13 +86,13 @@ class TestDomainExpiry:
 
 # ── VPN / WireGuard status ───────────────────────────────────────────────────
 class TestVpnStatus:
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_no_wireguard(self, mock_run):
         mock_run.return_value = ""
         from server.metrics import get_vpn_status
         assert get_vpn_status() is None
 
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_with_peers(self, mock_run):
         mock_run.return_value = (
             "wg0\tpubkey\tpsk\t1.2.3.4:51820\t10.0.0.0/24\t1234567890\t1000\t2000"
@@ -106,7 +106,7 @@ class TestVpnStatus:
         assert result["peers"][0]["rx_bytes"] == 1000
         assert result["peers"][0]["tx_bytes"] == 2000
 
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_endpoint_none(self, mock_run):
         mock_run.return_value = (
             "wg0\tpubkey\tpsk\t(none)\t10.0.0.0/24\t0\t0\t0"
@@ -117,7 +117,7 @@ class TestVpnStatus:
         assert result["peers"][0]["endpoint"] == ""
         assert result["peers"][0]["last_handshake"] == 0
 
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_multiple_peers(self, mock_run):
         mock_run.return_value = (
             "wg0\tpk1\tpsk\t1.2.3.4:51820\t10.0.0.0/24\t1234567890\t100\t200\n"
@@ -128,7 +128,7 @@ class TestVpnStatus:
         assert result is not None
         assert result["peer_count"] == 2
 
-    @patch("server.metrics._run")
+    @patch("server.metrics.network._run")
     def test_short_line_skipped(self, mock_run):
         mock_run.return_value = "wg0\tpubkey\tpsk"
         from server.metrics import get_vpn_status
@@ -143,14 +143,14 @@ class TestCpuGovernor:
         result = get_cpu_governor()
         assert isinstance(result, str)
 
-    @patch("server.metrics._read_file")
+    @patch("server.metrics.system._read_file")
     def test_returns_governor_value(self, mock_read):
         mock_read.return_value = "performance"
         from server.metrics import get_cpu_governor
         result = get_cpu_governor()
         assert result == "performance"
 
-    @patch("server.metrics._read_file")
+    @patch("server.metrics.system._read_file")
     def test_returns_unknown_when_missing(self, mock_read):
         mock_read.return_value = "unknown"
         from server.metrics import get_cpu_governor
@@ -169,7 +169,7 @@ class TestWol:
         from server.metrics import send_wol
         assert send_wol("ZZ:ZZ:ZZ:ZZ:ZZ:ZZ") is False
 
-    @patch("server.metrics.socket")
+    @patch("server.metrics.services.socket")
     def test_valid_mac(self, mock_socket_mod):
         mock_sock = MagicMock()
         mock_socket_mod.socket.return_value.__enter__ = MagicMock(return_value=mock_sock)
@@ -182,7 +182,7 @@ class TestWol:
         result = send_wol("00:11:22:33:44:55")
         assert result is True
 
-    @patch("server.metrics.socket")
+    @patch("server.metrics.services.socket")
     def test_valid_mac_with_dashes(self, mock_socket_mod):
         mock_sock = MagicMock()
         mock_socket_mod.socket.return_value.__enter__ = MagicMock(return_value=mock_sock)
@@ -198,7 +198,7 @@ class TestWol:
 
 # ── Game server probe ────────────────────────────────────────────────────────
 class TestGameServerProbe:
-    @patch("server.metrics.socket")
+    @patch("server.metrics.services.socket")
     def test_online_server(self, mock_socket_mod):
         mock_sock = MagicMock()
         mock_socket_mod.socket.return_value.__enter__ = MagicMock(return_value=mock_sock)
@@ -220,7 +220,7 @@ class TestGameServerProbe:
         assert result["host"] == "192.0.2.1"
         assert result["port"] == 99999
 
-    @patch("server.metrics.socket")
+    @patch("server.metrics.services.socket")
     def test_connection_refused(self, mock_socket_mod):
         mock_sock = MagicMock()
         mock_sock.connect.side_effect = ConnectionRefusedError("refused")

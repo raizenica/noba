@@ -789,7 +789,7 @@
                 <div class="row"><span class="row-label">Tailnet</span><span class="row-val" x-text="tailscale?.tailnet || '—'"></span></div>
                 <div class="row"><span class="row-label">Nodes Online</span><span class="row-val" style="color:var(--success)" x-text="(tailscale?.onlineCount||0) + '/' + (tailscale?.totalCount||0)"></span></div>
                 <div style="margin-top:.5rem;max-height:150px;overflow-y:auto">
-                    <template x-for="p in (tailscale?.peers||[]).filter(n=>n.online).slice(0,8)" :key="p.hostname">
+                    <template x-for="p in (tailscale?.peers||[]).filter(n=>n.online).slice(0,8)" :key="p.hostname + '-' + (p.ip||'')">
                         <div class="row" style="font-size:.75rem">
                             <span class="row-label"><i class="fas fa-circle dot-up" style="font-size:.35rem;margin-right:4px"></i><span x-text="p.hostname"></span></span>
                             <span class="row-val" style="opacity:.7" x-text="p.ip"></span>
@@ -4916,7 +4916,7 @@
                     <div class="row" style="margin-bottom:.8rem"><span class="row-label">Tailnet</span><span class="row-val" x-text="tailscale?.tailnet"></span></div>
                     <div class="row" style="margin-bottom:.8rem"><span class="row-label">This Node</span><span class="row-val" x-text="(tailscale?.self?.hostname||'') + ' (' + (tailscale?.self?.ip||'') + ')'"></span></div>
                     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.6rem">
-                        <template x-for="p in (tailscale?.peers||[]).sort((a,b)=>b.online-a.online)" :key="p.hostname">
+                        <template x-for="p in (tailscale?.peers||[]).sort((a,b)=>b.online-a.online)" :key="p.hostname + '-' + (p.ip||'')">
                             <div style="padding:.6rem;border-radius:6px;border:1px solid var(--border);background:var(--surface-2)">
                                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">
                                     <span style="font-weight:600;font-size:.85rem" x-text="p.hostname"></span>
@@ -5300,6 +5300,9 @@
 
 <style>.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}</style>
 
+<script src="/static/integration-actions.js"></script>
+<script src="/static/automation-actions.js"></script>
+<script src="/static/system-actions.js"></script>
 <script src="/static/auth-mixin.js"></script>
 <script src="/static/actions-mixin.js"></script>
 <script src="/static/app.js"></script>

@@ -346,7 +346,7 @@ def collect_stats(qs: dict) -> dict:
 
     # ── Agent data ────────────────────────────────────────────────────────────
     try:
-        from .app import _agent_data, _agent_data_lock, _AGENT_MAX_AGE
+        from .agent_store import _agent_data, _agent_data_lock, _AGENT_MAX_AGE
         now_a = time.time()
         with _agent_data_lock:
             agent_list = []
@@ -413,6 +413,11 @@ def collect_stats(qs: dict) -> dict:
             if cert.get("days") is not None:
                 batch.append(("cert_expiry_days", cert["days"], cert.get("host", "")))
         db.insert_metrics(batch)
+        now_s = int(time.time())
+        if now_s % 60 < STATS_INTERVAL:  # roughly once per minute
+            db.rollup_to_1m()
+        if now_s % 3600 < STATS_INTERVAL:  # roughly once per hour
+            db.rollup_to_1h()
     except Exception as e:
         logger.error("History insert failed: %s", e)
 

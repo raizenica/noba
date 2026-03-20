@@ -526,15 +526,15 @@ if [[ -d "$server_pkg_src" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         dry "install $server_pkg_src/ → $server_pkg_dst/"
     else
-        # Validate Python syntax before deploying
+        # Validate Python syntax before deploying (top-level + subdirs)
         _syntax_ok=true
-        for pyf in "$server_pkg_src"/*.py; do
-            [[ -f "$pyf" ]] || continue
+        while IFS= read -r pyf; do
             if ! python3 -m py_compile "$pyf" 2>/dev/null; then
-                say_err "Syntax error in $(basename "$pyf") — aborting deploy"
+                say_err "Syntax error in ${pyf#"$server_pkg_src"/} — aborting deploy"
                 _syntax_ok=false
             fi
-        done
+        done < <(find "$server_pkg_src" -name '*.py' -not -path '*__pycache__*')
+
         if [[ "$_syntax_ok" != true ]]; then
             say_err "Fix syntax errors before installing."
             exit 1
@@ -543,6 +543,11 @@ if [[ -d "$server_pkg_src" ]]; then
         # Clean stale bytecode cache and leftover nested dirs
         find "$server_pkg_dst" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
         [[ -d "$server_pkg_dst/server" ]] && rm -rf "$server_pkg_dst/server"
+
+        # Remove stale .py files replaced by packages (v2.x → v3.x migration)
+        for stale in db.py integrations.py metrics.py; do
+            [[ -f "$server_pkg_dst/$stale" ]] && rm -f "$server_pkg_dst/$stale" && say "Cleaned stale $stale (replaced by package)"
+        done
 
         # Deploy all .py files (top-level)
         mkdir -p "$server_pkg_dst"
@@ -569,7 +574,7 @@ if [[ -d "$server_pkg_src" ]]; then
     fi
 fi
 
-for f in style.css app.js auth-mixin.js actions-mixin.js favicon.ico; do
+for f in style.css app.js auth-mixin.js actions-mixin.js integration-actions.js automation-actions.js system-actions.js favicon.ico; do
     src="$SCRIPT_DIR/share/noba-web/static/$f"
     dst="$LIBEXEC_DIR/web/static/$f"
     if [[ -f "$src" ]]; then

@@ -1,122 +1,15 @@
-"""Noba – External service integrations (Plex, Pi-hole, Kuma, TrueNAS, etc.)."""
+"""Simple integrations using the shared _client with no-auth, header-token, or basic-auth."""
 from __future__ import annotations
 
 import logging
-import os
 import re
 from datetime import date, timedelta
 
 import httpx
 
-from .config import VERSION
-
-_POOL_CONNECTIONS = int(os.environ.get("NOBA_POOL_CONNECTIONS", 20))
-_POOL_KEEPALIVE = int(os.environ.get("NOBA_POOL_KEEPALIVE", 10))
+from .base import _client, _http_get
 
 logger = logging.getLogger("noba")
-
-# Shared client with connection pooling and sensible defaults.
-_client = httpx.Client(
-    timeout=4,
-    follow_redirects=True,
-    limits=httpx.Limits(
-        max_connections=_POOL_CONNECTIONS,
-        max_keepalive_connections=_POOL_KEEPALIVE,
-        keepalive_expiry=30,
-    ),
-)
-
-
-def _http_get(url: str, headers: dict | None = None, timeout: int = 4) -> dict | list:
-    r = _client.get(url, headers=headers or {}, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
-
-
-# ── Pi-hole v6 session cache ────────────────────────────────────────────────
-import threading  # noqa: E402
-import time  # noqa: E402
-
-_pihole_sessions: dict[str, tuple[str, float]] = {}
-_pihole_session_lock = threading.Lock()
-
-
-def _pihole_v6_auth(base: str, password: str) -> str:
-    """Authenticate to Pi-hole v6 and return session ID."""
-    with _pihole_session_lock:
-        cached = _pihole_sessions.get(base)
-        if cached and time.time() < cached[1]:
-            return cached[0]
-    try:
-        r = _client.post(f"{base}/api/auth", json={"password": password}, timeout=4)
-        data = r.json()
-        sid = data.get("session", {}).get("sid") or ""
-        if sid:
-            with _pihole_session_lock:
-                _pihole_sessions[base] = (sid, time.time() + 280)  # ~5min TTL
-        return sid
-    except (httpx.HTTPError, ValueError):
-        return ""
-
-
-# ── Pi-hole ───────────────────────────────────────────────────────────────────
-def get_pihole(url: str, token: str, password: str = "") -> dict | None:
-    if not url:
-        return None
-    base = (url if url.startswith("http") else "http://" + url).rstrip("/").replace("/admin", "")
-    hdrs = {"User-Agent": f"noba-web/{VERSION}", "Accept": "application/json"}
-
-    # v6 API — authenticate with password or token
-    sid = ""
-    if password:
-        sid = _pihole_v6_auth(base, password)
-    if not sid and token:
-        sid = token
-    if sid:
-        hdrs["sid"] = sid
-
-    try:
-        data = _http_get(f"{base}/api/stats/summary", hdrs)
-        return {
-            "queries": data.get("queries", {}).get("total", 0),
-            "blocked": data.get("ads", {}).get("blocked", 0),
-            "percent": round(data.get("ads", {}).get("percentage", 0.0), 1),
-            "status":  data.get("gravity", {}).get("status", "unknown"),
-            "domains": f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}",
-        }
-    except (httpx.HTTPError, KeyError, ValueError):
-        # If auth error and password set, clear cache and retry once
-        if password:
-            with _pihole_session_lock:
-                _pihole_sessions.pop(base, None)
-            sid = _pihole_v6_auth(base, password)
-            if sid:
-                hdrs["sid"] = sid
-                try:
-                    data = _http_get(f"{base}/api/stats/summary", hdrs)
-                    return {
-                        "queries": data.get("queries", {}).get("total", 0),
-                        "blocked": data.get("ads", {}).get("blocked", 0),
-                        "percent": round(data.get("ads", {}).get("percentage", 0.0), 1),
-                        "status":  data.get("gravity", {}).get("status", "unknown"),
-                        "domains": f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}",
-                    }
-                except (httpx.HTTPError, KeyError, ValueError):
-                    pass
-
-    # v5 legacy API
-    try:
-        auth_suffix = f"&auth={token}" if token else ""
-        data = _http_get(f"{base}/admin/api.php?summaryRaw{auth_suffix}")
-        return {
-            "queries": data.get("dns_queries_today", 0),
-            "blocked": data.get("ads_blocked_today", 0),
-            "percent": round(data.get("ads_percentage_today", 0), 1),
-            "status":  data.get("status", "enabled"),
-            "domains": f"{data.get('domains_being_blocked', 0):,}",
-        }
-    except (httpx.HTTPError, KeyError, ValueError):
-        return None
 
 
 # ── Plex ──────────────────────────────────────────────────────────────────────
@@ -201,84 +94,25 @@ def get_servarr(url: str, key: str) -> dict | None:
         return {"queue_count": 0, "status": "offline"}
 
 
-# ── qBittorrent ───────────────────────────────────────────────────────────────
-def get_qbit(url: str, user: str, password: str) -> dict | None:
-    if not url or not user:
+# ── Speedtest Tracker ────────────────────────────────────────────────────────
+def get_speedtest(url: str):
+    if not url:
         return None
-    base   = url.rstrip("/")
-    result = {"dl_speed": 0, "up_speed": 0, "active_torrents": 0, "status": "offline"}
     try:
-        # Use a separate client to avoid cookie jar contamination on the shared _client
-        with httpx.Client(timeout=4) as qclient:
-            r1 = qclient.post(
-                f"{base}/api/v2/auth/login",
-                data={"username": user, "password": password},
-            )
-        cookie = r1.headers.get("set-cookie")
-        if not cookie:
-            return result
-        r2 = _client.get(
-            f"{base}/api/v2/sync/maindata",
-            headers={"Cookie": cookie},
-            timeout=4,
-        )
-        d = r2.json()
-        state = d.get("server_state", {})
-        result.update({
-            "dl_speed":       state.get("dl_info_speed", 0),
-            "up_speed":       state.get("up_info_speed", 0),
-            "active_torrents": sum(
-                1 for t in d.get("torrents", {}).values()
-                if t.get("state") in ("downloading", "stalledDL", "metaDL")
-            ),
+        base = url.rstrip("/")
+        data = _http_get(f"{base}/api/speedtest/latest")
+        if not data or not data.get("data"):
+            return None
+        r = data["data"]
+        return {
+            "download": round(r.get("download", 0) / 1_000_000, 1),
+            "upload": round(r.get("upload", 0) / 1_000_000, 1),
+            "ping": round(r.get("ping", 0), 1),
+            "server": r.get("server_name", ""),
             "status": "online",
-        })
-    except (httpx.HTTPError, KeyError, ValueError):
-        pass
-    return result
-
-
-# ── Proxmox VE ────────────────────────────────────────────────────────────────
-def get_proxmox(url: str, user: str, token_name: str, token_value: str) -> dict | None:
-    if not url or not user or not token_name or not token_value:
+        }
+    except (httpx.HTTPError, KeyError, ValueError, TypeError):
         return None
-    base      = url.rstrip("/")
-    user_full = user if "@" in user else f"{user}@pam"
-    auth_hdr  = f"PVEAPIToken={user_full}!{token_name}={token_value}"
-    hdrs      = {"Authorization": auth_hdr, "Accept": "application/json"}
-    result    = {"nodes": [], "vms": [], "status": "offline"}
-    try:
-        nodes_data = _http_get(f"{base}/api2/json/nodes", hdrs, timeout=5).get("data", [])
-        for node in nodes_data:
-            node_name = node.get("node", "unknown")
-            maxmem    = node.get("maxmem", 1) or 1
-            result["nodes"].append({
-                "name":        node_name,
-                "status":      node.get("status", "unknown"),
-                "cpu":         round(node.get("cpu", 0) * 100, 1),
-                "mem_percent": round(node.get("mem", 0) / maxmem * 100, 1),
-            })
-            for ep, vtype in (("qemu", "qemu"), ("lxc", "lxc")):
-                try:
-                    for vm in _http_get(
-                        f"{base}/api2/json/nodes/{node_name}/{ep}", hdrs, timeout=4
-                    ).get("data", [])[:30]:
-                        mmem = vm.get("maxmem", 1) or 1
-                        result["vms"].append({
-                            "vmid":        vm.get("vmid"),
-                            "name":        vm.get("name", f"{vtype}-{vm.get('vmid')}"),
-                            "type":        vtype,
-                            "node":        node_name,
-                            "status":      vm.get("status", "unknown"),
-                            "cpu":         round(vm.get("cpu", 0) * 100, 1),
-                            "mem_percent": round(vm.get("mem", 0) / mmem * 100, 1),
-                        })
-                except (httpx.HTTPError, KeyError, ValueError):
-                    pass
-        result["status"] = "online"
-    except (httpx.HTTPError, KeyError, ValueError):
-        pass
-    return result
 
 
 # ── AdGuard Home ─────────────────────────────────────────────────────────────
@@ -322,163 +156,6 @@ def get_jellyfin(url: str, key: str):
         }
     except (httpx.HTTPError, KeyError, ValueError):
         return {"streams": 0, "status": "offline"}
-
-
-# ── Home Assistant ───────────────────────────────────────────────────────────
-def get_hass(url: str, token: str):
-    if not url or not token:
-        return None
-    try:
-        base = url.rstrip("/")
-        hdrs = {"Authorization": f"Bearer {token}"}
-        states = _http_get(f"{base}/api/states", hdrs)
-        if not isinstance(states, list):
-            return None
-        domains = {}
-        for e in states:
-            d = e.get("entity_id", "").split(".")[0]
-            domains[d] = domains.get(d, 0) + 1
-        lights_on = sum(1 for e in states if e.get("entity_id", "").startswith("light.") and e.get("state") == "on")
-        switches_on = sum(1 for e in states if e.get("entity_id", "").startswith("switch.") and e.get("state") == "on")
-        automations = domains.get("automation", 0)
-        return {
-            "entities": len(states), "automations": automations,
-            "lights_on": lights_on, "switches_on": switches_on,
-            "domains": domains, "status": "online",
-        }
-    except (httpx.HTTPError, KeyError, ValueError):
-        return None
-
-
-def get_hass_entities(url: str, token: str, entity_filter: str = "") -> dict | None:
-    """Fetch detailed Home Assistant entity states with optional domain filter."""
-    if not url or not token:
-        return None
-    try:
-        base = url.rstrip("/")
-        hdrs = {"Authorization": f"Bearer {token}"}
-        states = _http_get(f"{base}/api/states", hdrs)
-        if not isinstance(states, list):
-            return None
-        entities = []
-        for e in states:
-            eid = e.get("entity_id", "")
-            domain = eid.split(".")[0] if "." in eid else ""
-            if entity_filter and domain != entity_filter:
-                continue
-            state = e.get("state", "unknown")
-            attrs = e.get("attributes", {})
-            entity = {
-                "entity_id": eid,
-                "domain": domain,
-                "state": state,
-                "name": attrs.get("friendly_name", eid),
-                "icon": attrs.get("icon", ""),
-            }
-            # Add domain-specific attributes
-            if domain == "sensor":
-                entity["unit"] = attrs.get("unit_of_measurement", "")
-                entity["device_class"] = attrs.get("device_class", "")
-            elif domain == "light":
-                entity["brightness"] = attrs.get("brightness")
-                entity["color_temp"] = attrs.get("color_temp")
-                entity["rgb_color"] = attrs.get("rgb_color")
-            elif domain == "climate":
-                entity["temperature"] = attrs.get("temperature")
-                entity["current_temperature"] = attrs.get("current_temperature")
-                entity["hvac_action"] = attrs.get("hvac_action", "")
-            elif domain == "media_player":
-                entity["media_title"] = attrs.get("media_title", "")
-                entity["source"] = attrs.get("source", "")
-            elif domain in ("binary_sensor", "switch", "input_boolean"):
-                entity["device_class"] = attrs.get("device_class", "")
-            elif domain == "cover":
-                entity["current_position"] = attrs.get("current_position")
-            if "battery_level" in attrs:
-                entity["battery"] = attrs.get("battery_level")
-            entities.append(entity)
-        return {"entities": entities[:500], "total": len(states)}
-    except (httpx.HTTPError, KeyError, ValueError):
-        return None
-
-
-def get_hass_services(url: str, token: str) -> list | None:
-    """Fetch available Home Assistant services."""
-    if not url or not token:
-        return None
-    try:
-        base = url.rstrip("/")
-        hdrs = {"Authorization": f"Bearer {token}"}
-        services = _http_get(f"{base}/api/services", hdrs)
-        if not isinstance(services, list):
-            return None
-        result = []
-        for svc in services:
-            domain = svc.get("domain", "")
-            for name, info in svc.get("services", {}).items():
-                result.append({
-                    "domain": domain,
-                    "service": name,
-                    "name": info.get("name", name),
-                    "description": info.get("description", "")[:100],
-                })
-        return result
-    except (httpx.HTTPError, KeyError, ValueError):
-        return None
-
-
-# ── UniFi Controller ─────────────────────────────────────────────────────────
-def get_unifi(url: str, user: str, password: str, site: str = "default"):
-    if not url or not user:
-        return None
-    try:
-        base = url.rstrip("/")
-        site = site or "default"
-        # Login — use a separate client to avoid cookie jar contamination
-        with httpx.Client(timeout=4, verify=False) as uclient:
-            login_r = uclient.post(f"{base}/api/login", json={"username": user, "password": password}, headers={"Referer": base})
-            if login_r.status_code != 200:
-                return None
-            cookies = login_r.cookies
-            # Devices
-            dev_r = uclient.get(f"{base}/api/s/{site}/stat/device", cookies=cookies)
-            devices = dev_r.json().get("data", []) if dev_r.status_code == 200 else []
-            # Clients
-            sta_r = uclient.get(f"{base}/api/s/{site}/stat/sta", cookies=cookies)
-            clients = sta_r.json().get("data", []) if sta_r.status_code == 200 else []
-            adopted = sum(1 for d in devices if d.get("adopted"))
-            # Logout — release the session on the controller
-            try:
-                uclient.post(f"{base}/api/logout", cookies=cookies)
-            except Exception:
-                pass
-        return {
-            "devices": len(devices), "adopted": adopted,
-            "clients": len(clients), "status": "online",
-        }
-    except (httpx.HTTPError, KeyError, ValueError):
-        return None
-
-
-# ── Speedtest Tracker ────────────────────────────────────────────────────────
-def get_speedtest(url: str):
-    if not url:
-        return None
-    try:
-        base = url.rstrip("/")
-        data = _http_get(f"{base}/api/speedtest/latest")
-        if not data or not data.get("data"):
-            return None
-        r = data["data"]
-        return {
-            "download": round(r.get("download", 0) / 1_000_000, 1),
-            "upload": round(r.get("upload", 0) / 1_000_000, 1),
-            "ping": round(r.get("ping", 0), 1),
-            "server": r.get("server_name", ""),
-            "status": "online",
-        }
-    except (httpx.HTTPError, KeyError, ValueError, TypeError):
-        return None
 
 
 # ── Tautulli ─────────────────────────────────────────────────────────────────
@@ -923,36 +600,6 @@ def get_esphome(url: str) -> dict | None:
         return None
 
 
-# ── UniFi Protect ────────────────────────────────────────────────────────────
-def get_unifi_protect(url: str, user: str, password: str) -> dict | None:
-    if not url or not user:
-        return None
-    try:
-        base = url.rstrip("/")
-        with httpx.Client(timeout=6, verify=False, follow_redirects=True) as up_client:
-            login_r = up_client.post(
-                f"{base}/api/auth/login",
-                json={"username": user, "password": password},
-            )
-            login_r.raise_for_status()
-            cam_r = up_client.get(f"{base}/proxy/protect/api/cameras")
-            cam_r.raise_for_status()
-            cameras = cam_r.json()
-
-        cam_list = cameras if isinstance(cameras, list) else []
-        recording = sum(
-            1 for c in cam_list
-            if c.get("isRecording") or c.get("recordingSettings", {}).get("mode") != "never"
-        )
-        return {
-            "cameras": len(cam_list),
-            "recording": recording,
-            "status": "online",
-        }
-    except (httpx.HTTPError, KeyError, ValueError):
-        return None
-
-
 # ── PiKVM ────────────────────────────────────────────────────────────────────
 def get_pikvm(url: str, user: str, password: str) -> dict | None:
     if not url:
@@ -1291,8 +938,8 @@ def get_scrutiny_intelligence(url: str) -> list[dict] | None:
                             remaining = max(0, 4000 - attr5_vals[-1][1])
                             months_to_fail = remaining / growth_rate if growth_rate > 0 else 999
                             if months_to_fail < 120:
-                                from datetime import datetime, timedelta  # noqa: PLC0415
-                                est_date = datetime.now() + timedelta(days=months_to_fail * 30)
+                                from datetime import datetime, timedelta as td  # noqa: PLC0415
+                                est_date = datetime.now() + td(days=months_to_fail * 30)
                                 estimated = est_date.strftime("%Y-%m")
                     elif status >= 2:
                         risk_score = 25  # Failed status but stable attributes

@@ -162,7 +162,7 @@ def _execute_heal(action_cfg: dict, rule_id: str, read_settings_fn) -> bool:
             if not auto:
                 logger.warning("Heal automation '%s' not found", target)
                 return False
-            from .app import _AUTO_BUILDERS, _run_workflow
+            from .workflow_engine import _AUTO_BUILDERS, _run_workflow
             if auto["type"] == "workflow":
                 steps = auto["config"].get("steps", [])
                 if steps:

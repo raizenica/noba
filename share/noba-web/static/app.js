@@ -213,6 +213,9 @@ function dashboard() {
         // ── Spread mixins ────────────────────────────────────────────────────
         ...authMixin(),
         ...actionsMixin(),
+        ...integrationActionsMixin(),
+        ...automationActionsMixin(),
+        ...systemActionsMixin(),
 
         // ── UI & Visibility ────────────────────────────────────────────────────
         theme: autoTheme,
@@ -438,11 +441,12 @@ function dashboard() {
         editingBind: '',
 
         // Internal — never overwritten by server payloads
-        _es: null, _poll: null, _lastHeartbeat: 0,
-        _countdownTimer: null, _reconnecting: false,
+        _es: null, _lastHeartbeat: 0,
+        _reconnecting: false,
         _masonryObserver: null, _keydownHandler: null,
-        _logTimer: null, _cloudTimer: null, _heartbeatTimer: null,
         _spokenAlerts: new Set(),
+        _intervals: {},
+        _pending: {},
         _termSocket: null, _term: null, _termResizeObserver: null,
 
         // FIXED: plain object instead of Set so Alpine reactivity works correctly
@@ -558,19 +562,16 @@ function dashboard() {
 
             this.connectSSE();
 
-            if (this._logTimer) clearInterval(this._logTimer);
-            this._logTimer = setInterval(() => {
+            this._registerInterval('log', () => {
                 if (this.vis.logs && !this.showSettings) this.fetchLog();
             }, 12000);
 
-            if (this._cloudTimer) clearInterval(this._cloudTimer);
-            this._cloudTimer = setInterval(() => {
+            this._registerInterval('cloud', () => {
                 this.fetchCloudRemotes();
             }, 300_000);
 
             // Heartbeat watchdog — reconnects SSE if server goes silent for >15 s
-            if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
-            this._heartbeatTimer = setInterval(() => {
+            this._registerInterval('heartbeat', () => {
                 if (this.connStatus === 'sse' && this._lastHeartbeat &&
                     Date.now() - this._lastHeartbeat > 15_000 &&
                     !this._reconnecting) {
@@ -812,10 +813,38 @@ function dashboard() {
 
         // ── 5. Server Communication ────────────────────────────────────────────
 
+        // ── Interval registry ──────────────────────────────────────────────────
+
+        _registerInterval(name, fn, ms) {
+            if (this._intervals[name]) clearInterval(this._intervals[name]);
+            this._intervals[name] = setInterval(fn, ms);
+        },
+        _clearInterval(name) {
+            if (this._intervals[name]) {
+                clearInterval(this._intervals[name]);
+                delete this._intervals[name];
+            }
+        },
+        _clearAllIntervals() {
+            Object.keys(this._intervals).forEach(k => {
+                clearInterval(this._intervals[k]);
+                delete this._intervals[k];
+            });
+        },
+
+        // ── Request deduplication ──────────────────────────────────────────────
+
+        _deduplicatedFetch(url, opts) {
+            const key = url + (opts?.method || 'GET');
+            if (this._pending[key]) return this._pending[key];
+            this._pending[key] = fetch(url, opts).finally(() => delete this._pending[key]);
+            return this._pending[key];
+        },
+
         _startCountdown(interval = 5) {
-            clearInterval(this._countdownTimer);
+            this._clearInterval('countdown');
             this.countdown = interval;
-            this._countdownTimer = setInterval(() => {
+            this._registerInterval('countdown', () => {
                 if (this.countdown > 0) {
                     this.countdown--;
                 } else {
@@ -825,8 +854,7 @@ function dashboard() {
         },
 
         _stopCountdown() {
-            clearInterval(this._countdownTimer);
-            this._countdownTimer = null;
+            this._clearInterval('countdown');
         },
 
         _isVisibleForSite(cardKey) {
@@ -891,7 +919,7 @@ function dashboard() {
             this._reconnecting = true;
 
             if (this._es) { this._es.close(); this._es = null; }
-            if (this._poll) { clearInterval(this._poll); this._poll = null; }
+            this._clearInterval('poll');
 
             this._stopCountdown();
             this._lastHeartbeat = Date.now();
@@ -914,13 +942,13 @@ function dashboard() {
             this._es.onerror = () => {
                 this._reconnecting = false;
                 if (this._es) { this._es.close(); this._es = null; }
-                if (this._poll) return;   // already fell back to polling
+                if (this._intervals['poll']) return;   // already fell back to polling
                 this.connStatus = 'polling';
                 this._startCountdown(5);
 
                 setTimeout(() => {
                     this.refreshStats();
-                    this._poll = setInterval(() => {
+                    this._registerInterval('poll', () => {
                         this.refreshStats();
                         this._startCountdown(5);
                     }, 5000);
@@ -933,7 +961,7 @@ function dashboard() {
             if (!this.authenticated || this.refreshing) return;
             this.refreshing = true;
             try {
-                const res = await fetch(`/api/stats?${this._buildQueryParams()}`, {
+                const res = await this._deduplicatedFetch(`/api/stats?${this._buildQueryParams()}`, {
                     headers: { 'Authorization': 'Bearer ' + this._token() },
                 });
                 if (res.ok) {

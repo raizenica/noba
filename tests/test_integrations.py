@@ -62,7 +62,7 @@ class TestTautulli:
     def test_returns_none_when_no_key(self):
         assert get_tautulli("http://tautulli:8181", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.side_effect = [
             # get_activity response
@@ -98,7 +98,7 @@ class TestTautulli:
         assert len(result["top_users"]) == 2
         assert result["top_users"][0]["user"] == "Alice"
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         result = get_tautulli("http://tautulli:8181", "apikey")
@@ -116,7 +116,7 @@ class TestOverseerr:
     def test_returns_none_when_no_key(self):
         assert get_overseerr("http://overseerr:5055", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = {
             "pending": 3, "approved": 10, "available": 8, "total": 21,
@@ -129,7 +129,7 @@ class TestOverseerr:
         assert result["available"] == 8
         assert result["total"] == 21
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_overseerr("http://overseerr:5055", "apikey") is None
@@ -146,7 +146,7 @@ class TestProwlarr:
     def test_returns_none_when_no_key(self):
         assert get_prowlarr("http://prowlarr:9696", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = [
             {"id": 1, "name": "NZBgeek"},
@@ -157,7 +157,7 @@ class TestProwlarr:
         assert result["status"] == "online"
         assert result["indexer_count"] == 2
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_prowlarr("http://prowlarr:9696", "apikey") is None
@@ -174,7 +174,7 @@ class TestServarrExtended:
     def test_returns_none_when_no_key(self):
         assert get_servarr_extended("http://radarr:7878", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.side_effect = [
             {"totalRecords": 5},                         # queue
@@ -193,7 +193,7 @@ class TestServarrExtended:
         assert result["free_space_gb"] == 3.0
         assert result["service"] == "radarr"
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_servarr_extended("http://radarr:7878", "key") is None
@@ -210,7 +210,7 @@ class TestServarrCalendar:
     def test_returns_none_when_no_key(self):
         assert get_servarr_calendar("http://sonarr:8989", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_episodes_on_success(self, mock_get):
         mock_get.return_value = [
             {
@@ -231,7 +231,7 @@ class TestServarrCalendar:
         assert result[1]["title"] == "The Matrix 5"
         assert result[1]["type"] == "movie"
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_servarr_calendar("http://sonarr:8989", "key") is None
@@ -248,7 +248,7 @@ class TestNextcloud:
     def test_returns_none_when_no_user(self):
         assert get_nextcloud("http://nc:443", "", "pass") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = {
             "ocs": {
@@ -273,7 +273,7 @@ class TestNextcloud:
         assert result["version"] == "28.0.1"
         assert result["storage_free_gb"] == 50.0
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_nextcloud("http://nc:443", "admin", "pass") is None
@@ -287,7 +287,7 @@ class TestTraefik:
     def test_returns_none_when_no_url(self):
         assert get_traefik("") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.side_effect = [
             # routers
@@ -305,7 +305,7 @@ class TestTraefik:
         assert result["services"] == 2
         assert result["errors"] >= 1
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_traefik("http://traefik:8080") is None
@@ -322,7 +322,7 @@ class TestNpm:
     def test_returns_none_when_no_token(self):
         assert get_npm("http://npm:81", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = [
             {"id": 1, "domain_names": ["app.example.com"]},
@@ -334,7 +334,7 @@ class TestNpm:
         assert result["status"] == "online"
         assert result["proxy_hosts"] == 3
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_npm("http://npm:81", "token") is None
@@ -351,7 +351,7 @@ class TestAuthentik:
     def test_returns_none_when_no_token(self):
         assert get_authentik("http://authentik:9000", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.side_effect = [
             # users
@@ -365,7 +365,7 @@ class TestAuthentik:
         assert result["users"] == 25
         assert result["failed_logins"] == 4
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_authentik("http://authentik:9000", "token") is None
@@ -382,7 +382,7 @@ class TestCloudflare:
     def test_returns_none_when_no_zone(self):
         assert get_cloudflare("cf-token", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = {
             "result": {
@@ -401,7 +401,7 @@ class TestCloudflare:
         assert result["bandwidth_gb"] == round(5 * 1024**3 / 1024**3, 2)
         assert result["cache_hit_ratio"] == 60.0
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_cloudflare("cf-token", "zone123") is None
@@ -418,7 +418,7 @@ class TestOmv:
     def test_returns_none_when_no_user(self):
         assert get_omv("http://omv:80", "", "pass") is None
 
-    @patch("server.integrations.httpx.Client")
+    @patch("server.integrations.simple.httpx.Client")
     def test_returns_data_on_success(self, mock_client_cls):
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
@@ -438,7 +438,7 @@ class TestOmv:
         assert result["filesystems"][0]["label"] == "data"
         assert result["filesystems"][0]["percent"] == 45.3
 
-    @patch("server.integrations.httpx.Client")
+    @patch("server.integrations.simple.httpx.Client")
     def test_returns_none_on_error(self, mock_client_cls):
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
@@ -458,7 +458,7 @@ class TestXcpng:
     def test_returns_none_when_no_user(self):
         assert get_xcpng("http://xcp:443", "", "pass") is None
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_data_on_success(self, mock_client):
         login_resp = _mock_response(json_data={"result": "session-id-123"})
         vm_resp = _mock_response(json_data={
@@ -491,7 +491,7 @@ class TestXcpng:
         assert result["vms"] == 2          # excludes control domain
         assert result["running_vms"] == 1  # only vm1 is Running
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_none_on_error(self, mock_client):
         mock_client.post.side_effect = httpx.HTTPError("fail")
         assert get_xcpng("http://xcp:443", "root", "pass") is None
@@ -508,7 +508,7 @@ class TestHomebridge:
     def test_returns_none_when_no_user(self):
         assert get_homebridge("http://hb:8581", "", "pass") is None
 
-    @patch("server.integrations.httpx.Client")
+    @patch("server.integrations.simple.httpx.Client")
     def test_returns_data_on_success(self, mock_client_cls):
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
@@ -540,7 +540,7 @@ class TestHomebridge:
         assert result["battery_devices"][0]["name"] == "Motion Sensor"
         assert result["battery_devices"][0]["battery"] == 15
 
-    @patch("server.integrations.httpx.Client")
+    @patch("server.integrations.simple.httpx.Client")
     def test_returns_none_on_error(self, mock_client_cls):
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
@@ -557,7 +557,7 @@ class TestZ2m:
     def test_returns_none_when_no_url(self):
         assert get_z2m("") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = [
             {
@@ -587,7 +587,7 @@ class TestZ2m:
         assert result["low_battery"][0]["name"] == "Door Sensor"
         assert result["low_battery"][0]["battery"] == 10
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_z2m("http://z2m:8080") is None
@@ -601,7 +601,7 @@ class TestEsphome:
     def test_returns_none_when_no_url(self):
         assert get_esphome("") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = [
             {"name": "esp-kitchen", "status": "ONLINE", "connected": True},
@@ -614,7 +614,7 @@ class TestEsphome:
         assert result["nodes"] == 3
         assert result["online"] == 2
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_esphome("http://esphome:6052") is None
@@ -631,7 +631,7 @@ class TestUnifiProtect:
     def test_returns_none_when_no_user(self):
         assert get_unifi_protect("http://protect:443", "", "pass") is None
 
-    @patch("server.integrations.httpx.Client")
+    @patch("server.integrations.unifi.httpx.Client")
     def test_returns_data_on_success(self, mock_client_cls):
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
@@ -652,7 +652,7 @@ class TestUnifiProtect:
         assert result["cameras"] == 3
         assert result["recording"] == 2  # Front Door + Garage
 
-    @patch("server.integrations.httpx.Client")
+    @patch("server.integrations.unifi.httpx.Client")
     def test_returns_none_on_error(self, mock_client_cls):
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
@@ -669,7 +669,7 @@ class TestPikvm:
     def test_returns_none_when_no_url(self):
         assert get_pikvm("", "admin", "admin") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = {"result": {"hw": {"platform": {"type": "rpi4"}}}}
         result = get_pikvm("http://pikvm:443", "admin", "admin")
@@ -677,7 +677,7 @@ class TestPikvm:
         assert result["status"] == "online"
         assert result["online"] is True
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_pikvm("http://pikvm:443", "admin", "admin") is None
@@ -694,7 +694,7 @@ class TestK8s:
     def test_returns_none_when_no_token(self):
         assert get_k8s("http://k8s:6443", "") is None
 
-    @patch("server.integrations.httpx.get")
+    @patch("server.integrations.simple.httpx.get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = _mock_response(json_data={
             "items": [
@@ -719,7 +719,7 @@ class TestK8s:
         assert result["running"] == 2
         assert result["namespaces"] == 2
 
-    @patch("server.integrations.httpx.get")
+    @patch("server.integrations.simple.httpx.get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_k8s("http://k8s:6443", "token") is None
@@ -736,7 +736,7 @@ class TestGitea:
     def test_returns_none_when_no_token(self):
         assert get_gitea("http://gitea:3000", "") is None
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_data_on_success(self, mock_client):
         resp = _mock_response(
             json_data={"data": [{"id": 1}]},
@@ -748,12 +748,12 @@ class TestGitea:
         assert result["status"] == "online"
         assert result["repos"] == 42
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_none_on_error(self, mock_client):
         mock_client.get.side_effect = httpx.HTTPError("fail")
         assert get_gitea("http://gitea:3000", "token") is None
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_falls_back_to_body_when_no_header(self, mock_client):
         resp = _mock_response(
             json_data={"data": [{"id": 1}, {"id": 2}]},
@@ -776,7 +776,7 @@ class TestGitlab:
     def test_returns_none_when_no_token(self):
         assert get_gitlab("http://gitlab:443", "") is None
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_data_on_success(self, mock_client):
         resp = _mock_response(
             json_data=[],
@@ -788,7 +788,7 @@ class TestGitlab:
         assert result["status"] == "online"
         assert result["projects"] == 55
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_none_on_error(self, mock_client):
         mock_client.get.side_effect = httpx.HTTPError("fail")
         assert get_gitlab("http://gitlab:443", "token") is None
@@ -802,7 +802,7 @@ class TestGithub:
     def test_returns_none_when_no_token(self):
         assert get_github("") is None
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_data_on_success(self, mock_client):
         resp = _mock_response(json_data=[
             {"id": 1, "full_name": "user/repo1"},
@@ -815,7 +815,7 @@ class TestGithub:
         assert result["status"] == "online"
         assert result["repos"] == 3
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_none_on_error(self, mock_client):
         mock_client.get.side_effect = httpx.HTTPError("fail")
         assert get_github("ghp_xxxx") is None
@@ -832,7 +832,7 @@ class TestPaperless:
     def test_returns_none_when_no_token(self):
         assert get_paperless("http://paperless:8000", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = {"count": 1234, "results": []}
         result = get_paperless("http://paperless:8000", "api-token")
@@ -840,7 +840,7 @@ class TestPaperless:
         assert result["status"] == "online"
         assert result["documents"] == 1234
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_paperless("http://paperless:8000", "token") is None
@@ -857,7 +857,7 @@ class TestVaultwarden:
     def test_returns_none_when_no_admin_token(self):
         assert get_vaultwarden("http://vw:80", "") is None
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_data_on_success(self, mock_client):
         resp = _mock_response(json_data=[], status_code=200)
         mock_client.get.return_value = resp
@@ -865,7 +865,7 @@ class TestVaultwarden:
         assert result is not None
         assert result["status"] == "online"
 
-    @patch("server.integrations._client")
+    @patch("server.integrations.simple._client")
     def test_returns_none_on_error(self, mock_client):
         mock_client.get.side_effect = httpx.HTTPError("fail")
         assert get_vaultwarden("http://vw:80", "admin-token") is None
@@ -882,7 +882,7 @@ class TestWeather:
     def test_returns_none_when_no_city(self):
         assert get_weather("owm-key", "") is None
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_data_on_success(self, mock_get):
         mock_get.return_value = {
             "weather": [{"description": "clear sky", "icon": "01d"}],
@@ -899,7 +899,7 @@ class TestWeather:
         assert result["icon"] == "01d"
         assert result["city"] == "London"
 
-    @patch("server.integrations._http_get")
+    @patch("server.integrations.simple._http_get")
     def test_returns_none_on_error(self, mock_get):
         mock_get.side_effect = httpx.HTTPError("fail")
         assert get_weather("owm-key", "London") is None
