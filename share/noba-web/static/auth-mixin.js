@@ -83,14 +83,11 @@ function authMixin() {
                         ...(this.userRole === 'admin' ? [this.fetchUsers()] : []),
                     ]);
                     this.connectSSE();
-                    if (this._logTimer) clearInterval(this._logTimer);
-                    this._logTimer = setInterval(() => {
+                    this._registerInterval('log', () => {
                         if (this.vis && this.vis.logs && !this.showSettings) this.fetchLog();
                     }, 12000);
-                    if (this._cloudTimer) clearInterval(this._cloudTimer);
-                    this._cloudTimer = setInterval(() => this.fetchCloudRemotes(), 300000);
-                    if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
-                    this._heartbeatTimer = setInterval(() => {
+                    this._registerInterval('cloud', () => this.fetchCloudRemotes(), 300000);
+                    this._registerInterval('heartbeat', () => {
                         if (this.connStatus === 'sse' && this._lastHeartbeat &&
                             Date.now() - this._lastHeartbeat > 15000 &&
                             !this._reconnecting) {
@@ -139,9 +136,8 @@ function authMixin() {
             this.showSessionsModal = false;
             // Cancel speech synthesis
             if (window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch {} }
-            this._stopCountdown();
+            this._clearAllIntervals();
             if (this._es)   { this._es.close();           this._es   = null; }
-            if (this._poll) { clearInterval(this._poll);  this._poll = null; }
             if (this._keydownHandler) {
                 document.removeEventListener('keydown', this._keydownHandler);
                 this._keydownHandler = null;
@@ -150,10 +146,6 @@ function authMixin() {
                 this._masonryObserver.disconnect();
                 this._masonryObserver = null;
             }
-            if (this._logTimer)      { clearInterval(this._logTimer);      this._logTimer = null; }
-            if (this._cloudTimer)    { clearInterval(this._cloudTimer);    this._cloudTimer = null; }
-            if (this._heartbeatTimer){ clearInterval(this._heartbeatTimer);this._heartbeatTimer = null; }
-            this.stopJobNotifPoller();
         },
 
         // ── Admin user management ───────────────────────────────────────────────

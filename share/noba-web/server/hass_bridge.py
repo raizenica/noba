@@ -73,7 +73,7 @@ class HAEventBridge:
         try:
             from .db import db
             from .runner import job_runner
-            from .app import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
+            from .workflow_engine import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
 
             auto = db.get_automation(auto_id)
             if not auto:

@@ -11,8 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        distro: [el8, el9]
-        arch: [x86_64]
+        include:
+          - distro: el8
+            arch: x86_64
+            container: centos7
+          - distro: el9
+            arch: x86_64
+            container: centos8
 
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +34,7 @@ jobs:
 
       - name: Build RPM package
         id: rpm_build
-        uses: naveenrajm7/rpmbuild@${{ matrix.distro == 'el8' && 'centos7' || 'centos8' }}
+        uses: naveenrajm7/rpmbuild@${{ matrix.container }}
         with:
           spec_file: "noba.spec"
 

@@ -194,6 +194,55 @@ function dashboard() {
 
     const DEF_BOOKMARKS = 'Router|http://192.168.1.1|fa-network-wired, Pi-hole|http://pi.hole/admin|fa-shield-alt';
 
+    /** Command palette: all 32 commands with categories, risk levels, icons, and parameter specs. */
+    const CMD_CATALOG = [
+        // System
+        { type: 'ping',             label: 'Ping',              icon: 'fa-heartbeat',       cat: 'system',     risk: 'low',    params: [] },
+        { type: 'system_info',      label: 'System Info',       icon: 'fa-info-circle',     cat: 'system',     risk: 'low',    params: [] },
+        { type: 'disk_usage',       label: 'Disk Usage',        icon: 'fa-hdd',             cat: 'system',     risk: 'low',    params: [{ key: 'path', label: 'Path', placeholder: '/' }] },
+        { type: 'exec',             label: 'Run Command',       icon: 'fa-terminal',        cat: 'system',     risk: 'high',   params: [{ key: 'command', label: 'Shell command', placeholder: 'df -h', wide: true }, { key: 'timeout', label: 'Timeout (s)', placeholder: '30', numeric: true }] },
+        { type: 'reboot',           label: 'Reboot',            icon: 'fa-power-off',       cat: 'system',     risk: 'high',   params: [{ key: 'delay', label: 'Delay (min)', placeholder: '0', numeric: true }] },
+        { type: 'process_kill',     label: 'Kill Process',      icon: 'fa-skull-crossbones',cat: 'system',     risk: 'high',   params: [{ key: 'pid', label: 'PID', placeholder: '1234', numeric: true }, { key: 'name', label: 'or Process name', placeholder: 'nginx' }, { key: 'signal', label: 'Signal', options: ['TERM','KILL','HUP','INT'] }] },
+        // Services
+        { type: 'list_services',    label: 'List Services',     icon: 'fa-list',            cat: 'services',   risk: 'low',    params: [] },
+        { type: 'check_service',    label: 'Service Status',    icon: 'fa-stethoscope',     cat: 'services',   risk: 'low',    params: [{ key: 'service', label: 'Service name', placeholder: 'sshd' }] },
+        { type: 'restart_service',  label: 'Restart Service',   icon: 'fa-redo',            cat: 'services',   risk: 'medium', params: [{ key: 'service', label: 'Service name', placeholder: 'nginx' }] },
+        { type: 'service_control',  label: 'Service Control',   icon: 'fa-sliders-h',       cat: 'services',   risk: 'medium', params: [{ key: 'service', label: 'Service name', placeholder: 'nginx' }, { key: 'action', label: 'Action', options: ['start','stop','restart','enable','disable','status'] }] },
+        // Network
+        { type: 'network_test',     label: 'Ping / Trace',      icon: 'fa-network-wired',   cat: 'network',    risk: 'low',    params: [{ key: 'target', label: 'Target host', placeholder: '1.1.1.1' }, { key: 'mode', label: 'Mode', options: ['ping','trace'] }] },
+        { type: 'network_config',   label: 'Network Config',    icon: 'fa-ethernet',        cat: 'network',    risk: 'low',    params: [] },
+        { type: 'dns_lookup',       label: 'DNS Lookup',        icon: 'fa-globe',           cat: 'network',    risk: 'low',    params: [{ key: 'host', label: 'Hostname', placeholder: 'google.com' }, { key: 'type', label: 'Record', options: ['A','AAAA','MX','NS','TXT','CNAME'] }] },
+        // Files
+        { type: 'file_read',        label: 'Read File',         icon: 'fa-file-alt',        cat: 'files',      risk: 'low',    params: [{ key: 'path', label: 'File path', placeholder: '/etc/hostname', wide: true }, { key: 'lines', label: 'Max lines', placeholder: '100', numeric: true }] },
+        { type: 'file_list',        label: 'List Directory',    icon: 'fa-folder-open',     cat: 'files',      risk: 'low',    params: [{ key: 'path', label: 'Directory', placeholder: '/var/log' }, { key: 'pattern', label: 'Glob', placeholder: '*.log' }] },
+        { type: 'file_stat',        label: 'File Info',         icon: 'fa-file-invoice',    cat: 'files',      risk: 'low',    params: [{ key: 'path', label: 'File path', placeholder: '/etc/passwd' }] },
+        { type: 'file_checksum',    label: 'Checksum',          icon: 'fa-fingerprint',     cat: 'files',      risk: 'low',    params: [{ key: 'path', label: 'File path', placeholder: '/usr/bin/python3' }, { key: 'algorithm', label: 'Algo', options: ['sha256','md5'] }] },
+        { type: 'file_write',       label: 'Write File',        icon: 'fa-pen',             cat: 'files',      risk: 'high',   params: [{ key: 'path', label: 'Destination', placeholder: '/tmp/test.txt', wide: true }, { key: 'content', label: 'Content', placeholder: 'File contents...', textarea: true }] },
+        { type: 'file_delete',      label: 'Delete File',       icon: 'fa-trash-alt',       cat: 'files',      risk: 'high',   params: [{ key: 'path', label: 'File path', placeholder: '/tmp/test.txt' }] },
+        // Packages
+        { type: 'package_updates',  label: 'Check Updates',     icon: 'fa-download',        cat: 'packages',   risk: 'low',    params: [] },
+        // Users
+        { type: 'list_users',       label: 'List Users',        icon: 'fa-users',           cat: 'users',      risk: 'low',    params: [] },
+        { type: 'user_manage',      label: 'Manage User',       icon: 'fa-user-cog',        cat: 'users',      risk: 'high',   params: [{ key: 'action', label: 'Action', options: ['add','delete','modify'] }, { key: 'username', label: 'Username', placeholder: 'johndoe' }, { key: 'groups', label: 'Groups', placeholder: 'docker,sudo' }] },
+        // Containers
+        { type: 'container_list',   label: 'List Containers',   icon: 'fa-cubes',           cat: 'containers', risk: 'low',    params: [] },
+        { type: 'container_control',label: 'Container Control', icon: 'fa-play-circle',     cat: 'containers', risk: 'medium', params: [{ key: 'container', label: 'Container name', placeholder: 'nginx' }, { key: 'action', label: 'Action', options: ['start','stop','restart'] }] },
+        { type: 'container_logs',   label: 'Container Logs',    icon: 'fa-align-left',      cat: 'containers', risk: 'low',    params: [{ key: 'container', label: 'Container name', placeholder: 'nginx' }, { key: 'tail', label: 'Lines', placeholder: '100', numeric: true }] },
+        // Logs
+        { type: 'get_logs',         label: 'System Logs',       icon: 'fa-scroll',          cat: 'logs',       risk: 'low',    params: [{ key: 'unit', label: 'Unit (optional)', placeholder: 'nginx' }, { key: 'lines', label: 'Lines', placeholder: '50', numeric: true }, { key: 'priority', label: 'Priority', options: ['','emerg','alert','crit','err','warning','notice','info','debug'] }] },
+        // Agent
+        { type: 'set_interval',     label: 'Set Interval',      icon: 'fa-clock',           cat: 'agent',      risk: 'medium', params: [{ key: 'interval', label: 'Seconds (5-86400)', placeholder: '30', numeric: true }] },
+        { type: 'update_agent',     label: 'Update Agent',      icon: 'fa-sync',            cat: 'agent',      risk: 'high',   params: [] },
+        { type: 'uninstall_agent',  label: 'Uninstall',         icon: 'fa-times-circle',    cat: 'agent',      risk: 'high',   params: [] },
+    ];
+
+    const CMD_RISK_COLORS = { low: 'bs', medium: 'bw', high: 'bd' };
+    const CMD_RISK_LABELS = { low: 'Low', medium: 'Med', high: 'High' };
+    const CMD_CATEGORIES = {
+        system: 'System', services: 'Services', network: 'Network', files: 'Files',
+        packages: 'Packages', users: 'Users', containers: 'Containers', logs: 'Logs', agent: 'Agent'
+    };
+
     const savedTheme = localStorage.getItem('noba-theme');
     const autoTheme  = savedTheme ||
     (window.matchMedia('(prefers-color-scheme: light)').matches ? 'nord' : 'default');
@@ -213,6 +262,9 @@ function dashboard() {
         // ── Spread mixins ────────────────────────────────────────────────────
         ...authMixin(),
         ...actionsMixin(),
+        ...integrationActionsMixin(),
+        ...automationActionsMixin(),
+        ...systemActionsMixin(),
 
         // ── UI & Visibility ────────────────────────────────────────────────────
         theme: autoTheme,
@@ -383,6 +435,24 @@ function dashboard() {
         showSlaModal: false, slaData: null, slaLoading: false, slaPeriod: 720,
         agentHistoryHost: '', agentHistoryData: [], agentHistoryMetric: 'cpu',
 
+        // Phase 1d: Command palette & agent detail
+        CMD_CATALOG,
+        CMD_CATEGORIES,
+        CMD_RISK_COLORS,
+        CMD_RISK_LABELS,
+        cmdPaletteType: 'ping',
+        cmdPaletteParams: {},
+        cmdPaletteTarget: '',
+        cmdOutputTabs: {},
+        cmdOutputActiveTab: '',
+        cmdHistory: [],
+        cmdHistoryLoading: false,
+        agentDetailHost: '',
+        agentDetailData: {},
+        agentDetailTab: 'overview',
+        agentDetailServices: [],
+        agentDetailServicesLoading: false,
+
         // ── Live data ──────────────────────────────────────────────────────────
         timestamp: '--:--', uptime: '--', loadavg: '--', memory: '--',
         hostname: '--', defaultIp: '--',
@@ -438,11 +508,12 @@ function dashboard() {
         editingBind: '',
 
         // Internal — never overwritten by server payloads
-        _es: null, _poll: null, _lastHeartbeat: 0,
-        _countdownTimer: null, _reconnecting: false,
+        _es: null, _lastHeartbeat: 0,
+        _reconnecting: false,
         _masonryObserver: null, _keydownHandler: null,
-        _logTimer: null, _cloudTimer: null, _heartbeatTimer: null,
         _spokenAlerts: new Set(),
+        _intervals: {},
+        _pending: {},
         _termSocket: null, _term: null, _termResizeObserver: null,
 
         // FIXED: plain object instead of Set so Alpine reactivity works correctly
@@ -558,19 +629,16 @@ function dashboard() {
 
             this.connectSSE();
 
-            if (this._logTimer) clearInterval(this._logTimer);
-            this._logTimer = setInterval(() => {
+            this._registerInterval('log', () => {
                 if (this.vis.logs && !this.showSettings) this.fetchLog();
             }, 12000);
 
-            if (this._cloudTimer) clearInterval(this._cloudTimer);
-            this._cloudTimer = setInterval(() => {
+            this._registerInterval('cloud', () => {
                 this.fetchCloudRemotes();
             }, 300_000);
 
             // Heartbeat watchdog — reconnects SSE if server goes silent for >15 s
-            if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
-            this._heartbeatTimer = setInterval(() => {
+            this._registerInterval('heartbeat', () => {
                 if (this.connStatus === 'sse' && this._lastHeartbeat &&
                     Date.now() - this._lastHeartbeat > 15_000 &&
                     !this._reconnecting) {
@@ -609,6 +677,12 @@ function dashboard() {
             const grid = document.getElementById('sortable-grid');
             if (!grid) return;
 
+            const validIds = new Set(
+                [...grid.querySelectorAll('[data-id]')].map(el => el.dataset.id)
+            );
+            // Purge stale sort-order keys from previous versions
+            localStorage.removeItem('noba-v9');
+
             Sortable.create(grid, {
                 animation: 200,
                 handle: '.card-hdr',
@@ -616,10 +690,16 @@ function dashboard() {
                 dragClass: 'sortable-drag',
                 forceFallback: true,
                 fallbackOnBody: true,
-                group: 'noba-v9',
+                group: 'noba-v10',
                 store: {
-                    get: s => (localStorage.getItem(s.options.group.name) || '').split('|'),
-                    set: s => localStorage.setItem(s.options.group.name, s.toArray().join('|')),
+                    get: s => {
+                        const raw = localStorage.getItem(s.options.group.name) || '';
+                        return raw.split('|').filter(id => id && validIds.has(id));
+                    },
+                    set: s => {
+                        const ids = s.toArray().filter(id => id && validIds.has(id));
+                        localStorage.setItem(s.options.group.name, ids.join('|'));
+                    },
                 },
             });
         },
@@ -812,10 +892,38 @@ function dashboard() {
 
         // ── 5. Server Communication ────────────────────────────────────────────
 
+        // ── Interval registry ──────────────────────────────────────────────────
+
+        _registerInterval(name, fn, ms) {
+            if (this._intervals[name]) clearInterval(this._intervals[name]);
+            this._intervals[name] = setInterval(fn, ms);
+        },
+        _clearInterval(name) {
+            if (this._intervals[name]) {
+                clearInterval(this._intervals[name]);
+                delete this._intervals[name];
+            }
+        },
+        _clearAllIntervals() {
+            Object.keys(this._intervals).forEach(k => {
+                clearInterval(this._intervals[k]);
+                delete this._intervals[k];
+            });
+        },
+
+        // ── Request deduplication ──────────────────────────────────────────────
+
+        _deduplicatedFetch(url, opts) {
+            const key = url + (opts?.method || 'GET');
+            if (this._pending[key]) return this._pending[key];
+            this._pending[key] = fetch(url, opts).finally(() => delete this._pending[key]);
+            return this._pending[key];
+        },
+
         _startCountdown(interval = 5) {
-            clearInterval(this._countdownTimer);
+            this._clearInterval('countdown');
             this.countdown = interval;
-            this._countdownTimer = setInterval(() => {
+            this._registerInterval('countdown', () => {
                 if (this.countdown > 0) {
                     this.countdown--;
                 } else {
@@ -825,8 +933,7 @@ function dashboard() {
         },
 
         _stopCountdown() {
-            clearInterval(this._countdownTimer);
-            this._countdownTimer = null;
+            this._clearInterval('countdown');
         },
 
         _isVisibleForSite(cardKey) {
@@ -891,7 +998,7 @@ function dashboard() {
             this._reconnecting = true;
 
             if (this._es) { this._es.close(); this._es = null; }
-            if (this._poll) { clearInterval(this._poll); this._poll = null; }
+            this._clearInterval('poll');
 
             this._stopCountdown();
             this._lastHeartbeat = Date.now();
@@ -914,13 +1021,13 @@ function dashboard() {
             this._es.onerror = () => {
                 this._reconnecting = false;
                 if (this._es) { this._es.close(); this._es = null; }
-                if (this._poll) return;   // already fell back to polling
+                if (this._intervals['poll']) return;   // already fell back to polling
                 this.connStatus = 'polling';
                 this._startCountdown(5);
 
                 setTimeout(() => {
                     this.refreshStats();
-                    this._poll = setInterval(() => {
+                    this._registerInterval('poll', () => {
                         this.refreshStats();
                         this._startCountdown(5);
                     }, 5000);
@@ -933,7 +1040,7 @@ function dashboard() {
             if (!this.authenticated || this.refreshing) return;
             this.refreshing = true;
             try {
-                const res = await fetch(`/api/stats?${this._buildQueryParams()}`, {
+                const res = await this._deduplicatedFetch(`/api/stats?${this._buildQueryParams()}`, {
                     headers: { 'Authorization': 'Bearer ' + this._token() },
                 });
                 if (res.ok) {

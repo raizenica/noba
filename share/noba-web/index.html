@@ -789,7 +789,7 @@
                 <div class="row"><span class="row-label">Tailnet</span><span class="row-val" x-text="tailscale?.tailnet || '—'"></span></div>
                 <div class="row"><span class="row-label">Nodes Online</span><span class="row-val" style="color:var(--success)" x-text="(tailscale?.onlineCount||0) + '/' + (tailscale?.totalCount||0)"></span></div>
                 <div style="margin-top:.5rem;max-height:150px;overflow-y:auto">
-                    <template x-for="p in (tailscale?.peers||[]).filter(n=>n.online).slice(0,8)" :key="p.hostname">
+                    <template x-for="p in (tailscale?.peers||[]).filter(n=>n.online).slice(0,8)" :key="p.hostname + '-' + (p.ip||'')">
                         <div class="row" style="font-size:.75rem">
                             <span class="row-label"><i class="fas fa-circle dot-up" style="font-size:.35rem;margin-right:4px"></i><span x-text="p.hostname"></span></span>
                             <span class="row-val" style="opacity:.7" x-text="p.ip"></span>
@@ -4916,7 +4916,7 @@
                     <div class="row" style="margin-bottom:.8rem"><span class="row-label">Tailnet</span><span class="row-val" x-text="tailscale?.tailnet"></span></div>
                     <div class="row" style="margin-bottom:.8rem"><span class="row-label">This Node</span><span class="row-val" x-text="(tailscale?.self?.hostname||'') + ' (' + (tailscale?.self?.ip||'') + ')'"></span></div>
                     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.6rem">
-                        <template x-for="p in (tailscale?.peers||[]).sort((a,b)=>b.online-a.online)" :key="p.hostname">
+                        <template x-for="p in (tailscale?.peers||[]).sort((a,b)=>b.online-a.online)" :key="p.hostname + '-' + (p.ip||'')">
                             <div style="padding:.6rem;border-radius:6px;border:1px solid var(--border);background:var(--surface-2)">
                                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">
                                     <span style="font-weight:600;font-size:.85rem" x-text="p.hostname"></span>
@@ -5070,57 +5070,140 @@
             <template x-if="agents && agents.length > 0">
                 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.8rem">
                     <template x-for="a in agents" :key="a.hostname">
-                        <div style="padding:.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)" :style="a.online?'border-left:3px solid var(--success)':'border-left:3px solid var(--danger)'">
+                        <div class="agent-card" :class="a.online?'agent-online':'agent-offline'" style="padding:.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);cursor:pointer" @click="openAgentDetail(a.hostname)">
                             <div style="display:flex;justify-content:space-between;margin-bottom:.4rem">
-                                <span style="font-weight:700" x-text="a.hostname"></span>
+                                <a href="#" class="agent-hostname-link" @click.prevent.stop="openAgentDetail(a.hostname)" style="font-weight:700" x-text="a.hostname"></a>
                                 <span class="badge" :class="a.online?'bs':'bd'" x-text="a.online?'online':'offline'" style="font-size:.55rem"></span>
                             </div>
                             <div style="font-size:.7rem;color:var(--text-muted)">
-                                <div>CPU: <span x-text="(a.cpu_percent||0)+'%'"></span> &middot; RAM: <span x-text="(a.mem_percent||0)+'%'"></span></div>
+                                <div class="agent-meters">
+                                    <div class="agent-meter"><span class="agent-meter-label">CPU</span><div class="prog-track" style="flex:1;height:5px"><div class="prog-fill" :class="(a.cpu_percent||0)>90?'f-danger':(a.cpu_percent||0)>70?'f-warning':'f-accent'" :style="'width:'+(a.cpu_percent||0)+'%'"></div></div><span class="agent-meter-val" x-text="(a.cpu_percent||0)+'%'"></span></div>
+                                    <div class="agent-meter"><span class="agent-meter-label">RAM</span><div class="prog-track" style="flex:1;height:5px"><div class="prog-fill" :class="(a.mem_percent||0)>90?'f-danger':(a.mem_percent||0)>70?'f-warning':'f-success'" :style="'width:'+(a.mem_percent||0)+'%'"></div></div><span class="agent-meter-val" x-text="(a.mem_percent||0)+'%'"></span></div>
+                                </div>
                                 <div x-text="a.platform + ' \u00b7 ' + (a.arch||'')"></div>
                                 <div x-text="'Uptime: ' + Math.floor((a.uptime_s||0)/3600) + 'h'"></div>
-                                <div x-show="a.disks" style="margin-top:.3rem">
-                                    <template x-for="d in (a.disks||[]).slice(0,3)" :key="d.mount">
-                                        <div><span x-text="d.mount"></span>: <span x-text="d.percent+'%'"></span></div>
-                                    </template>
-                                </div>
-                                <div x-show="a.top_processes" style="margin-top:.3rem">
-                                    <template x-for="p in (a.top_processes||[]).slice(0,3)" :key="p.pid">
-                                        <div style="opacity:.7"><span x-text="p.name"></span> <span x-text="p.cpu+'%'"></span></div>
-                                    </template>
-                                </div>
                                 <!-- Quick command buttons -->
-                                <div x-show="a.online && userRole==='admin'" style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.3rem">
+                                <div x-show="a.online && userRole!=='viewer'" style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.3rem" @click.stop>
                                     <button class="btn btn-xs" @click="fetchAgentHistory(a.hostname,'cpu')" title="History"><i class="fas fa-chart-area"></i></button>
-                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'ping')" title="Ping"><i class="fas fa-heartbeat"></i></button>
-                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'df -h'})" title="Disk usage"><i class="fas fa-hdd"></i></button>
-                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'uptime && free -h'})" title="System info"><i class="fas fa-info-circle"></i></button>
-                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'journalctl --no-pager -n 20 -p err'})" title="Recent errors"><i class="fas fa-exclamation-circle"></i></button>
-                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'exec',{command:'apt list --upgradable 2>/dev/null | head -20 || dnf check-update 2>/dev/null | tail -20'})" title="Check updates"><i class="fas fa-download"></i></button>
-                                    <button class="btn btn-xs" @click="sendAgentCmd(a.hostname,'update_agent')" title="Update agent"><i class="fas fa-sync"></i></button>
+                                    <button class="btn btn-xs" @click="runPaletteCommandDirect(a.hostname,'ping')" title="Ping"><i class="fas fa-heartbeat"></i></button>
+                                    <button class="btn btn-xs" @click="runPaletteCommandDirect(a.hostname,'exec',{command:'df -h'})" title="Disk usage"><i class="fas fa-hdd"></i></button>
+                                    <button class="btn btn-xs" @click="runPaletteCommandDirect(a.hostname,'package_updates')" title="Check updates"><i class="fas fa-download"></i></button>
                                 </div>
                                 <!-- Command result display -->
-                                <div x-show="agentCmdOutput[a.hostname]" style="margin-top:.4rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:.3rem .5rem;font-family:var(--font-data);font-size:.6rem;max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-all" x-text="agentCmdOutput[a.hostname]"></div>
+                                <div x-show="agentCmdOutput[a.hostname]" class="agent-cmd-output" x-text="agentCmdOutput[a.hostname]" @click.stop></div>
                             </div>
                         </div>
                     </template>
                 </div>
             </template>
-            <!-- Custom command input -->
-            <div x-show="agents && agents.length > 0 && userRole==='admin'" style="margin-top:1rem;padding:.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)">
-                <div style="font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.4rem">Remote Command</div>
-                <div style="display:flex;gap:.4rem;flex-wrap:wrap">
-                    <select class="field-select" x-model="agentCmdTarget" style="width:140px;font-size:.75rem">
-                        <option value="">Select agent...</option>
-                        <template x-for="a in (agents||[]).filter(a=>a.online)" :key="a.hostname">
-                            <option :value="a.hostname" x-text="a.hostname"></option>
+
+            <!-- Command Palette -->
+            <div x-show="agents && agents.length > 0 && userRole!=='viewer'" class="cmd-palette">
+                <div class="cmd-palette-hdr"><i class="fas fa-terminal" style="margin-right:.4rem"></i>Command Palette</div>
+                <div class="cmd-palette-body">
+                    <!-- Row 1: Target + Category tabs -->
+                    <div class="cmd-palette-topbar">
+                        <select class="field-select cmd-palette-target" x-model="cmdPaletteTarget">
+                            <option value="">Target agent...</option>
+                            <template x-for="a in (agents||[]).filter(a=>a.online)" :key="a.hostname">
+                                <option :value="a.hostname" x-text="a.hostname"></option>
+                            </template>
+                            <option value="__all__">All online agents</option>
+                        </select>
+                        <div class="cmd-cat-tabs">
+                            <template x-for="(catLabel, catKey) in CMD_CATEGORIES" :key="catKey">
+                                <button class="cmd-cat-tab"
+                                        :class="{ active: CMD_CATALOG.find(c=>c.type===cmdPaletteType)?.cat===catKey }"
+                                        @click="cmdPaletteType = CMD_CATALOG.find(c=>c.cat===catKey)?.type || cmdPaletteType; cmdPaletteParams={}"
+                                        x-text="catLabel"></button>
+                            </template>
+                        </div>
+                    </div>
+                    <!-- Row 2: Commands in active category -->
+                    <div class="cmd-type-grid">
+                        <template x-for="c in CMD_CATALOG.filter(c=>c.cat===(CMD_CATALOG.find(cc=>cc.type===cmdPaletteType)?.cat||'system'))" :key="c.type">
+                            <button class="cmd-type-btn" :class="{ active: cmdPaletteType===c.type, 'risk-high': c.risk==='high' }"
+                                    @click="cmdPaletteType=c.type; cmdPaletteParams={}"
+                                    :title="c.label + ' (' + c.risk + ' risk)'">
+                                <i class="fas" :class="c.icon"></i>
+                                <span class="cmd-type-label" x-text="c.label"></span>
+                                <span class="cmd-risk-dot" :class="'dot-'+c.risk"></span>
+                            </button>
                         </template>
-                        <option value="__all__">All agents</option>
-                    </select>
-                    <input class="field-input" type="text" x-model="agentCmdInput" placeholder="command to execute..." @keyup.enter="sendAgentExec()" style="flex:1;font-size:.75rem;font-family:var(--font-data)">
-                    <button class="btn btn-primary btn-sm" @click="sendAgentExec()" :disabled="!agentCmdTarget || !agentCmdInput.trim() || agentCmdSending"><i class="fas fa-terminal"></i> Run</button>
+                    </div>
+                    <!-- Row 3: Dynamic parameters (always visible when command selected) -->
+                    <div class="cmd-params-area" x-show="CMD_CATALOG.find(c=>c.type===cmdPaletteType)?.params?.length > 0">
+                        <template x-for="p in (CMD_CATALOG.find(c=>c.type===cmdPaletteType)?.params||[])" :key="p.key">
+                            <div class="cmd-param-field" :class="{ wide: p.wide, 'full-width': p.textarea }">
+                                <label x-text="p.label"></label>
+                                <template x-if="p.options">
+                                    <select class="field-select" x-model="cmdPaletteParams[p.key]">
+                                        <option value="">Select...</option>
+                                        <template x-for="o in p.options" :key="o">
+                                            <option :value="o" x-text="o || '(any)'"></option>
+                                        </template>
+                                    </select>
+                                </template>
+                                <template x-if="p.textarea">
+                                    <textarea class="field-input cmd-textarea" :placeholder="p.placeholder" rows="3" x-model="cmdPaletteParams[p.key]"></textarea>
+                                </template>
+                                <template x-if="!p.options && !p.textarea">
+                                    <input class="field-input" :type="p.numeric ? 'number' : 'text'" :placeholder="p.placeholder" x-model="cmdPaletteParams[p.key]">
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                    <!-- Row 4: Run button -->
+                    <div class="cmd-palette-footer">
+                        <div class="cmd-selected-info" x-show="cmdPaletteType">
+                            <span class="cmd-risk-pill" :class="'pill-'+(CMD_CATALOG.find(c=>c.type===cmdPaletteType)?.risk||'low')"
+                                  x-text="(CMD_CATALOG.find(c=>c.type===cmdPaletteType)?.risk||'').toUpperCase() + ' RISK'"></span>
+                            <span style="opacity:.5;font-size:.7rem" x-text="cmdPaletteType"></span>
+                        </div>
+                        <button class="btn btn-primary btn-sm" @click="runPaletteCommand()" :disabled="!cmdPaletteTarget || !cmdPaletteType || agentCmdSending">
+                            <i class="fas" :class="agentCmdSending ? 'fa-spinner fa-spin' : 'fa-play'"></i>
+                            <span x-text="agentCmdSending ? 'Sending...' : 'Run'"></span>
+                        </button>
+                    </div>
                 </div>
             </div>
+
+            <!-- Output Panel with tabs per host -->
+            <div x-show="Object.keys(cmdOutputTabs).length > 0" class="cmd-output-panel">
+                <div class="cmd-output-tabs">
+                    <template x-for="(output, host) in cmdOutputTabs" :key="host">
+                        <button class="btn btn-xs" :class="cmdOutputActiveTab===host ? 'btn-primary' : ''" @click="cmdOutputActiveTab=host" x-text="host"></button>
+                    </template>
+                </div>
+                <pre class="cmd-output-pre" x-text="cmdOutputTabs[cmdOutputActiveTab] || 'Waiting for result...'"></pre>
+            </div>
+
+            <!-- Command History -->
+            <div x-show="agents && agents.length > 0" style="margin-top:1rem">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+                    <span style="font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)"><i class="fas fa-history" style="margin-right:.3rem"></i>Command History</span>
+                    <button class="btn btn-xs" @click="fetchCommandHistory()" :disabled="cmdHistoryLoading"><i class="fas" :class="cmdHistoryLoading ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i></button>
+                </div>
+                <div x-show="cmdHistory.length > 0" class="cmd-history-table-wrap">
+                    <table class="cmd-history-table">
+                        <thead><tr><th>Time</th><th>Host</th><th>Command</th><th>User</th><th>Status</th><th>Duration</th></tr></thead>
+                        <tbody>
+                            <template x-for="h in cmdHistory" :key="h.id">
+                                <tr>
+                                    <td x-text="new Date((h.queued_at||0)*1000).toLocaleString()" style="white-space:nowrap"></td>
+                                    <td><a href="#" class="agent-hostname-link" @click.prevent="openAgentDetail(h.hostname)" x-text="h.hostname"></a></td>
+                                    <td><span class="badge ba" x-text="h.cmd_type" style="font-size:.55rem"></span></td>
+                                    <td x-text="h.queued_by"></td>
+                                    <td><span class="badge" :class="h.status==='ok'?'bs':h.status==='error'?'bd':h.status==='queued'?'bn':'bw'" x-text="h.status"></span></td>
+                                    <td x-text="h.finished_at ? ((h.finished_at - h.queued_at) + 's') : '--'"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <div x-show="cmdHistory.length === 0 && !cmdHistoryLoading" class="empty-msg">No command history yet.</div>
+            </div>
+
             <div x-show="!agents || agents.length===0" class="empty-msg">No agents reporting. Deploy an agent to get started.</div>
             <!-- Deploy new agent section -->
             <div x-show="userRole==='admin'" style="margin-top:1rem;padding:.8rem;border:1px solid var(--accent);border-radius:6px;background:color-mix(in srgb, var(--accent) 5%, var(--surface))">
@@ -5157,6 +5240,105 @@
                     </div>
                     <div x-show="deployResult" style="margin-top:.4rem;font-size:.7rem;padding:.3rem .5rem;border-radius:4px" :style="deployResult.includes('error')?'background:rgba(255,23,68,.1);color:var(--danger)':'background:rgba(0,230,118,.1);color:var(--success)'" x-text="deployResult"></div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Agent Detail Modal (Phase 1d) ─────────────────────────────── -->
+<div class="modal-overlay" x-show="agentDetailHost" x-cloak @keydown.escape.window="agentDetailHost=''" @click.self="agentDetailHost=''">
+    <div class="modal-box" style="max-width:750px;max-height:85vh;overflow-y:auto">
+        <div class="modal-title"><i class="fas" :class="getAgentOsIcon(agentDetailData?.platform)"></i> <span x-text="agentDetailHost"></span><button class="modal-close" @click="agentDetailHost=''">&times;</button></div>
+        <div style="padding:16px">
+            <!-- Tabs -->
+            <div style="display:flex;gap:.3rem;margin-bottom:1rem;border-bottom:1px solid var(--border);padding-bottom:.5rem">
+                <button class="btn btn-xs" :class="agentDetailTab==='overview'?'btn-primary':''" @click="agentDetailTab='overview'">Overview</button>
+                <button class="btn btn-xs" :class="agentDetailTab==='services'?'btn-primary':''" @click="agentDetailTab='services'; fetchAgentServices(agentDetailHost)">Services</button>
+                <button class="btn btn-xs" :class="agentDetailTab==='history'?'btn-primary':''" @click="agentDetailTab='history'; fetchCommandHistory(agentDetailHost)">History</button>
+            </div>
+            <!-- Overview Tab -->
+            <div x-show="agentDetailTab==='overview' && agentDetailData">
+                <div class="agent-detail-grid">
+                    <div class="agent-detail-section">
+                        <div class="agent-detail-section-title">System</div>
+                        <div class="row"><span class="row-label">Status</span><span class="row-val"><span class="badge" :class="agentDetailData.online?'bs':'bd'" x-text="agentDetailData.online?'Online':'Offline'"></span></span></div>
+                        <div class="row"><span class="row-label">Platform</span><span class="row-val" x-text="(agentDetailData.platform||'') + ' ' + (agentDetailData.arch||'')"></span></div>
+                        <div class="row"><span class="row-label">Uptime</span><span class="row-val" x-text="Math.floor((agentDetailData.uptime_s||0)/3600)+'h '+Math.floor(((agentDetailData.uptime_s||0)%3600)/60)+'m'"></span></div>
+                        <div class="row"><span class="row-label">Agent Version</span><span class="row-val" x-text="agentDetailData.agent_version||'--'"></span></div>
+                        <div class="row"><span class="row-label">Last Seen</span><span class="row-val" x-text="(agentDetailData.last_seen_s||0) + 's ago'"></span></div>
+                    </div>
+                    <div class="agent-detail-section">
+                        <div class="agent-detail-section-title">Resources</div>
+                        <div style="margin-bottom:.4rem"><span style="font-size:.7rem;color:var(--text-muted)">CPU</span>
+                            <div class="prog-track" style="height:6px"><div class="prog-fill" :class="(agentDetailData.cpu_percent||0)>90?'f-danger':(agentDetailData.cpu_percent||0)>70?'f-warning':'f-accent'" :style="'width:'+(agentDetailData.cpu_percent||0)+'%'"></div></div>
+                            <span style="font-size:.7rem;font-family:var(--font-data)" x-text="(agentDetailData.cpu_percent||0)+'% ('+((agentDetailData.cpu_count||0))+' cores)'"></span>
+                        </div>
+                        <div style="margin-bottom:.4rem"><span style="font-size:.7rem;color:var(--text-muted)">Memory</span>
+                            <div class="prog-track" style="height:6px"><div class="prog-fill" :class="(agentDetailData.mem_percent||0)>90?'f-danger':(agentDetailData.mem_percent||0)>70?'f-warning':'f-success'" :style="'width:'+(agentDetailData.mem_percent||0)+'%'"></div></div>
+                            <span style="font-size:.7rem;font-family:var(--font-data)" x-text="(agentDetailData.mem_percent||0)+'%'"></span>
+                        </div>
+                        <template x-for="d in (agentDetailData.disks||[])" :key="d.mount">
+                            <div style="margin-bottom:.3rem"><span style="font-size:.7rem;color:var(--text-muted)" x-text="'Disk '+d.mount"></span>
+                                <div class="prog-track" style="height:5px"><div class="prog-fill" :class="(d.percent||0)>90?'f-danger':(d.percent||0)>70?'f-warning':'f-accent'" :style="'width:'+(d.percent||0)+'%'"></div></div>
+                                <span style="font-size:.65rem;font-family:var(--font-data)" x-text="(d.percent||0)+'%'"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <!-- Load averages and top processes -->
+                <div class="agent-detail-grid" style="margin-top:.8rem">
+                    <div class="agent-detail-section">
+                        <div class="agent-detail-section-title">Load Average</div>
+                        <div class="row"><span class="row-label">1 min</span><span class="row-val" x-text="agentDetailData.load_1m||'--'"></span></div>
+                        <div class="row"><span class="row-label">5 min</span><span class="row-val" x-text="agentDetailData.load_5m||'--'"></span></div>
+                        <div class="row"><span class="row-label">15 min</span><span class="row-val" x-text="agentDetailData.load_15m||'--'"></span></div>
+                    </div>
+                    <div class="agent-detail-section">
+                        <div class="agent-detail-section-title">Top Processes</div>
+                        <template x-for="p in (agentDetailData.top_processes||[]).slice(0,5)" :key="p.pid">
+                            <div class="row" style="font-size:.7rem"><span class="row-label" x-text="p.name" style="min-width:0;overflow:hidden;text-overflow:ellipsis"></span><span class="row-val" x-text="'CPU '+(p.cpu||0)+'% Mem '+(p.mem||0)+'%'"></span></div>
+                        </template>
+                    </div>
+                </div>
+                <!-- Quick command buttons -->
+                <div x-show="agentDetailData.online && userRole!=='viewer'" style="margin-top:.8rem;display:flex;flex-wrap:wrap;gap:.3rem">
+                    <button class="btn btn-xs" @click="fetchAgentHistory(agentDetailHost,'cpu')"><i class="fas fa-chart-area"></i> History</button>
+                    <button class="btn btn-xs" @click="runPaletteCommandDirect(agentDetailHost,'ping')"><i class="fas fa-heartbeat"></i> Ping</button>
+                    <button class="btn btn-xs" @click="runPaletteCommandDirect(agentDetailHost,'package_updates')"><i class="fas fa-download"></i> Updates</button>
+                    <button class="btn btn-xs" @click="runPaletteCommandDirect(agentDetailHost,'exec',{command:'df -h'})"><i class="fas fa-hdd"></i> Disk</button>
+                    <button class="btn btn-xs" @click="runPaletteCommandDirect(agentDetailHost,'get_logs',{lines:30,priority:'err'})"><i class="fas fa-scroll"></i> Errors</button>
+                </div>
+                <div x-show="agentCmdOutput[agentDetailHost]" class="agent-cmd-output" style="margin-top:.5rem" x-text="agentCmdOutput[agentDetailHost]"></div>
+            </div>
+            <!-- Services Tab -->
+            <div x-show="agentDetailTab==='services'">
+                <div x-show="agentDetailServicesLoading" class="empty-msg">Fetching services...</div>
+                <div x-show="!agentDetailServicesLoading && agentDetailServices.length > 0" class="agent-services-list">
+                    <template x-for="svc in agentDetailServices" :key="svc">
+                        <div class="agent-svc-item"><i class="fas fa-cog" style="color:var(--text-muted);font-size:.6rem" aria-hidden="true"></i><span x-text="svc"></span></div>
+                    </template>
+                </div>
+                <div x-show="!agentDetailServicesLoading && agentDetailServices.length === 0" class="empty-msg">No service data. Send a check_service command first.</div>
+            </div>
+            <!-- History Tab -->
+            <div x-show="agentDetailTab==='history'">
+                <div x-show="cmdHistoryLoading" class="empty-msg">Loading...</div>
+                <div x-show="cmdHistory.length > 0 && !cmdHistoryLoading" class="cmd-history-table-wrap">
+                    <table class="cmd-history-table">
+                        <thead><tr><th>Time</th><th>Command</th><th>User</th><th>Status</th></tr></thead>
+                        <tbody>
+                            <template x-for="h in cmdHistory" :key="h.id">
+                                <tr>
+                                    <td x-text="new Date((h.queued_at||0)*1000).toLocaleString()" style="white-space:nowrap"></td>
+                                    <td><span class="badge ba" x-text="h.cmd_type" style="font-size:.55rem"></span></td>
+                                    <td x-text="h.queued_by"></td>
+                                    <td><span class="badge" :class="h.status==='ok'?'bs':h.status==='error'?'bd':h.status==='queued'?'bn':'bw'" x-text="h.status"></span></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <div x-show="cmdHistory.length === 0 && !cmdHistoryLoading" class="empty-msg">No command history for this agent.</div>
             </div>
         </div>
     </div>
@@ -5300,6 +5482,9 @@
 
 <style>.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}</style>
 
+<script src="/static/integration-actions.js"></script>
+<script src="/static/automation-actions.js"></script>
+<script src="/static/system-actions.js"></script>
 <script src="/static/auth-mixin.js"></script>
 <script src="/static/actions-mixin.js"></script>
 <script src="/static/app.js"></script>

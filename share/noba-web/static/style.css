@@ -977,3 +977,232 @@
     align-items: center;
     gap: 8px;
 }
+
+/* ── Agent hostname link ───────────────────────────────────────────────── */
+.agent-hostname-link {
+    color: var(--accent);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color .15s;
+}
+.agent-hostname-link:hover {
+    color: var(--text);
+    text-decoration: underline;
+}
+
+/* ── Agent meters (CPU/RAM mini bars) ──────────────────────────────────── */
+.agent-meters {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    margin-bottom: .3rem;
+}
+.agent-meter {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+}
+.agent-meter-label {
+    font-size: .6rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    min-width: 28px;
+}
+.agent-meter-val {
+    font-family: var(--font-data);
+    font-size: .65rem;
+    min-width: 30px;
+    text-align: right;
+}
+
+/* ── Agent command output ──────────────────────────────────────────────── */
+.agent-cmd-output {
+    margin-top: .4rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: .3rem .5rem;
+    font-family: var(--font-data);
+    font-size: .6rem;
+    max-height: 150px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* ── Command Palette ───────────────────────────────────────────────────── */
+.cmd-palette {
+    margin-top: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-2);
+    overflow: hidden;
+}
+.cmd-palette-hdr {
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: .6rem .8rem;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 60%, var(--surface-2));
+}
+.cmd-palette-body { padding: .8rem; display: flex; flex-direction: column; gap: .6rem; }
+/* Top bar: target selector + category tabs */
+.cmd-palette-topbar { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.cmd-palette-target { min-width: 150px; max-width: 200px; font-size: .8rem; }
+.cmd-cat-tabs { display: flex; gap: 2px; flex-wrap: wrap; flex: 1; }
+.cmd-cat-tab {
+    padding: .25rem .5rem; font-size: .65rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; border: 1px solid var(--border); border-radius: 4px;
+    background: transparent; color: var(--text-muted); cursor: pointer; transition: all .15s;
+}
+.cmd-cat-tab:hover { color: var(--text); border-color: var(--accent); }
+.cmd-cat-tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+/* Command type buttons grid */
+.cmd-type-grid { display: flex; flex-wrap: wrap; gap: .35rem; }
+.cmd-type-btn {
+    display: flex; align-items: center; gap: .35rem; padding: .3rem .55rem;
+    border: 1px solid var(--border); border-radius: 5px; background: var(--surface);
+    color: var(--text); cursor: pointer; font-size: .75rem; transition: all .15s;
+}
+.cmd-type-btn:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.cmd-type-btn.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, var(--surface)); box-shadow: 0 0 0 1px var(--accent); }
+.cmd-type-btn.risk-high { border-color: color-mix(in srgb, #e74c3c 30%, var(--border)); }
+.cmd-type-btn .fas { font-size: .65rem; opacity: .7; }
+.cmd-type-label { white-space: nowrap; }
+.cmd-risk-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dot-low { background: #2ecc71; }
+.dot-medium { background: #f1c40f; }
+.dot-high { background: #e74c3c; }
+/* Parameter fields */
+.cmd-params-area {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: .5rem;
+    padding: .6rem; background: var(--surface); border-radius: 5px; border: 1px solid var(--border);
+}
+.cmd-param-field { display: flex; flex-direction: column; gap: .15rem; }
+.cmd-param-field.wide { grid-column: span 2; }
+.cmd-param-field.full-width { grid-column: 1 / -1; }
+.cmd-param-field label { font-size: .6rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); font-weight: 600; }
+.cmd-param-field .field-input,
+.cmd-param-field .field-select { font-size: .8rem; padding: .35rem .5rem; }
+.cmd-textarea { font-family: var(--font-data); resize: vertical; min-height: 60px; }
+/* Footer with risk pill + run button */
+.cmd-palette-footer { display: flex; justify-content: space-between; align-items: center; }
+.cmd-selected-info { display: flex; align-items: center; gap: .5rem; }
+.cmd-risk-pill {
+    font-size: .55rem; font-weight: 700; letter-spacing: .08em; padding: .15rem .45rem;
+    border-radius: 3px;
+}
+.pill-low { background: rgba(46,204,113,.15); color: #2ecc71; }
+.pill-medium { background: rgba(241,196,15,.15); color: #f1c40f; }
+.pill-high { background: rgba(231,76,60,.15); color: #e74c3c; }
+
+/* ── Command Output Panel ──────────────────────────────────────────────── */
+.cmd-output-panel {
+    margin-top: .8rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.cmd-output-tabs {
+    display: flex;
+    gap: .25rem;
+    padding: .4rem .6rem;
+    background: color-mix(in srgb, var(--surface) 60%, var(--surface-2));
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+.cmd-output-pre {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-data);
+    font-size: .7rem;
+    padding: .6rem .8rem;
+    margin: 0;
+    max-height: 200px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ── Command History Table ─────────────────────────────────────────────── */
+.cmd-history-table-wrap {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    -webkit-overflow-scrolling: touch;
+}
+.cmd-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .72rem;
+}
+.cmd-history-table th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-size: .6rem;
+    font-weight: 700;
+    padding: .4rem .5rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    z-index: 1;
+}
+.cmd-history-table td {
+    padding: .35rem .5rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+    color: var(--text);
+}
+.cmd-history-table tbody tr:hover {
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+/* ── Agent Detail Modal ────────────────────────────────────────────────── */
+.agent-detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: .8rem;
+}
+@media (max-width: 600px) {
+    .agent-detail-grid { grid-template-columns: 1fr; }
+}
+.agent-detail-section {
+    padding: .6rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-2);
+}
+.agent-detail-section-title {
+    font-size: .65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--accent);
+    margin-bottom: .5rem;
+}
+
+/* ── Agent Services List ───────────────────────────────────────────────── */
+.agent-services-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .3rem;
+}
+.agent-svc-item {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    padding: .25rem .5rem;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface-2);
+    font-size: .7rem;
+    color: var(--text);
+}

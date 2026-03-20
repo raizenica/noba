@@ -10,6 +10,7 @@ from datetime import datetime
 
 from .db import db
 from .runner import job_runner
+from .workflow_engine import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
 
 logger = logging.getLogger("noba")
 
@@ -107,7 +108,6 @@ class FSTriggerWatcher:
                     pass
 
     def _trigger_automation(self, auto_id: str, path: str) -> None:
-        from .app import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
         auto = db.get_automation(auto_id)
         if not auto:
             return
@@ -195,8 +195,6 @@ class Scheduler:
 
     def _trigger(self, auto: dict) -> None:
         """Submit an automation to the job runner."""
-        from .app import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
-
         # Workflow: chain steps
         if auto["type"] == "workflow":
             steps = auto["config"].get("steps", [])
@@ -297,7 +295,6 @@ class RSSFeedWatcher:
             return []
 
     def _trigger_automation(self, auto_id: str, trigger_source: str) -> None:
-        from .app import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
         auto = db.get_automation(auto_id)
         if not auto:
             return
