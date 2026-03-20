@@ -5,6 +5,7 @@ All notable changes to NOBA Command Center are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Livestream logs immediately stopping** — Stream poll endpoint returned a raw list `[]` when no data had arrived yet, causing the frontend to read `!undefined` as truthy for the `active` check and immediately stop the stream. Now returns `{"lines": [], "cursor": 0, "active": true}` while the stream is registered but waiting for agent data.
 - **Agent WebSocket result type collision** — Commands sent via WebSocket stayed permanently "queued" because the agent's result message overwrote `{"type": "result"}` with `{"type": "disk_usage"}` during dict unpacking. Agent now sends command type in a separate `cmd` field.
 - **Server backward compatibility** — Server now detects old-format agent results (pre-v2.1.0) and reshapes them automatically, so mixed-version deployments work correctly.
 - **Command palette scope error** — `runPaletteCommand()` referenced `CMD_CATALOG` as a closure variable instead of `this.CMD_CATALOG`, causing ReferenceError in the mixin scope. Also wrapped in try/finally so the "Sending..." state always clears.

@@ -1309,15 +1309,20 @@ def api_agent_stream(hostname: str, cmd_id: str, request: Request, auth=Depends(
             all_lines = _agent_stream_lines.get(cmd_id, [])
             new_lines = all_lines[after:]
             total = len(all_lines)
-        # Check if stream is still tracked as active
         with _agent_streams_lock:
             host_streams = _agent_streams.get(hostname, {})
             active = cmd_id in host_streams
         return {"lines": new_lines, "cursor": total, "active": active}
+    # Stream registered but no data yet — still active, waiting for agent
+    with _agent_streams_lock:
+        host_streams = _agent_streams.get(hostname, {})
+        if cmd_id in host_streams:
+            return {"lines": [], "cursor": 0, "active": True}
     # Fall back to WebSocket command stream output
     stream_key = f"_stream_{hostname}_{cmd_id}"
     with _agent_cmd_lock:
-        return _agent_cmd_results.get(stream_key, [])
+        ws_data = _agent_cmd_results.get(stream_key, [])
+    return {"lines": ws_data, "cursor": len(ws_data), "active": bool(ws_data)}
 
 
 @router.get("/api/agents")
