@@ -1,0 +1,484 @@
+"""Noba – Infrastructure management: network, K8s, Proxmox, services, terminal."""
+from __future__ import annotations
+
+import logging
+import re
+import secrets
+import subprocess
+import time
+
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
+from fastapi.responses import PlainTextResponse
+
+from .. import deps as _deps
+from ..agent_config import RISK_LEVELS, check_role_permission
+from ..agent_store import (
+    _agent_cmd_lock, _agent_commands,
+    _agent_data, _agent_data_lock, _agent_websockets, _agent_ws_lock,
+)
+from ..auth import token_store
+from ..config import ALLOWED_ACTIONS
+from ..deps import (
+    _client_ip, _get_auth, _int_param, _read_body,
+    _require_admin, _require_operator, db,
+)
+from ..metrics import get_listening_ports, get_network_connections, strip_ansi, validate_service_name
+from ..yaml_config import read_yaml_settings
+
+logger = logging.getLogger("noba")
+
+router = APIRouter(tags=["infrastructure"])
+
+
+# ── /api/service-control ──────────────────────────────────────────────────────
+@router.post("/api/service-control")
+async def api_service_control(request: Request, auth=Depends(_require_operator)):
+    username, _ = auth
+    ip   = _client_ip(request)
+    body = await _read_body(request)
+    svc        = body.get("service", "").strip()
+    action     = body.get("action",  "").strip()
+    is_user_v  = body.get("is_user", False)
+    is_user    = is_user_v is True or str(is_user_v).lower() in ("true", "1", "yes", "t", "y")
+    if action not in ALLOWED_ACTIONS:
+        raise HTTPException(400, f'Action "{action}" not allowed')
+    if not svc or not validate_service_name(svc):
+        raise HTTPException(400, "Invalid service name")
+    cmd = (["systemctl", "--user", action, svc] if is_user
+           else ["sudo", "-n", "systemctl", action, svc])
+    try:
+        r = subprocess.run(cmd, timeout=10, capture_output=True)
+        success = r.returncode == 0
+        db.audit_log("service_control", username, f"{action} {svc} (user={is_user}) -> {success}", ip)
+        if not success:
+            stderr = strip_ansi(r.stderr.decode().strip())
+            raise HTTPException(422, stderr or f"systemctl {action} {svc} failed")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Service control error: %s", e)
+        db.audit_log("service_control", username, f"{action} {svc} failed: {e}", ip)
+        raise HTTPException(500, "Service control error")
+
+
+# ── Network analysis ─────────────────────────────────────────────────────────
+@router.get("/api/network/connections")
+def api_network_connections(auth=Depends(_require_operator)):
+    """List active network connections."""
+    return get_network_connections()
+
+
+@router.get("/api/network/ports")
+def api_network_ports(auth=Depends(_get_auth)):
+    """List listening ports with process info."""
+    return get_listening_ports()
+
+
+@router.get("/api/network/interfaces")
+def api_network_interfaces(auth=Depends(_get_auth)):
+    """Get network interface details."""
+    import psutil as _psutil
+    interfaces = []
+    addrs = _psutil.net_if_addrs()
+    stats = _psutil.net_if_stats()
+    for name, addr_list in addrs.items():
+        if name == "lo":
+            continue
+        stat = stats.get(name)
+        ips = [a.address for a in addr_list if a.family.name == "AF_INET"]
+        interfaces.append({
+            "name": name,
+            "ip": ips[0] if ips else "",
+            "up": stat.isup if stat else False,
+            "speed": stat.speed if stat else 0,
+            "mtu": stat.mtu if stat else 0,
+        })
+    return interfaces
+
+
+# ── Service dependency map ───────────────────────────────────────────────────
+@router.get("/api/services/map")
+def api_service_map(auth=Depends(_get_auth)):
+    """Build a service dependency map from network connections and configured integrations."""
+    stats = _deps.bg_collector.get() or {}
+    cfg = read_yaml_settings()
+
+    nodes = []
+    edges = []
+
+    nodes.append({"id": "noba", "label": "NOBA", "type": "core", "status": "online"})
+
+    integration_map = {
+        "piholeUrl": ("pihole", "Pi-hole", "dns"),
+        "plexUrl": ("plex", "Plex", "media"),
+        "jellyfinUrl": ("jellyfin", "Jellyfin", "media"),
+        "truenasUrl": ("truenas", "TrueNAS", "storage"),
+        "proxmoxUrl": ("proxmox", "Proxmox", "infra"),
+        "hassUrl": ("hass", "Home Assistant", "automation"),
+        "unifiUrl": ("unifi", "UniFi", "network"),
+        "kumaUrl": ("kuma", "Uptime Kuma", "monitoring"),
+        "radarrUrl": ("radarr", "Radarr", "media"),
+        "sonarrUrl": ("sonarr", "Sonarr", "media"),
+        "qbitUrl": ("qbit", "qBittorrent", "media"),
+        "tautulliUrl": ("tautulli", "Tautulli", "media"),
+        "overseerrUrl": ("overseerr", "Overseerr", "media"),
+        "nextcloudUrl": ("nextcloud", "Nextcloud", "storage"),
+        "traefikUrl": ("traefik", "Traefik", "network"),
+        "k8sUrl": ("k8s", "Kubernetes", "infra"),
+        "giteaUrl": ("gitea", "Gitea", "dev"),
+        "gitlabUrl": ("gitlab", "GitLab", "dev"),
+        "paperlessUrl": ("paperless", "Paperless", "docs"),
+        "adguardUrl": ("adguard", "AdGuard", "dns"),
+    }
+
+    for cfg_key, (node_id, label, category) in integration_map.items():
+        url = cfg.get(cfg_key, "")
+        if url:
+            data = stats.get(node_id)
+            status = "online" if data and (isinstance(data, dict) and data.get("status") == "online") else "configured"
+            nodes.append({"id": node_id, "label": label, "type": category, "status": status})
+            edges.append({"from": "noba", "to": node_id})
+
+    for svc in stats.get("services", []):
+        sid = f"svc_{svc['name']}"
+        nodes.append({"id": sid, "label": svc["name"], "type": "service", "status": svc.get("status", "unknown")})
+        edges.append({"from": "noba", "to": sid})
+
+    return {"nodes": nodes, "edges": edges}
+
+
+# ── Disk usage prediction ────────────────────────────────────────────────────
+@router.get("/api/disks/prediction")
+def api_disk_prediction(request: Request, auth=Depends(_get_auth)):
+    """Predict when each disk will be full based on usage trends."""
+    results = []
+    stats = _deps.bg_collector.get() or {}
+    for disk in stats.get("disks", []):
+        mount = disk.get("mount", "")
+        trend = db.get_trend("disk_percent", range_hours=168, projection_hours=720)
+        results.append({
+            "mount": mount,
+            "current_percent": disk.get("percent", 0),
+            "full_at": trend.get("full_at"),
+            "slope_per_day": round((trend.get("slope", 0) or 0) * 86400, 3),
+            "r_squared": trend.get("r_squared", 0),
+        })
+    return results
+
+
+# ── Kubernetes deep management ───────────────────────────────────────────
+@router.get("/api/k8s/namespaces")
+def api_k8s_namespaces(auth=Depends(_get_auth)):
+    """List Kubernetes namespaces."""
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}/api/v1/namespaces",
+                      headers={"Authorization": f"Bearer {token}"}, verify=False, timeout=10)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        return [{"name": ns.get("metadata", {}).get("name", ""),
+                 "status": ns.get("status", {}).get("phase", ""),
+                 "created": ns.get("metadata", {}).get("creationTimestamp", "")}
+                for ns in items]
+    except Exception as e:
+        raise HTTPException(502, f"K8s API error: {e}")
+
+
+@router.get("/api/k8s/pods")
+def api_k8s_pods(request: Request, auth=Depends(_get_auth)):
+    """List pods with details, optionally filtered by namespace."""
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    namespace = request.query_params.get("namespace", "")
+    path = f"/api/v1/namespaces/{namespace}/pods" if namespace else "/api/v1/pods"
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}{path}",
+                      headers={"Authorization": f"Bearer {token}"}, verify=False, timeout=10)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        pods = []
+        for pod in items[:200]:
+            meta = pod.get("metadata", {})
+            spec = pod.get("spec", {})
+            status = pod.get("status", {})
+            containers = []
+            for cs in status.get("containerStatuses", []):
+                containers.append({
+                    "name": cs.get("name", ""),
+                    "ready": cs.get("ready", False),
+                    "restarts": cs.get("restartCount", 0),
+                    "state": list(cs.get("state", {}).keys())[0] if cs.get("state") else "unknown",
+                    "image": cs.get("image", ""),
+                })
+            pods.append({
+                "name": meta.get("name", ""),
+                "namespace": meta.get("namespace", ""),
+                "node": spec.get("nodeName", ""),
+                "phase": status.get("phase", ""),
+                "ip": status.get("podIP", ""),
+                "created": meta.get("creationTimestamp", ""),
+                "containers": containers,
+            })
+        return pods
+    except Exception as e:
+        raise HTTPException(502, f"K8s API error: {e}")
+
+
+@router.get("/api/k8s/pods/{namespace}/{name}/logs")
+def api_k8s_pod_logs(namespace: str, name: str, request: Request, auth=Depends(_require_operator)):
+    """Get pod logs."""
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    container = request.query_params.get("container", "")
+    lines = _int_param(request, "lines", 100, 1, 5000)
+    path = f"/api/v1/namespaces/{namespace}/pods/{name}/log?tailLines={lines}"
+    if container:
+        path += f"&container={container}"
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}{path}",
+                      headers={"Authorization": f"Bearer {token}"}, verify=False, timeout=15)
+        r.raise_for_status()
+        return PlainTextResponse(r.text[-65536:] or "No logs.")
+    except Exception as e:
+        raise HTTPException(502, f"K8s log fetch failed: {e}")
+
+
+@router.get("/api/k8s/deployments")
+def api_k8s_deployments(request: Request, auth=Depends(_get_auth)):
+    """List deployments with replica info."""
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    namespace = request.query_params.get("namespace", "")
+    path = f"/apis/apps/v1/namespaces/{namespace}/deployments" if namespace else "/apis/apps/v1/deployments"
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}{path}",
+                      headers={"Authorization": f"Bearer {token}"}, verify=False, timeout=10)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        return [{
+            "name": d.get("metadata", {}).get("name", ""),
+            "namespace": d.get("metadata", {}).get("namespace", ""),
+            "replicas": d.get("spec", {}).get("replicas", 0),
+            "ready": d.get("status", {}).get("readyReplicas", 0),
+            "available": d.get("status", {}).get("availableReplicas", 0),
+            "updated": d.get("status", {}).get("updatedReplicas", 0),
+        } for d in items[:100]]
+    except Exception as e:
+        raise HTTPException(502, f"K8s API error: {e}")
+
+
+@router.post("/api/k8s/deployments/{namespace}/{name}/scale")
+async def api_k8s_scale(namespace: str, name: str, request: Request, auth=Depends(_require_admin)):
+    """Scale a deployment."""
+    username, _ = auth
+    body = await _read_body(request)
+    replicas = int(body.get("replicas", 1))
+    if replicas < 0 or replicas > 100:
+        raise HTTPException(400, "Replicas must be 0-100")
+    cfg = read_yaml_settings()
+    url, token = cfg.get("k8sUrl", ""), cfg.get("k8sToken", "")
+    if not url or not token:
+        raise HTTPException(400, "Kubernetes not configured")
+    import httpx as _httpx
+    try:
+        r = _httpx.patch(
+            f"{url.rstrip('/')}/apis/apps/v1/namespaces/{namespace}/deployments/{name}/scale",
+            json={"spec": {"replicas": replicas}},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/merge-patch+json"},
+            verify=False, timeout=10,
+        )
+        r.raise_for_status()
+        db.audit_log("k8s_scale", username, f"Scaled {namespace}/{name} to {replicas}", _client_ip(request))
+        return {"success": True, "replicas": replicas}
+    except Exception as e:
+        raise HTTPException(502, f"K8s scale failed: {e}")
+
+
+# ── Proxmox deep management ─────────────────────────────────────────────
+def _pmx_headers(cfg: dict) -> dict:
+    user = cfg.get("proxmoxUser", "")
+    user_full = user if "@" in user else f"{user}@pam"
+    tname = cfg.get("proxmoxTokenName", "")
+    tval = cfg.get("proxmoxTokenValue", "")
+    return {"Authorization": f"PVEAPIToken={user_full}!{tname}={tval}", "Accept": "application/json"}
+
+
+@router.get("/api/proxmox/nodes/{node}/vms")
+def api_pmx_node_vms(node: str, auth=Depends(_get_auth)):
+    """List VMs and containers on a Proxmox node."""
+    cfg = read_yaml_settings()
+    url = cfg.get("proxmoxUrl", "")
+    if not url:
+        raise HTTPException(400, "Proxmox not configured")
+    hdrs = _pmx_headers(cfg)
+    import httpx as _httpx
+    results = []
+    for ep, vtype in (("qemu", "qemu"), ("lxc", "lxc")):
+        try:
+            r = _httpx.get(f"{url.rstrip('/')}/api2/json/nodes/{node}/{ep}",
+                          headers=hdrs, verify=False, timeout=8)
+            r.raise_for_status()
+            for vm in r.json().get("data", [])[:50]:
+                mmem = vm.get("maxmem", 1) or 1
+                results.append({
+                    "vmid": vm.get("vmid"), "name": vm.get("name", ""),
+                    "type": vtype, "status": vm.get("status", ""),
+                    "cpu": round(vm.get("cpu", 0) * 100, 1),
+                    "mem_percent": round(vm.get("mem", 0) / mmem * 100, 1),
+                    "uptime": vm.get("uptime", 0),
+                    "disk": vm.get("disk", 0), "maxdisk": vm.get("maxdisk", 0),
+                })
+        except Exception:
+            pass
+    return results
+
+
+@router.get("/api/proxmox/nodes/{node}/vms/{vmid}/snapshots")
+def api_pmx_snapshots(node: str, vmid: int, request: Request, auth=Depends(_get_auth)):
+    """List VM snapshots."""
+    cfg = read_yaml_settings()
+    url = cfg.get("proxmoxUrl", "")
+    if not url:
+        raise HTTPException(400, "Proxmox not configured")
+    vtype = request.query_params.get("type", "qemu")
+    hdrs = _pmx_headers(cfg)
+    import httpx as _httpx
+    try:
+        r = _httpx.get(f"{url.rstrip('/')}/api2/json/nodes/{node}/{vtype}/{vmid}/snapshot",
+                      headers=hdrs, verify=False, timeout=8)
+        r.raise_for_status()
+        return [{"name": s.get("name", ""), "description": s.get("description", ""),
+                 "snaptime": s.get("snaptime", 0), "parent": s.get("parent", "")}
+                for s in r.json().get("data", [])]
+    except Exception as e:
+        raise HTTPException(502, f"Proxmox API error: {e}")
+
+
+@router.post("/api/proxmox/nodes/{node}/vms/{vmid}/snapshot")
+async def api_pmx_create_snapshot(node: str, vmid: int, request: Request, auth=Depends(_require_admin)):
+    """Create a VM snapshot."""
+    username, _ = auth
+    body = await _read_body(request)
+    snapname = body.get("name", "").strip()
+    description = body.get("description", "")
+    vtype = body.get("type", "qemu")
+    if not snapname or not re.match(r'^[a-zA-Z0-9_-]+$', snapname):
+        raise HTTPException(400, "Invalid snapshot name")
+    cfg = read_yaml_settings()
+    url = cfg.get("proxmoxUrl", "")
+    if not url:
+        raise HTTPException(400, "Proxmox not configured")
+    hdrs = _pmx_headers(cfg)
+    import httpx as _httpx
+    try:
+        r = _httpx.post(f"{url.rstrip('/')}/api2/json/nodes/{node}/{vtype}/{vmid}/snapshot",
+                       json={"snapname": snapname, "description": description},
+                       headers=hdrs, verify=False, timeout=30)
+        r.raise_for_status()
+        db.audit_log("pmx_snapshot", username, f"Created snapshot {snapname} for {vtype}/{vmid}", _client_ip(request))
+        return {"success": True, "task": r.json().get("data", "")}
+    except Exception as e:
+        raise HTTPException(502, f"Snapshot creation failed: {e}")
+
+
+@router.get("/api/proxmox/nodes/{node}/vms/{vmid}/console")
+def api_pmx_console_url(node: str, vmid: int, request: Request, auth=Depends(_require_operator)):
+    """Get a noVNC console URL for a VM."""
+    cfg = read_yaml_settings()
+    url = cfg.get("proxmoxUrl", "")
+    if not url:
+        raise HTTPException(400, "Proxmox not configured")
+    vtype = request.query_params.get("type", "qemu")
+    console_url = f"{url.rstrip('/')}/?console={vtype}&vmid={vmid}&node={node}&resize=scale"
+    return {"url": console_url}
+
+
+# ── /api/terminal (WebSocket) ────────────────────────────────────────────────
+@router.websocket("/api/terminal")
+async def ws_terminal(ws: WebSocket):
+    """WebSocket terminal -- admin only."""
+    token = ws.query_params.get("token", "")
+    username, role = token_store.validate(token)
+    if not username or role != "admin":
+        await ws.close(code=4001, reason="Unauthorized")
+        return
+    from ..terminal import terminal_handler
+    await terminal_handler(ws, username)
+
+
+# ── Network discovery endpoints ───────────────────────────────────────────────
+
+@router.get("/api/network/devices")
+def api_network_devices(auth=Depends(_get_auth)):
+    """List all discovered network devices."""
+    return db.list_network_devices()
+
+
+@router.post("/api/network/discover/{hostname}")
+async def api_network_discover(hostname: str, request: Request, auth=Depends(_require_operator)):
+    """Trigger network discovery on a specific agent."""
+    username, role = auth
+    ip = _client_ip(request)
+
+    risk = RISK_LEVELS.get("network_discover")
+    if not risk:
+        raise HTTPException(400, "Unknown command type: 'network_discover'")
+    if not check_role_permission(role, risk):
+        raise HTTPException(403, "Insufficient permissions for network_discover")
+
+    with _agent_data_lock:
+        agent = _agent_data.get(hostname)
+    if not agent:
+        raise HTTPException(404, f"Agent '{hostname}' not found or offline")
+
+    cmd_id = secrets.token_hex(8)
+    cmd = {"id": cmd_id, "type": "network_discover", "params": {},
+           "queued_by": username, "queued_at": int(time.time())}
+
+    # Try WebSocket first, fall back to queue
+    delivered = False
+    with _agent_ws_lock:
+        ws = _agent_websockets.get(hostname)
+    if ws:
+        try:
+            await ws.send_json({"type": "command", "id": cmd_id,
+                                "cmd": "network_discover", "params": {}})
+            delivered = True
+        except Exception:
+            with _agent_ws_lock:
+                _agent_websockets.pop(hostname, None)
+
+    if not delivered:
+        with _agent_cmd_lock:
+            _agent_commands.setdefault(hostname, []).append(cmd)
+
+    db.record_command(cmd_id, hostname, "network_discover", {}, username)
+    db.audit_log("network_discover", username,
+                 f"host={hostname} id={cmd_id} ws={delivered}", ip)
+    return {"status": "sent" if delivered else "queued", "id": cmd_id, "websocket": delivered}
+
+
+@router.delete("/api/network/devices/{device_id}")
+def api_delete_network_device(device_id: int, request: Request, auth=Depends(_require_operator)):
+    """Remove a discovered network device."""
+    username, _ = auth
+    ok = db.delete_network_device(device_id)
+    if not ok:
+        raise HTTPException(404, f"Device {device_id} not found")
+    db.audit_log("network_device_delete", username,
+                 f"device_id={device_id}", _client_ip(request))
+    return {"status": "ok"}
