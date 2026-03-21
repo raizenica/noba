@@ -46,6 +46,7 @@ import VpnCard          from '../components/cards/VpnCard.vue'
 import EnergyCard       from '../components/cards/EnergyCard.vue'
 import CameraFeedsCard  from '../components/cards/CameraFeedsCard.vue'
 import RecoveryCard     from '../components/cards/RecoveryCard.vue'
+import PredictionCard  from '../components/cards/PredictionCard.vue'
 
 const dashboardStore = useDashboardStore()
 const settingsStore  = useSettingsStore()
@@ -442,6 +443,9 @@ onMounted(() => {
       <!-- Data-driven cards (no URL needed) -->
       <EnergyCard      v-if="(dashboardStore.live.energy || []).length > 0"              />
       <CameraFeedsCard v-if="(dashboardStore.live.cameraFeeds || []).length > 0"         />
+
+      <!-- Prediction -->
+      <PredictionCard  v-if="showCard('prediction')"                                      />
 
       <!-- Admin-only -->
       <RecoveryCard    v-if="showCard('recovery')"                                        />
