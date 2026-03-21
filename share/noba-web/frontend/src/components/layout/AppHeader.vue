@@ -3,12 +3,16 @@ import { inject } from 'vue'
 import { useDashboardStore } from '../../stores/dashboard'
 import { useSettingsStore } from '../../stores/settings'
 import { useNotificationsStore } from '../../stores/notifications'
+import { useAuthStore } from '../../stores/auth'
+import { useModalsStore } from '../../stores/modals'
 
 const toggleSidebar = inject('toggleSidebar')
 
 const dashboardStore = useDashboardStore()
 const settingsStore = useSettingsStore()
 const notifStore = useNotificationsStore()
+const auth = useAuthStore()
+const modals = useModalsStore()
 
 const themes = [
   { value: 'auto', label: 'System' },
@@ -34,6 +38,14 @@ function connLabel() {
     default: return 'Offline'
   }
 }
+
+function openSearch() {
+  modals.searchModal = true
+}
+
+function openProfile() {
+  modals.profileModal = true
+}
 </script>
 
 <template>
@@ -42,12 +54,13 @@ function connLabel() {
       <i class="fas fa-bars"></i>
     </button>
 
-    <div class="header-search">
+    <div class="header-search" style="cursor:pointer" @click="openSearch" title="Search (Ctrl+K)">
       <i class="fas fa-search search-icon"></i>
       <input
         type="text"
         placeholder="Search commands, agents, settings..."
         readonly
+        style="cursor:pointer"
       >
       <span class="search-kbd">Ctrl+K</span>
     </div>
@@ -84,5 +97,15 @@ function connLabel() {
       <span class="live-dot" :class="dashboardStore.connStatus"></span>
       {{ connLabel() }}
     </span>
+
+    <!-- User avatar — opens profile modal -->
+    <button
+      class="icon-btn"
+      title="Profile"
+      @click="openProfile"
+      style="margin-left:.25rem"
+    >
+      <i class="fas fa-user-circle" style="font-size:1.1rem"></i>
+    </button>
   </header>
 </template>
