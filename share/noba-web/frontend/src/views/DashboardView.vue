@@ -4,6 +4,26 @@ import { useDashboardStore } from '../stores/dashboard'
 import { useSettingsStore } from '../stores/settings'
 import { useApi } from '../composables/useApi'
 
+// ── Card imports ──────────────────────────────────────────────────────────────
+import CoreSystemCard     from '../components/cards/CoreSystemCard.vue'
+import SystemHealthCard   from '../components/cards/SystemHealthCard.vue'
+import UptimeCard         from '../components/cards/UptimeCard.vue'
+import NetworkIoCard      from '../components/cards/NetworkIoCard.vue'
+import HardwareCard       from '../components/cards/HardwareCard.vue'
+import StorageCard        from '../components/cards/StorageCard.vue'
+import DiskHealthCard     from '../components/cards/DiskHealthCard.vue'
+import DiskIoCard         from '../components/cards/DiskIoCard.vue'
+import NetworkRadarCard   from '../components/cards/NetworkRadarCard.vue'
+import ProcessesCard      from '../components/cards/ProcessesCard.vue'
+import BatteryCard        from '../components/cards/BatteryCard.vue'
+import AgentsCard         from '../components/cards/AgentsCard.vue'
+import CertExpiryCard     from '../components/cards/CertExpiryCard.vue'
+import DevicePresenceCard from '../components/cards/DevicePresenceCard.vue'
+import ContainersCard     from '../components/cards/ContainersCard.vue'
+import AutomationsCard    from '../components/cards/AutomationsCard.vue'
+import QuickActionsCard   from '../components/cards/QuickActionsCard.vue'
+import BookmarksCard      from '../components/cards/BookmarksCard.vue'
+
 const dashboardStore = useDashboardStore()
 const settingsStore  = useSettingsStore()
 const { get }        = useApi()
@@ -259,7 +279,24 @@ onMounted(() => {
         </div>
     -->
     <div class="grid" :class="{ 'glance-mode': glanceMode }">
-      <!-- placeholder so the grid is always rendered and CSS applies -->
+      <CoreSystemCard     v-if="showCard('core')"          />
+      <SystemHealthCard                                     />
+      <UptimeCard                                           />
+      <NetworkIoCard      v-if="showCard('netio')"         />
+      <HardwareCard       v-if="showCard('hw')"            />
+      <StorageCard        v-if="showCard('storage')"       />
+      <DiskHealthCard     v-if="showCard('scrutiny')"      />
+      <DiskIoCard         v-if="showCard('diskIo')"        />
+      <NetworkRadarCard   v-if="showCard('radar')"         />
+      <ProcessesCard      v-if="showCard('procs')"         />
+      <BatteryCard        v-if="showCard('battery')"       />
+      <AgentsCard         v-if="showCard('agents')"        />
+      <CertExpiryCard     v-if="showCard('certExpiry')"    />
+      <DevicePresenceCard                                   />
+      <ContainersCard     v-if="showCard('containers')"    />
+      <AutomationsCard    v-if="showCard('automations')"   />
+      <QuickActionsCard   v-if="showCard('actions')"       />
+      <BookmarksCard      v-if="showCard('bookmarks')"     />
     </div>
 
     <!-- Glance-mode toggle — floats over the header area via slot or direct button -->
