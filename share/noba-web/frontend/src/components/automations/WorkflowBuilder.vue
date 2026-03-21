@@ -168,7 +168,7 @@ function onKeyDown(e) {
 }
 
 // ── SVG edge geometry ──────────────────────────────────────────────────────
-const NODE_W = 170
+const NODE_W = 175   // 170px width + 4px left border + 1px right border
 const NODE_H = 88
 
 function portOffsetX(portId, ports) {

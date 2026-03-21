@@ -8,9 +8,16 @@ const { get, post } = useApi()
 
 const pluginList = ref([])
 const pluginLoading = ref(false)
+const catalogPlugins = ref([])
+const catalogLoading = ref(false)
+const catalogError = ref('')
+const installingId = ref('')
 
 onMounted(() => {
-  if (authStore.isAdmin) loadPlugins()
+  if (authStore.isAdmin) {
+    loadPlugins()
+    loadCatalog()
+  }
 })
 
 async function loadPlugins() {
@@ -37,6 +44,36 @@ async function togglePlugin(id, enabled) {
     const p = pluginList.value.find(x => x.id === id)
     if (p) p.enabled = enabled
   } catch { /* silent */ }
+}
+
+async function loadCatalog() {
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const d = await get('/api/plugins/available')
+    catalogPlugins.value = Array.isArray(d) ? d : []
+  } catch (e) {
+    catalogError.value = e.message || 'Failed to load catalog'
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+async function installPlugin(plugin) {
+  installingId.value = plugin.id || plugin.filename
+  try {
+    await post('/api/plugins/install', { url: plugin.url, filename: plugin.filename })
+    await loadPlugins()
+    // Mark as installed in catalog
+    const idx = catalogPlugins.value.findIndex(p => (p.id || p.filename) === (plugin.id || plugin.filename))
+    if (idx >= 0) catalogPlugins.value[idx]._installed = true
+  } catch { /* silent */ }
+  finally { installingId.value = '' }
+}
+
+function isInstalled(plugin) {
+  const fname = (plugin.filename || '').replace('.py', '')
+  return plugin._installed || pluginList.value.some(p => p.id === fname || p.id === plugin.id)
 }
 </script>
 
@@ -106,6 +143,64 @@ async function togglePlugin(id, enabled) {
         </div>
       </div>
 
+      <!-- Plugin Catalog -->
+      <div class="s-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.8rem">
+          <span class="s-label" style="margin:0">
+            <i class="fas fa-store" style="margin-right:.3rem"></i> Plugin Catalog
+          </span>
+          <button class="btn btn-sm" @click="loadCatalog" :disabled="catalogLoading">
+            <i class="fas fa-sync" :class="catalogLoading ? 'fa-spin' : ''"></i> Refresh
+          </button>
+        </div>
+
+        <div v-if="catalogLoading" style="text-align:center;padding:1rem;color:var(--text-muted)">
+          <i class="fas fa-spinner fa-spin"></i> Loading catalog...
+        </div>
+
+        <div v-else-if="catalogError" style="padding:.75rem;font-size:.8rem;color:var(--warning);background:var(--warning-dim);border:1px solid var(--warning-border);border-radius:6px">
+          <i class="fas fa-exclamation-triangle"></i> {{ catalogError }}
+          <div style="font-size:.72rem;color:var(--text-muted);margin-top:.3rem">
+            Set <code>pluginCatalogUrl</code> in Settings → General to enable the catalog.
+          </div>
+        </div>
+
+        <div v-else-if="catalogPlugins.length === 0" class="empty-msg">
+          No catalog configured. Set <code>pluginCatalogUrl</code> in Settings → General to browse available plugins.
+        </div>
+
+        <div v-else style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.6rem">
+          <div
+            v-for="p in catalogPlugins" :key="p.id || p.filename"
+            style="padding:.7rem .75rem;background:var(--surface-2);border:1px solid var(--border);border-radius:6px"
+          >
+            <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem">
+              <i class="fas" :class="p.icon || 'fa-puzzle-piece'" style="color:var(--accent)"></i>
+              <span style="font-weight:600;font-size:.85rem;flex:1">{{ p.name || p.filename }}</span>
+              <span style="font-size:.6rem;color:var(--text-dim)">v{{ p.version || '?' }}</span>
+            </div>
+            <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:.5rem;min-height:2.2em">
+              {{ p.description || 'No description available.' }}
+            </div>
+            <div style="display:flex;align-items:center;gap:.5rem">
+              <span v-if="p.author" style="font-size:.65rem;color:var(--text-dim);flex:1">by {{ p.author }}</span>
+              <span v-else style="flex:1"></span>
+              <span v-if="isInstalled(p)" class="badge bs" style="font-size:.6rem">Installed</span>
+              <button
+                v-else
+                class="btn btn-sm btn-primary"
+                @click="installPlugin(p)"
+                :disabled="installingId === (p.id || p.filename)"
+              >
+                <i class="fas" :class="installingId === (p.id || p.filename) ? 'fa-spinner fa-spin' : 'fa-download'"></i>
+                Install
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Plugin Directory info -->
       <div class="s-section">
         <span class="s-label">Plugin Directory</span>
         <div style="font-size:.78rem;color:var(--text-muted)">
