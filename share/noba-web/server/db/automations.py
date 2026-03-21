@@ -1127,3 +1127,237 @@ def _get_active_maintenance_windows(
                 active.append(window)
 
     return active
+
+
+# ── Playbook Templates ────────────────────────────────────────────────────────
+
+def _list_playbook_templates(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> list[dict]:
+    """List all playbook templates."""
+    try:
+        with lock:
+            rows = conn.execute(
+                "SELECT id, name, description, category, config, version "
+                "FROM playbook_templates ORDER BY category, name"
+            ).fetchall()
+        return [
+            {
+                "id": r[0], "name": r[1], "description": r[2],
+                "category": r[3],
+                "config": json.loads(r[4]) if r[4] else {},
+                "version": r[5],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("_list_playbook_templates failed: %s", e)
+        return []
+
+
+def _get_playbook_template(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    template_id: str,
+) -> dict | None:
+    """Get single template by id."""
+    try:
+        with lock:
+            r = conn.execute(
+                "SELECT id, name, description, category, config, version "
+                "FROM playbook_templates WHERE id = ?",
+                (template_id,),
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "name": r[1], "description": r[2],
+            "category": r[3],
+            "config": json.loads(r[4]) if r[4] else {},
+            "version": r[5],
+        }
+    except Exception as e:
+        logger.error("_get_playbook_template failed: %s", e)
+        return None
+
+
+def _upsert_playbook_template(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    template_id: str,
+    name: str,
+    description: str | None,
+    category: str | None,
+    config: dict,
+    version: int = 1,
+) -> bool:
+    """Insert or update a playbook template."""
+    try:
+        with lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO playbook_templates "
+                "(id, name, description, category, config, version) "
+                "VALUES (?,?,?,?,?,?)",
+                (template_id, name, description, category,
+                 json.dumps(config), version),
+            )
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error("_upsert_playbook_template failed: %s", e)
+        return False
+
+
+def _seed_default_playbooks(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> None:
+    """Seed 4 default playbook templates using INSERT OR IGNORE."""
+    templates = [
+        {
+            "id": "update-all-agents",
+            "name": "Update All Agents",
+            "description": "Check for updates on all agents, wait, verify versions, and report results.",
+            "category": "maintenance",
+            "config": {
+                "nodes": [
+                    {"id": "n1", "type": "agent_command",
+                     "params": {"cmd_type": "update", "broadcast": True},
+                     "label": "Check Updates"},
+                    {"id": "n2", "type": "delay",
+                     "params": {"seconds": 60},
+                     "label": "Wait 60s"},
+                    {"id": "n3", "type": "agent_command",
+                     "params": {"cmd_type": "version_check", "broadcast": True},
+                     "label": "Verify Versions"},
+                    {"id": "n4", "type": "notify",
+                     "params": {"level": "info", "title": "Agent Updates Complete",
+                                "message": "All agents updated and verified."},
+                     "label": "Report"},
+                ],
+                "edges": [
+                    {"from": "n1", "to": "n2"},
+                    {"from": "n2", "to": "n3"},
+                    {"from": "n3", "to": "n4"},
+                ],
+                "entry": "n1",
+            },
+            "version": 1,
+        },
+        {
+            "id": "rolling-dns-restart",
+            "name": "Rolling DNS Restart",
+            "description": "Restart the primary DNS server, wait for propagation, verify DNS health, and notify.",
+            "category": "maintenance",
+            "config": {
+                "nodes": [
+                    {"id": "n1", "type": "service",
+                     "params": {"service": "named.service", "action": "restart"},
+                     "label": "Restart Primary DNS"},
+                    {"id": "n2", "type": "delay",
+                     "params": {"seconds": 30},
+                     "label": "Wait 30s"},
+                    {"id": "n3", "type": "condition",
+                     "params": {"metric": "dns_ok", "operator": "==", "threshold": 1},
+                     "label": "DNS OK?"},
+                    {"id": "n4", "type": "notify",
+                     "params": {"level": "info", "title": "DNS Restart Successful",
+                                "message": "Primary DNS restarted and healthy."},
+                     "label": "Success Notification"},
+                    {"id": "n5", "type": "notify",
+                     "params": {"level": "error", "title": "DNS Restart Failed",
+                                "message": "Primary DNS did not recover after restart."},
+                     "label": "Failure Notification"},
+                ],
+                "edges": [
+                    {"from": "n1", "to": "n2"},
+                    {"from": "n2", "to": "n3"},
+                    {"from": "n3", "to": "n4", "condition": True},
+                    {"from": "n3", "to": "n5", "condition": False},
+                ],
+                "entry": "n1",
+            },
+            "version": 1,
+        },
+        {
+            "id": "backup-verification",
+            "name": "Backup Verification",
+            "description": "Trigger a backup job, wait for completion, then report the result.",
+            "category": "backup",
+            "config": {
+                "nodes": [
+                    {"id": "n1", "type": "script",
+                     "params": {"script": "backup", "args": "--verify"},
+                     "label": "Trigger Backup"},
+                    {"id": "n2", "type": "delay",
+                     "params": {"seconds": 300},
+                     "label": "Wait 5 Min"},
+                    {"id": "n3", "type": "notify",
+                     "params": {"level": "info", "title": "Backup Verification Complete",
+                                "message": "Backup triggered and verification window passed."},
+                     "label": "Report"},
+                ],
+                "edges": [
+                    {"from": "n1", "to": "n2"},
+                    {"from": "n2", "to": "n3"},
+                ],
+                "entry": "n1",
+            },
+            "version": 1,
+        },
+        {
+            "id": "disk-cleanup",
+            "name": "Disk Cleanup",
+            "description": "Check disk usage; if above 85%, find large files, require approval, then run cleanup.",
+            "category": "maintenance",
+            "config": {
+                "nodes": [
+                    {"id": "n1", "type": "condition",
+                     "params": {"metric": "disk_percent", "operator": ">", "threshold": 85},
+                     "label": "Disk > 85%?"},
+                    {"id": "n2", "type": "script",
+                     "params": {"script": "diskcheck", "args": "--find-large"},
+                     "label": "Find Large Files"},
+                    {"id": "n3", "type": "approval_gate",
+                     "params": {"message": "Approve disk cleanup?", "timeout_s": 3600},
+                     "label": "Approval Gate"},
+                    {"id": "n4", "type": "script",
+                     "params": {"script": "diskcheck", "args": "--cleanup"},
+                     "label": "Execute Cleanup"},
+                    {"id": "n5", "type": "notify",
+                     "params": {"level": "info", "title": "Disk Cleanup Complete",
+                                "message": "Disk cleanup executed successfully."},
+                     "label": "Report"},
+                    {"id": "n6", "type": "notify",
+                     "params": {"level": "info", "title": "Disk OK",
+                                "message": "Disk usage is below threshold. No action needed."},
+                     "label": "No Action"},
+                ],
+                "edges": [
+                    {"from": "n1", "to": "n2", "condition": True},
+                    {"from": "n1", "to": "n6", "condition": False},
+                    {"from": "n2", "to": "n3"},
+                    {"from": "n3", "to": "n4"},
+                    {"from": "n4", "to": "n5"},
+                ],
+                "entry": "n1",
+            },
+            "version": 1,
+        },
+    ]
+    try:
+        with lock:
+            for t in templates:
+                conn.execute(
+                    "INSERT OR IGNORE INTO playbook_templates "
+                    "(id, name, description, category, config, version) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (
+                        t["id"], t["name"], t["description"], t["category"],
+                        json.dumps(t["config"]), t["version"],
+                    ),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.error("_seed_default_playbooks failed: %s", e)

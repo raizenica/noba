@@ -325,6 +325,42 @@ def api_automation_templates(auth=Depends(_get_auth)):
     return _AUTOMATION_TEMPLATES
 
 
+# ── /api/playbooks — playbook library ────────────────────────────────────────
+
+@router.get("/api/playbooks")
+def api_list_playbooks(auth=Depends(_get_auth)):
+    """List available playbook templates."""
+    return db.list_playbook_templates()
+
+
+@router.get("/api/playbooks/{playbook_id}")
+def api_get_playbook(playbook_id: str, auth=Depends(_get_auth)):
+    """Get a single playbook template by id."""
+    template = db.get_playbook_template(playbook_id)
+    if not template:
+        raise HTTPException(404, "Playbook not found")
+    return template
+
+
+@router.post("/api/playbooks/{playbook_id}/install")
+async def api_install_playbook(
+    playbook_id: str, request: Request, auth=Depends(_require_operator)
+):
+    """Install a playbook template as a new workflow automation."""
+    import secrets
+    username, _ = auth
+    template = db.get_playbook_template(playbook_id)
+    if not template:
+        raise HTTPException(404, "Playbook not found")
+    body = await _read_body(request)
+    name = body.get("name", template["name"])
+    auto_id = secrets.token_hex(6)
+    db.insert_automation(auto_id, name, "workflow", template["config"], enabled=False)
+    db.audit_log("playbook_install", username,
+                 f"template={playbook_id} auto={auto_id}", _client_ip(request))
+    return {"id": auto_id, "status": "ok"}
+
+
 # ── /api/automations/stats ────────────────────────────────────────────────────
 @router.get("/api/automations/stats")
 def api_automation_stats(auth=Depends(_get_auth)):

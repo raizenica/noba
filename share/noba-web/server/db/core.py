@@ -71,15 +71,19 @@ from .automations import (
     _get_action_audit,
     _get_active_maintenance_windows,
     _get_approval,
+    _get_playbook_template,
     _get_workflow_context,
     _insert_action_audit,
     _insert_approval,
     _insert_maintenance_window,
     _list_approvals,
     _list_maintenance_windows,
+    _list_playbook_templates,
     _save_workflow_context,
+    _seed_default_playbooks,
     _update_approval_result,
     _update_maintenance_window,
+    _upsert_playbook_template,
     delete_api_key as _delete_api_key,
     delete_automation as _delete_automation,
     get_api_key as _get_api_key,
@@ -583,6 +587,15 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_ech_monitor_ts
                     ON endpoint_check_history(monitor_id, timestamp);
+
+                CREATE TABLE IF NOT EXISTS playbook_templates (
+                    id          TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    description TEXT,
+                    category    TEXT,
+                    config      TEXT NOT NULL,
+                    version     INTEGER NOT NULL DEFAULT 1
+                );
             """)
             # Migrate existing databases: add assigned_to column if missing
             try:
@@ -600,6 +613,9 @@ class Database:
                 conn.commit()
             except Exception:
                 pass  # Column already exists
+        # Seed default playbook templates (outside the with-lock block so
+        # _seed_default_playbooks can acquire the lock itself without deadlocking)
+        _seed_default_playbooks(self._get_conn(), self._lock)
 
     # ── Metrics ───────────────────────────────────────────────────────────────
     def insert_metrics(self, metrics: list[tuple]) -> None:
@@ -1218,4 +1234,25 @@ class Database:
         return _get_action_audit(
             self._get_conn(), self._lock,
             limit=limit, trigger_type=trigger_type, outcome=outcome,
+        )
+
+    # ── Playbook Templates ────────────────────────────────────────────────────
+    def list_playbook_templates(self) -> list[dict]:
+        return _list_playbook_templates(self._get_conn(), self._lock)
+
+    def get_playbook_template(self, template_id: str) -> dict | None:
+        return _get_playbook_template(self._get_conn(), self._lock, template_id)
+
+    def upsert_playbook_template(
+        self,
+        template_id: str,
+        name: str,
+        description: str | None,
+        category: str | None,
+        config: dict,
+        version: int = 1,
+    ) -> bool:
+        return _upsert_playbook_template(
+            self._get_conn(), self._lock,
+            template_id, name, description, category, config, version=version,
         )
