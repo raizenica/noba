@@ -198,8 +198,11 @@ async def api_automations_run(auto_id: str, request: Request, auth=Depends(_requ
         for key in ("command", "url", "args"):
             if key in config and isinstance(config[key], str):
                 try:
-                    config[key] = config[key].format_map(variables)
-                except (KeyError, ValueError):
+                    config[key] = config[key].format_map(
+                        {k: v for k, v in variables.items()
+                         if isinstance(k, str) and isinstance(v, (str, int, float))}
+                    )
+                except (KeyError, ValueError, IndexError):
                     pass
 
     # Workflow: chain execution of steps

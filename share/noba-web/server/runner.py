@@ -135,38 +135,53 @@ class JobRunner:
 
             entry["process"] = proc
 
+            # Watchdog timer: kill the process if it exceeds JOB_TIMEOUT,
+            # even if readline() is blocking on a hanging subprocess.
+            timed_out = threading.Event()
+
+            def _watchdog() -> None:
+                timed_out.set()
+                self._kill_process(proc)
+
+            timer = threading.Timer(JOB_TIMEOUT, _watchdog)
+            timer.daemon = True
+            timer.start()
+
             # Stream stdout/stderr capped at JOB_MAX_OUTPUT
             # Collapse \r-based progress lines (rsync --info=progress2, etc.)
             # to keep only the last update per burst.
-            total = 0
-            for line in iter(proc.stdout.readline, b""):
-                if entry["cancelled"]:
-                    break
-                decoded = line.decode("utf-8", errors="replace")
-                # Collapse carriage-return progress: keep only the last non-empty segment
-                if "\r" in decoded:
-                    parts = decoded.split("\r")
-                    # Walk backwards to find the last segment with content
-                    for i in range(len(parts) - 1, -1, -1):
-                        if parts[i].strip():
-                            decoded = parts[i] if parts[i].endswith("\n") else parts[i] + "\n"
-                            break
-                    else:
-                        decoded = "\n"
-                if total + len(decoded) <= JOB_MAX_OUTPUT:
-                    output_buf.append(decoded)
-                    total += len(decoded)
-                elif total < JOB_MAX_OUTPUT:
-                    remaining = JOB_MAX_OUTPUT - total
-                    output_buf.append(decoded[:remaining])
-                    output_buf.append("\n[output truncated]\n")
-                    break
-
-            # Wait for completion with timeout
             try:
-                proc.wait(timeout=JOB_TIMEOUT)
+                total = 0
+                for line in iter(proc.stdout.readline, b""):
+                    if entry["cancelled"]:
+                        break
+                    decoded = line.decode("utf-8", errors="replace")
+                    # Collapse carriage-return progress: keep only the last non-empty segment
+                    if "\r" in decoded:
+                        parts = decoded.split("\r")
+                        # Walk backwards to find the last segment with content
+                        for i in range(len(parts) - 1, -1, -1):
+                            if parts[i].strip():
+                                decoded = parts[i] if parts[i].endswith("\n") else parts[i] + "\n"
+                                break
+                        else:
+                            decoded = "\n"
+                    if total + len(decoded) <= JOB_MAX_OUTPUT:
+                        output_buf.append(decoded)
+                        total += len(decoded)
+                    elif total < JOB_MAX_OUTPUT:
+                        remaining = JOB_MAX_OUTPUT - total
+                        output_buf.append(decoded[:remaining])
+                        output_buf.append("\n[output truncated]\n")
+                        break
+
+                proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self._kill_process(proc)
+            finally:
+                timer.cancel()
+
+            if timed_out.is_set():
                 status = "timeout"
                 error = f"Timed out after {JOB_TIMEOUT}s"
                 output_buf.append(f"\n[ERROR] Job timed out after {JOB_TIMEOUT}s\n")

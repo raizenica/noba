@@ -152,6 +152,12 @@ class Database:
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.execute("PRAGMA busy_timeout=5000;")
+            # Use incremental auto-vacuum instead of manual VACUUM to avoid
+            # stop-the-world locks on the 24/7 time-series database.
+            cur_av = self._conn.execute("PRAGMA auto_vacuum;").fetchone()[0]
+            if cur_av != 2:  # 2 = INCREMENTAL
+                self._conn.execute("PRAGMA auto_vacuum=INCREMENTAL;")
+                self._conn.execute("VACUUM;")  # one-time migration to enable it
         return self._conn
 
     def _init_schema(self) -> None:

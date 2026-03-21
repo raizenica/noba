@@ -45,7 +45,8 @@ class HAEventBridge:
         while not self._shutdown.is_set():
             try:
                 with httpx.stream("GET", f"{base}/api/stream",
-                                  headers=headers, timeout=None) as response:
+                                  headers=headers,
+                                  timeout=httpx.Timeout(10, read=300)) as response:
                     for line in response.iter_lines():
                         if self._shutdown.is_set():
                             break

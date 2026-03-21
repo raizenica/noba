@@ -18,13 +18,21 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
 
     <script>
-        // Handle OIDC callback token in URL
+        // Handle OIDC callback token in URL (fragment or query param)
         (function() {
-            const params = new URLSearchParams(window.location.search);
-            const token = params.get('token');
+            var token = null;
+            // Prefer fragment (#token=...) — not sent to server in referrer/logs
+            if (window.location.hash && window.location.hash.indexOf('token=') === 1) {
+                token = window.location.hash.substring(7).split('&')[0];
+            }
+            // Fallback: query param (?token=...) for backward compat
+            if (!token) {
+                var params = new URLSearchParams(window.location.search);
+                token = params.get('token');
+            }
             if (token) {
                 localStorage.setItem('noba-token', token);
-                window.history.replaceState({}, '', '/' + window.location.hash);
+                window.history.replaceState({}, '', '/#/dashboard');
             }
         })();
     </script>

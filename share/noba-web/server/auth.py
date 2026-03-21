@@ -487,7 +487,10 @@ def authenticate_ldap(username: str, password: str, read_settings_fn) -> tuple[s
         server = ldap3.Server(ldap_url, get_info=ldap3.NONE, connect_timeout=5)
         # First bind with service account to search for user
         conn = ldap3.Connection(server, user=bind_dn, password=bind_pw, auto_bind=True)
-        conn.search(base_dn, f"(|(uid={username})(sAMAccountName={username})(mail={username}))",
+        # Escape LDAP special characters to prevent injection
+        safe_name = username.replace("\\", "\\5c").replace("*", "\\2a").replace(
+            "(", "\\28").replace(")", "\\29").replace("\x00", "\\00")
+        conn.search(base_dn, f"(|(uid={safe_name})(sAMAccountName={safe_name})(mail={safe_name}))",
                     attributes=["memberOf", "cn"])
         if not conn.entries:
             conn.unbind()

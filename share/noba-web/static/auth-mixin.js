@@ -138,6 +138,12 @@ function authMixin() {
             // Cancel speech synthesis
             if (window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch {} }
             this._clearAllIntervals();
+            // Stop log stream poll (uses raw setInterval, not _registerInterval)
+            if (this._logStreamInterval) { clearInterval(this._logStreamInterval); this._logStreamInterval = null; }
+            // Destroy Chart.js instances to free canvas memory
+            ['historyChart', '_multiChart', '_influxChart', '_correlateChart', '_securityScoreChart', '_agentHistChart'].forEach(k => {
+                if (this[k] && this[k].destroy) { try { this[k].destroy(); } catch {} this[k] = null; }
+            });
             if (this._es)   { this._es.close();           this._es   = null; }
             if (this._keydownHandler) {
                 document.removeEventListener('keydown', this._keydownHandler);

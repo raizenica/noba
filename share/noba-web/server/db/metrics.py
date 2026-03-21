@@ -107,10 +107,11 @@ def prune_history(
             conn.commit()
             logger.info("History pruned: %d rows older than %d days", stale, HISTORY_RETENTION_DAYS)
         if stale > 50_000:
-            # VACUUM must run outside any transaction
+            # Reclaim free pages incrementally — avoids the stop-the-world
+            # lock of a full VACUUM on a 24/7 time-series database.
             with lock:
-                conn.execute("VACUUM")
-                logger.info("History DB vacuumed")
+                conn.execute("PRAGMA incremental_vacuum(1000);")
+                logger.info("History DB incremental vacuum (%d pages)", 1000)
     except Exception as e:
         logger.error("prune_history failed: %s", e)
 
