@@ -22,7 +22,7 @@ def _mock_yaml_settings():
 @pytest.fixture()
 def client():
     """Create a TestClient with mocked YAML settings for agent key auth."""
-    with patch("server.routers.system.read_yaml_settings", _mock_yaml_settings):
+    with patch("server.routers.agents.read_yaml_settings", _mock_yaml_settings):
         from starlette.testclient import TestClient
         from server.app import app
         with TestClient(app, raise_server_exceptions=False) as c:

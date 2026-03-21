@@ -26,22 +26,22 @@ class TestValidateAgentKey:
 
     def test_valid_key(self):
         _setup_agent_keys()
-        from server.routers.system import _validate_agent_key
+        from server.routers.agents import _validate_agent_key
         assert _validate_agent_key(_TEST_AGENT_KEY) is True
 
     def test_invalid_key(self):
         _setup_agent_keys()
-        from server.routers.system import _validate_agent_key
+        from server.routers.agents import _validate_agent_key
         assert _validate_agent_key("wrong-key") is False
 
     def test_empty_key(self):
         _setup_agent_keys()
-        from server.routers.system import _validate_agent_key
+        from server.routers.agents import _validate_agent_key
         assert _validate_agent_key("") is False
 
     def test_no_keys_configured(self):
         write_yaml_settings({"agentKeys": ""})
-        from server.routers.system import _validate_agent_key
+        from server.routers.agents import _validate_agent_key
         assert _validate_agent_key("any-key") is False
 
 
