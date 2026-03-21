@@ -196,9 +196,19 @@ const edgePaths = computed(() => {
     const x2 = toNode.x + NODE_W / 2
     const y2 = toNode.y
 
-    const dy = Math.abs(y2 - y1)
-    const cpOff = Math.max(50, dy * 0.5)
-    const d = `M ${x1} ${y1} C ${x1} ${y1 + cpOff}, ${x2} ${y2 - cpOff}, ${x2} ${y2}`
+    const dx = Math.abs(x2 - x1)
+    const dy = y2 - y1
+
+    let d
+    if (dy > 30) {
+      // Vertical flow: gentle S-curve from bottom to top
+      const cpOff = Math.max(30, Math.min(80, Math.abs(dy) * 0.4))
+      d = `M ${x1} ${y1} C ${x1} ${y1 + cpOff}, ${x2} ${y2 - cpOff}, ${x2} ${y2}`
+    } else {
+      // Horizontal flow: curve exits bottom, enters top with shallow arc
+      const cpY = Math.max(30, dx * 0.15)
+      d = `M ${x1} ${y1} C ${x1} ${y1 + cpY}, ${x2} ${y2 - cpY}, ${x2} ${y2}`
+    }
 
     let stroke = 'var(--text-muted)'
     if (edge.port === 'true' || edge.port === 'approved')  stroke = 'var(--success)'
