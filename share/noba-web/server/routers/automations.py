@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import shlex
 import subprocess
 import threading
@@ -347,7 +348,6 @@ async def api_install_playbook(
     playbook_id: str, request: Request, auth=Depends(_require_operator)
 ):
     """Install a playbook template as a new workflow automation."""
-    import secrets
     username, _ = auth
     template = db.get_playbook_template(playbook_id)
     if not template:
@@ -450,7 +450,7 @@ async def api_automations_trigger(auto_id: str, request: Request):
         raise HTTPException(403, "No trigger key configured for this automation")
     provided = (request.headers.get("X-Trigger-Key", "")
                 or request.query_params.get("key", ""))
-    if not provided or provided != trigger_key:
+    if not provided or not secrets.compare_digest(provided, trigger_key):
         auth_header = request.headers.get("Authorization", "")
         username, role = authenticate(auth_header)
         if not username or role not in ("admin", "operator"):
@@ -630,7 +630,6 @@ def api_webhooks_list(auth=Depends(_require_admin)):
 @router.post("/api/webhooks")
 async def api_webhooks_create(request: Request, auth=Depends(_require_admin)):
     """Create a new webhook endpoint with auto-generated hook_id and secret."""
-    import secrets
 
     username, _ = auth
     ip = _client_ip(request)

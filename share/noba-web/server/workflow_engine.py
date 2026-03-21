@@ -278,29 +278,17 @@ def _build_auto_agent_command_process(config: dict) -> subprocess.Popen | None:
         failures = [h for h, r in results.items() if r is None or r.get("status") == "error"]
         if failures:
             msg = f"agent_command {cmd_type} failed on: {', '.join(failures)}"
-            return subprocess.Popen(
-                ["bash", "-c", f"echo '{msg}'; exit 1"],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
-            )
+            return _HttpResult(msg.encode(), 1)
         msg = f"agent_command {cmd_type} succeeded on {len(results)} agents"
-        return subprocess.Popen(
-            ["bash", "-c", f"echo '{msg}'"],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
-        )
+        return _HttpResult(msg.encode(), 0)
 
     # Single-host result
     status = result.get("status", "error")
     if status == "error":
         err = result.get("error", "unknown error")
-        return subprocess.Popen(
-            ["bash", "-c", f"echo 'agent_command error: {err}'; exit 1"],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
-        )
+        return _HttpResult(f"agent_command error: {err}".encode(), 1)
 
-    return subprocess.Popen(
-        ["bash", "-c", f"echo 'agent_command {cmd_type} on {hostname}: {status}'"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
-    )
+    return _HttpResult(f"agent_command {cmd_type} on {hostname}: {status}".encode(), 0)
 
 
 def _build_auto_remediation_process(config: dict, run_id: int = 0) -> _HttpResult | None:
