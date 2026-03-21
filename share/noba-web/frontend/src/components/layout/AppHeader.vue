@@ -1,5 +1,5 @@
 <script setup>
-import { inject, onMounted, onUnmounted } from 'vue'
+import { ref, inject, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDashboardStore } from '../../stores/dashboard'
 import { useSettingsStore } from '../../stores/settings'
@@ -7,6 +7,7 @@ import { useNotificationsStore } from '../../stores/notifications'
 import { useAuthStore } from '../../stores/auth'
 import { useModalsStore } from '../../stores/modals'
 import { useApprovalsStore } from '../../stores/approvals'
+import { useApi } from '../../composables/useApi'
 
 const toggleSidebar = inject('toggleSidebar')
 const router = useRouter()
@@ -17,16 +18,35 @@ const notifStore = useNotificationsStore()
 const auth = useAuthStore()
 const modals = useModalsStore()
 const approvalsStore = useApprovalsStore()
+const { get } = useApi()
 
-let _approvalPollInterval = null
+// ── Active maintenance windows ──────────────────────────────────────────────
+const activeMaintenanceWindows = ref([])
+
+async function fetchActiveMaintenanceWindows() {
+  try {
+    const data = await get('/api/maintenance-windows/active')
+    activeMaintenanceWindows.value = Array.isArray(data) ? data : []
+  } catch { /* silent */ }
+}
+
+const maintenanceTooltip = () =>
+  activeMaintenanceWindows.value.map(w => w.name).join(', ')
+
+let _approvalPollInterval   = null
+let _maintenancePollInterval = null
 
 onMounted(() => {
   approvalsStore.fetchCount()
   _approvalPollInterval = setInterval(() => approvalsStore.fetchCount(), 30_000)
+
+  fetchActiveMaintenanceWindows()
+  _maintenancePollInterval = setInterval(fetchActiveMaintenanceWindows, 60_000)
 })
 
 onUnmounted(() => {
   clearInterval(_approvalPollInterval)
+  clearInterval(_maintenancePollInterval)
 })
 
 const themes = [
@@ -120,6 +140,17 @@ function openProfile() {
       v-if="dashboardStore.offlineMode"
       class="offline-badge"
     ><i class="fas fa-wifi-slash" style="font-size:.6rem"></i> Offline</span>
+
+    <!-- Active maintenance window indicator -->
+    <span
+      v-if="activeMaintenanceWindows.length > 0"
+      class="live-pill"
+      style="background:color-mix(in srgb, var(--warning, #f0a500) 15%, transparent);border:1px solid var(--warning, #f0a500);color:var(--warning, #f0a500);cursor:default"
+      :title="maintenanceTooltip()"
+    >
+      <i class="fas fa-wrench" style="font-size:.6rem"></i>
+      Maintenance
+    </span>
 
     <span class="live-pill" :class="`conn-${dashboardStore.connStatus}`">
       <span class="live-dot" :class="dashboardStore.connStatus"></span>

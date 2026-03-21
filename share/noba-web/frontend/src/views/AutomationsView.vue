@@ -9,6 +9,7 @@ import ConfirmDialog                from '../components/ui/ConfirmDialog.vue'
 import AutomationFormModal          from '../components/automations/AutomationFormModal.vue'
 import RunOutputModal               from '../components/automations/RunOutputModal.vue'
 import ApprovalQueue                from '../components/automations/ApprovalQueue.vue'
+import MaintenanceWindows           from '../components/automations/MaintenanceWindows.vue'
 
 const authStore = useAuthStore()
 const notify    = useNotificationsStore()
@@ -380,11 +381,24 @@ onMounted(async () => {
           "
         >{{ approvalsStore.count }}</span>
       </button>
+      <button
+        class="btn btn-xs"
+        :class="activeTab === 'maintenance' ? 'btn-primary' : ''"
+        style="border-radius:4px 4px 0 0;border-bottom:none"
+        @click="activeTab = 'maintenance'"
+      >
+        <i class="fas fa-wrench" style="margin-right:.25rem"></i>Maintenance
+      </button>
     </div>
 
     <!-- Approvals tab content -->
     <div v-if="activeTab === 'approvals'">
       <ApprovalQueue />
+    </div>
+
+    <!-- Maintenance tab content -->
+    <div v-if="activeTab === 'maintenance'">
+      <MaintenanceWindows />
     </div>
 
     <!-- Automations tab content -->
