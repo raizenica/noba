@@ -641,3 +641,366 @@ def get_user_dashboard(
     except Exception as e:
         logger.error("get_user_dashboard failed: %s", e)
         return None
+
+
+# ── Approval Queue ─────────────────────────────────────────────────────────────
+
+def _insert_approval(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    automation_id: str,
+    trigger: str,
+    trigger_source: str | None,
+    action_type: str,
+    action_params: dict,
+    target: str | None,
+    requested_by: str | None,
+    auto_approve_at: int | None = None,
+    run_id: int | None = None,
+) -> int | None:
+    """Insert a new approval request, return lastrowid."""
+    now = int(time.time())
+    try:
+        with lock:
+            cur = conn.execute(
+                "INSERT INTO approval_queue "
+                "(automation_id, run_id, trigger, trigger_source, action_type, "
+                "action_params, target, status, requested_at, requested_by, auto_approve_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    automation_id, run_id, trigger, trigger_source, action_type,
+                    json.dumps(action_params), target, "pending", now,
+                    requested_by, auto_approve_at,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+    except Exception as e:
+        logger.error("_insert_approval failed: %s", e)
+        return None
+
+
+def _list_approvals(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    status: str = "pending",
+) -> list[dict]:
+    """List approvals filtered by status, newest first."""
+    try:
+        with lock:
+            rows = conn.execute(
+                "SELECT id, automation_id, run_id, trigger, trigger_source, "
+                "action_type, action_params, target, status, requested_at, "
+                "requested_by, decided_at, decided_by, auto_approve_at, result "
+                "FROM approval_queue WHERE status = ? "
+                "ORDER BY requested_at DESC",
+                (status,),
+            ).fetchall()
+        return [
+            {
+                "id": r[0], "automation_id": r[1], "run_id": r[2],
+                "trigger": r[3], "trigger_source": r[4],
+                "action_type": r[5],
+                "action_params": json.loads(r[6]) if r[6] else {},
+                "target": r[7], "status": r[8],
+                "requested_at": r[9], "requested_by": r[10],
+                "decided_at": r[11], "decided_by": r[12],
+                "auto_approve_at": r[13], "result": r[14],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("_list_approvals failed: %s", e)
+        return []
+
+
+def _get_approval(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    approval_id: int,
+) -> dict | None:
+    """Fetch a single approval by id."""
+    try:
+        with lock:
+            r = conn.execute(
+                "SELECT id, automation_id, run_id, trigger, trigger_source, "
+                "action_type, action_params, target, status, requested_at, "
+                "requested_by, decided_at, decided_by, auto_approve_at, result "
+                "FROM approval_queue WHERE id = ?",
+                (approval_id,),
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "automation_id": r[1], "run_id": r[2],
+            "trigger": r[3], "trigger_source": r[4],
+            "action_type": r[5],
+            "action_params": json.loads(r[6]) if r[6] else {},
+            "target": r[7], "status": r[8],
+            "requested_at": r[9], "requested_by": r[10],
+            "decided_at": r[11], "decided_by": r[12],
+            "auto_approve_at": r[13], "result": r[14],
+        }
+    except Exception as e:
+        logger.error("_get_approval failed: %s", e)
+        return None
+
+
+def _decide_approval(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    approval_id: int,
+    decision: str,
+    decided_by: str,
+) -> bool:
+    """Set status to decision (approved/denied) only if currently pending."""
+    now = int(time.time())
+    try:
+        with lock:
+            cur = conn.execute(
+                "UPDATE approval_queue SET status=?, decided_at=?, decided_by=? "
+                "WHERE id=? AND status='pending'",
+                (decision, now, decided_by, approval_id),
+            )
+            conn.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        logger.error("_decide_approval failed: %s", e)
+        return False
+
+
+def _update_approval_result(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    approval_id: int,
+    result: str,
+) -> None:
+    """Store the execution result for a resolved approval."""
+    try:
+        with lock:
+            conn.execute(
+                "UPDATE approval_queue SET result=? WHERE id=?",
+                (result, approval_id),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("_update_approval_result failed: %s", e)
+
+
+def _auto_approve_expired(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> int:
+    """Auto-approve pending items whose auto_approve_at <= now. Return rowcount."""
+    now = int(time.time())
+    try:
+        with lock:
+            cur = conn.execute(
+                "UPDATE approval_queue SET status='auto_approved', decided_at=? "
+                "WHERE status='pending' AND auto_approve_at IS NOT NULL "
+                "AND auto_approve_at <= ?",
+                (now, now),
+            )
+            conn.commit()
+        return cur.rowcount
+    except Exception as e:
+        logger.error("_auto_approve_expired failed: %s", e)
+        return 0
+
+
+def _count_pending_approvals(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> int:
+    """Return count of pending approval requests."""
+    try:
+        with lock:
+            r = conn.execute(
+                "SELECT COUNT(*) FROM approval_queue WHERE status='pending'"
+            ).fetchone()
+        return r[0] if r else 0
+    except Exception as e:
+        logger.error("_count_pending_approvals failed: %s", e)
+        return 0
+
+
+# ── Maintenance Windows ────────────────────────────────────────────────────────
+
+def _insert_maintenance_window(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    name: str,
+    schedule: str | None = None,
+    duration_min: int = 60,
+    one_off_start: int | None = None,
+    one_off_end: int | None = None,
+    suppress_alerts: bool = True,
+    override_autonomy: str | None = None,
+    auto_close_alerts: bool = False,
+    created_by: str | None = None,
+) -> int | None:
+    """Insert a maintenance window, return lastrowid."""
+    now = int(time.time())
+    try:
+        with lock:
+            cur = conn.execute(
+                "INSERT INTO maintenance_windows "
+                "(name, schedule, duration_min, one_off_start, one_off_end, "
+                "suppress_alerts, override_autonomy, auto_close_alerts, "
+                "enabled, created_by, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    name, schedule, duration_min, one_off_start, one_off_end,
+                    1 if suppress_alerts else 0,
+                    override_autonomy,
+                    1 if auto_close_alerts else 0,
+                    1, created_by, now,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+    except Exception as e:
+        logger.error("_insert_maintenance_window failed: %s", e)
+        return None
+
+
+def _list_maintenance_windows(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> list[dict]:
+    """Return all maintenance windows, newest first."""
+    try:
+        with lock:
+            rows = conn.execute(
+                "SELECT id, name, schedule, duration_min, one_off_start, one_off_end, "
+                "suppress_alerts, override_autonomy, auto_close_alerts, enabled, "
+                "created_by, created_at "
+                "FROM maintenance_windows ORDER BY created_at DESC"
+            ).fetchall()
+        return [
+            {
+                "id": r[0], "name": r[1], "schedule": r[2],
+                "duration_min": r[3], "one_off_start": r[4], "one_off_end": r[5],
+                "suppress_alerts": bool(r[6]), "override_autonomy": r[7],
+                "auto_close_alerts": bool(r[8]), "enabled": bool(r[9]),
+                "created_by": r[10], "created_at": r[11],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("_list_maintenance_windows failed: %s", e)
+        return []
+
+
+def _update_maintenance_window(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    window_id: int,
+    **kwargs,
+) -> bool:
+    """Update specified fields on a maintenance window."""
+    allowed = {
+        "name", "schedule", "duration_min", "one_off_start", "one_off_end",
+        "suppress_alerts", "override_autonomy", "auto_close_alerts", "enabled",
+    }
+    sets: list[str] = []
+    params: list = []
+    for k, v in kwargs.items():
+        if k not in allowed:
+            continue
+        if k in ("suppress_alerts", "auto_close_alerts", "enabled"):
+            v = 1 if v else 0
+        sets.append(f"{k} = ?")
+        params.append(v)
+    if not sets:
+        return False
+    params.append(window_id)
+    try:
+        with lock:
+            cur = conn.execute(
+                f"UPDATE maintenance_windows SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+            conn.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        logger.error("_update_maintenance_window failed: %s", e)
+        return False
+
+
+def _delete_maintenance_window(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    window_id: int,
+) -> bool:
+    """Delete a maintenance window. Return True if a row was deleted."""
+    try:
+        with lock:
+            cur = conn.execute(
+                "DELETE FROM maintenance_windows WHERE id = ?", (window_id,)
+            )
+            conn.commit()
+        return cur.rowcount > 0
+    except Exception as e:
+        logger.error("_delete_maintenance_window failed: %s", e)
+        return False
+
+
+def _get_active_maintenance_windows(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> list[dict]:
+    """Return windows that are currently active.
+
+    - One-off: active when one_off_start <= now <= one_off_end.
+    - Cron-based: active when any minute in the past duration_min minutes
+      matches the cron expression.
+    Disabled windows (enabled=0) are never returned.
+    """
+    from ..scheduler import _match_cron
+    from datetime import datetime, timezone
+
+    now = int(time.time())
+    try:
+        with lock:
+            rows = conn.execute(
+                "SELECT id, name, schedule, duration_min, one_off_start, one_off_end, "
+                "suppress_alerts, override_autonomy, auto_close_alerts, enabled, "
+                "created_by, created_at "
+                "FROM maintenance_windows WHERE enabled = 1"
+            ).fetchall()
+    except Exception as e:
+        logger.error("_get_active_maintenance_windows failed: %s", e)
+        return []
+
+    active = []
+    for r in rows:
+        window = {
+            "id": r[0], "name": r[1], "schedule": r[2],
+            "duration_min": r[3], "one_off_start": r[4], "one_off_end": r[5],
+            "suppress_alerts": bool(r[6]), "override_autonomy": r[7],
+            "auto_close_alerts": bool(r[8]), "enabled": bool(r[9]),
+            "created_by": r[10], "created_at": r[11],
+        }
+        one_off_start = r[4]
+        one_off_end = r[5]
+        schedule = r[2]
+        duration_min = r[3] or 60
+
+        if one_off_start is not None and one_off_end is not None:
+            # One-off window: directly check time range
+            if one_off_start <= now <= one_off_end:
+                active.append(window)
+        elif schedule:
+            # Cron-based: check if any minute in the last duration_min matches
+            matched = False
+            for offset in range(duration_min):
+                ts = now - offset * 60
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+                if _match_cron(schedule, dt):
+                    matched = True
+                    break
+            if matched:
+                active.append(window)
+
+    return active

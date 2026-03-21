@@ -59,6 +59,18 @@ from .audit import (
     prune_audit as _prune_audit,
 )
 from .automations import (
+    _auto_approve_expired,
+    _count_pending_approvals,
+    _decide_approval,
+    _delete_maintenance_window,
+    _get_active_maintenance_windows,
+    _get_approval,
+    _insert_approval,
+    _insert_maintenance_window,
+    _list_approvals,
+    _list_maintenance_windows,
+    _update_approval_result,
+    _update_maintenance_window,
     delete_api_key as _delete_api_key,
     delete_automation as _delete_automation,
     get_api_key as _get_api_key,
@@ -492,6 +504,43 @@ class Database:
                     last_verified INTEGER,
                     updated_at INTEGER
                 );
+
+                CREATE TABLE IF NOT EXISTS approval_queue (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    automation_id   TEXT NOT NULL,
+                    run_id          INTEGER,
+                    trigger         TEXT NOT NULL,
+                    trigger_source  TEXT,
+                    action_type     TEXT NOT NULL,
+                    action_params   TEXT NOT NULL DEFAULT '{}',
+                    target          TEXT,
+                    status          TEXT NOT NULL DEFAULT 'pending',
+                    requested_at    INTEGER NOT NULL,
+                    requested_by    TEXT,
+                    decided_at      INTEGER,
+                    decided_by      TEXT,
+                    auto_approve_at INTEGER,
+                    result          TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_approval_queue_status
+                    ON approval_queue(status, requested_at DESC);
+
+                CREATE TABLE IF NOT EXISTS maintenance_windows (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name              TEXT NOT NULL,
+                    schedule          TEXT,
+                    duration_min      INTEGER NOT NULL DEFAULT 60,
+                    one_off_start     INTEGER,
+                    one_off_end       INTEGER,
+                    suppress_alerts   INTEGER NOT NULL DEFAULT 1,
+                    override_autonomy TEXT,
+                    auto_close_alerts INTEGER NOT NULL DEFAULT 0,
+                    enabled           INTEGER NOT NULL DEFAULT 1,
+                    created_by        TEXT,
+                    created_at        INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_maint_windows_enabled
+                    ON maintenance_windows(enabled);
             """)
             # Migrate existing databases: add assigned_to column if missing
             try:
@@ -1017,3 +1066,44 @@ class Database:
             copies=copies, media_types=media_types,
             has_offsite=has_offsite, last_verified=last_verified,
         )
+
+    # ── Approval Queue ────────────────────────────────────────────────────────
+    def insert_approval(self, **kwargs) -> int | None:
+        return _insert_approval(self._get_conn(), self._lock, **kwargs)
+
+    def list_approvals(self, status: str = "pending") -> list[dict]:
+        return _list_approvals(self._get_conn(), self._lock, status)
+
+    def get_approval(self, approval_id: int) -> dict | None:
+        return _get_approval(self._get_conn(), self._lock, approval_id)
+
+    def decide_approval(self, approval_id: int, decision: str,
+                        decided_by: str) -> bool:
+        return _decide_approval(self._get_conn(), self._lock,
+                                approval_id, decision, decided_by)
+
+    def update_approval_result(self, approval_id: int, result: str) -> None:
+        _update_approval_result(self._get_conn(), self._lock, approval_id, result)
+
+    def auto_approve_expired(self) -> int:
+        return _auto_approve_expired(self._get_conn(), self._lock)
+
+    def count_pending_approvals(self) -> int:
+        return _count_pending_approvals(self._get_conn(), self._lock)
+
+    # ── Maintenance Windows ───────────────────────────────────────────────────
+    def insert_maintenance_window(self, **kwargs) -> int | None:
+        return _insert_maintenance_window(self._get_conn(), self._lock, **kwargs)
+
+    def list_maintenance_windows(self) -> list[dict]:
+        return _list_maintenance_windows(self._get_conn(), self._lock)
+
+    def update_maintenance_window(self, window_id: int, **kwargs) -> bool:
+        return _update_maintenance_window(self._get_conn(), self._lock,
+                                          window_id, **kwargs)
+
+    def delete_maintenance_window(self, window_id: int) -> bool:
+        return _delete_maintenance_window(self._get_conn(), self._lock, window_id)
+
+    def get_active_maintenance_windows(self) -> list[dict]:
+        return _get_active_maintenance_windows(self._get_conn(), self._lock)
