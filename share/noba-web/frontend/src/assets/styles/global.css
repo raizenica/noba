@@ -684,6 +684,7 @@
     .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .btn:disabled { opacity: .4; cursor: not-allowed; }
     .btn-sm { width: auto; padding: .55rem 1.4rem; }
+    .btn-xs { width: auto; padding: .25rem .5rem; font-size: .72rem; min-height: 0; min-width: 0; }
 
     /* ── Toggles ── */
     .toggle-item { display: flex; align-items: center; gap: .6rem; cursor: pointer; font-size: .8rem; color: var(--text-muted); transition: color .2s; }
@@ -1621,10 +1622,23 @@
     .row-val { font-size: .78rem; }
     .badge { font-size: .6rem; padding: 1px 5px; }
 
-    /* Touch-friendly button sizing (min 44px tap targets) */
-    .btn, .btn-sm { min-height: 44px; min-width: 44px; padding: .5rem .8rem; }
+    /* Touch-friendly button sizing (min 44px tap targets, except compact btn-xs) */
+    .btn:not(.btn-xs), .btn-sm { min-height: 44px; min-width: 44px; padding: .5rem .8rem; }
+    .btn-xs { min-height: 32px; min-width: 32px; padding: .3rem .5rem; }
     .svc-btn { width: 44px; height: 44px; }
     .icon-btn { min-width: 44px; min-height: 44px; }
+
+    /* Agent card grid — single column on mobile */
+    .agent-card { font-size: .8rem; }
+    .agent-meters { gap: .2rem; }
+    .agent-meter { display: flex; align-items: center; gap: .3rem; }
+    .agent-meter-label { font-size: .65rem; min-width: 28px; }
+    .agent-meter-val { font-size: .65rem; min-width: 30px; text-align: right; }
+
+    /* App header compact */
+    .app-header { padding: 0 .5rem; gap: .3rem; }
+    .header-search { display: none; }
+    .search-kbd { display: none; }
 
     /* Bottom sheet modals */
     .modal-overlay { align-items: flex-end; }
