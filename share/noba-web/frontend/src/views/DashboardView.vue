@@ -62,7 +62,7 @@ const dismissedAlerts = ref(new Set())
 
 const visibleAlerts = computed(() =>
   (dashboardStore.live.alerts || []).filter(
-    a => !dismissedAlerts.value.has(a.message)
+    a => !dismissedAlerts.value.has(a.msg)
   )
 )
 
@@ -196,17 +196,18 @@ async function deleteDashboard(id) {
 onMounted(() => {
   fetchHealthScore()
   fetchDashboards()
-  // Initialize drag-to-reorder on card grid
-  nextTick(() => {
+  // Initialize drag-to-reorder on card grid (delay to ensure cards render)
+  setTimeout(() => {
     if (gridRef.value) {
       Sortable.create(gridRef.value, {
         animation: 150,
         handle: '.drag-handle',
         ghostClass: 'sortable-ghost',
         dragClass: 'sortable-drag',
+        forceFallback: true,
       })
     }
-  })
+  }, 500)
 })
 </script>
 
@@ -227,7 +228,7 @@ onMounted(() => {
     <div v-if="visibleAlerts.length > 0" class="alerts" style="margin:0.75rem 0 0">
       <div
         v-for="alert in visibleAlerts"
-        :key="alert.message"
+        :key="alert.msg"
         class="alert"
         :class="alert.level"
       >
@@ -236,12 +237,12 @@ onMounted(() => {
           :class="alert.level === 'danger' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'"
           style="margin-right:.5rem;flex-shrink:0"
         ></i>
-        <span style="flex:1">{{ alert.message }}</span>
+        <span style="flex:1">{{ alert.msg }}</span>
         <button
           class="alert-dismiss"
           type="button"
           title="Dismiss"
-          @click="dismissAlert(alert.message)"
+          @click="dismissAlert(alert.msg)"
         >&times;</button>
       </div>
     </div>
@@ -273,7 +274,7 @@ onMounted(() => {
         </div>
 
         <!-- Label -->
-        <div style="flex:1;min-width:0">
+        <div style="flex:1;min-width:120px">
           <div style="font-weight:600;font-size:.9rem">Infrastructure Health</div>
           <div style="font-size:.75rem;color:var(--text-muted)">
             Grade: {{ healthScore.grade }}

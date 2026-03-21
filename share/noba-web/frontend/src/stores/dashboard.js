@@ -10,7 +10,17 @@ export const useDashboardStore = defineStore('dashboard', () => {
     timestamp: 0, uptime: '', loadavg: [], memory: {},
     cpuPercent: 0, cpuTemp: null, gpuTemp: null,
     disks: [], services: [], zfs: {},
-    containers: [], alerts: [],
+    containers: [], alerts: [], services: [],
+    disks: [], zfs: {}, diskIo: [],
+    // System info (from collect_system + collect_hardware)
+    osName: '', kernel: '', hostname: '', defaultIp: '',
+    memPercent: 0, battery: null,
+    cpuHistory: [], netHealth: null,
+    topCpu: [], topMem: [], topIo: [],
+    // Network
+    radar: [], certExpiry: [], domainExpiry: [],
+    devicePresence: [], dockerUpdates: [],
+    // Integrations
     pihole: null, adguard: null, plex: null, radarr: null,
     sonarr: null, qbit: null, truenas: null, proxmox: null,
     unifi: null, jellyfin: null, hass: null, speedtest: null,
@@ -19,11 +29,13 @@ export const useDashboardStore = defineStore('dashboard', () => {
     prowlarr: null, tautulli: null, nextcloud: null,
     traefik: null, npm: null, authentik: null, cloudflare: null,
     omv: null, xcpng: null, homebridge: null, z2m: null,
-    esphome: null, piKvm: null, gitea: null, gitlab: null,
+    esphome: null, pikvm: null, piKvm: null, gitea: null, gitlab: null,
     github: null, paperless: null, vaultwarden: null,
-    unifiProtect: null,
+    unifiProtect: null, scrutiny: null, plugins: null,
     tailscale: null, frigate: null, vpn: null,
     energy: [], cameraFeeds: [], kuma: [],
+    radarrExtended: null, sonarrExtended: null,
+    radarrCalendar: [], sonarrCalendar: [],
   })
 
   let _es = null
