@@ -463,6 +463,14 @@ def _run_endpoint_check(monitor: dict) -> dict:
         error=result.get("error"),
     )
 
+    # Record into check history for trending/uptime
+    db.record_endpoint_check_history(
+        monitor["id"],
+        status=status,
+        response_ms=result.get("response_ms"),
+        error=result.get("error"),
+    )
+
     # Record response_ms as a metric for trending
     try:
         now_ts = int(time.time())
@@ -546,6 +554,14 @@ def _dispatch_agent_endpoint_check(monitor: dict) -> dict:
         response_ms=agent_result.get("response_ms"),
         status_code=code,
         cert_expiry_days=cert_expiry_days,
+        error=agent_result.get("error"),
+    )
+
+    # Record into check history for trending/uptime
+    db.record_endpoint_check_history(
+        monitor["id"],
+        status=status,
+        response_ms=agent_result.get("response_ms"),
         error=agent_result.get("error"),
     )
 

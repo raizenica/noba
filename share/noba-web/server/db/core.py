@@ -38,9 +38,14 @@ from .endpoints import (  # noqa: F401
     create_monitor as _create_monitor,
     delete_monitor as _delete_monitor,
     get_due_monitors as _get_due_monitors,
+    get_endpoint_avg_latency as _get_endpoint_avg_latency,
+    get_endpoint_check_history as _get_endpoint_check_history,
+    get_endpoint_uptime as _get_endpoint_uptime,
     get_monitor as _get_monitor,
     get_monitors as _get_monitors,
+    prune_endpoint_check_history as _prune_endpoint_check_history,
     record_check_result as _record_check_result,
+    record_endpoint_check_history as _record_endpoint_check_history,
     update_monitor as _update_monitor,
 )
 from .alerts import (
@@ -565,6 +570,17 @@ class Database:
                     ON action_audit(trigger_type);
                 CREATE INDEX IF NOT EXISTS idx_action_audit_outcome
                     ON action_audit(outcome);
+
+                CREATE TABLE IF NOT EXISTS endpoint_check_history (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monitor_id  INTEGER NOT NULL,
+                    timestamp   INTEGER NOT NULL,
+                    status      TEXT NOT NULL,
+                    response_ms INTEGER,
+                    error       TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_ech_monitor_ts
+                    ON endpoint_check_history(monitor_id, timestamp);
             """)
             # Migrate existing databases: add assigned_to column if missing
             try:
@@ -870,6 +886,30 @@ class Database:
 
     def get_due_endpoint_monitors(self) -> list[dict]:
         return _get_due_monitors(self._get_conn(), self._lock)
+
+    def record_endpoint_check_history(self, monitor_id: int, status: str,
+                                       response_ms: int | None = None,
+                                       error: str | None = None) -> None:
+        _record_endpoint_check_history(self._get_conn(), self._lock,
+                                       monitor_id, status,
+                                       response_ms=response_ms, error=error)
+
+    def get_endpoint_check_history(self, monitor_id: int,
+                                    hours: int = 720) -> list[dict]:
+        return _get_endpoint_check_history(self._get_conn(), self._lock,
+                                           monitor_id, hours=hours)
+
+    def get_endpoint_uptime(self, monitor_id: int, hours: int = 720) -> float:
+        return _get_endpoint_uptime(self._get_conn(), self._lock,
+                                    monitor_id, hours=hours)
+
+    def get_endpoint_avg_latency(self, monitor_id: int,
+                                  hours: int = 720) -> float | None:
+        return _get_endpoint_avg_latency(self._get_conn(), self._lock,
+                                         monitor_id, hours=hours)
+
+    def prune_endpoint_check_history(self, days: int = 90) -> None:
+        _prune_endpoint_check_history(self._get_conn(), self._lock, days=days)
 
     # ── Custom Dashboards ────────────────────────────────────────────────────
     def create_dashboard(self, name: str, owner: str, config_json: str,

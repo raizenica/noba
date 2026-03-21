@@ -44,6 +44,7 @@ def _cleanup_loop() -> None:
             db.prune_audit()
             db.prune_job_runs()
             db.prune_rollups()
+            db.prune_endpoint_check_history()
             # Checkpoint WAL to prevent unbounded growth on long-running instances
             try:
                 with db._lock:

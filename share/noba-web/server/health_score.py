@@ -278,3 +278,105 @@ async def compute_health_score(db, agent_store_data: dict, bg_stats: dict | None
         "categories": categories,
         "timestamp": now,
     }
+
+
+# ── Per-service weighted health scoring ───────────────────────────────────────
+
+def _score_to_grade(score: float) -> str:
+    if score >= 90:
+        return "A"
+    if score >= 80:
+        return "B"
+    if score >= 70:
+        return "C"
+    if score >= 60:
+        return "D"
+    return "F"
+
+
+def _calc_uptime_score(db_instance, monitor_id: int, hours: int = 720) -> float:
+    """Uptime percentage from check history → 0-100 score."""
+    try:
+        pct = db_instance.get_endpoint_uptime(monitor_id, hours=hours)
+        return min(100.0, pct)  # Already 0-100
+    except Exception:
+        return 100.0  # No data = assume OK
+
+
+def _calc_latency_score(db_instance, monitor_id: int, hours: int = 720) -> float:
+    """Lower latency = higher score. 0ms=100, 1000ms+=0."""
+    try:
+        avg_ms = db_instance.get_endpoint_avg_latency(monitor_id, hours=hours)
+        if avg_ms is None:
+            return 100.0
+        return max(0.0, min(100.0, 100.0 - (avg_ms / 10.0)))  # 0ms=100, 1000ms=0
+    except Exception:
+        return 100.0
+
+
+def _calc_error_rate_score(db_instance, monitor_id: int, hours: int = 720) -> float:
+    """Inverse of error rate. 0% errors=100, 100% errors=0."""
+    try:
+        uptime = db_instance.get_endpoint_uptime(monitor_id, hours=hours)
+        return min(100.0, uptime)  # Uptime IS the inverse of error rate
+    except Exception:
+        return 100.0
+
+
+def _calc_headroom_score(monitor: dict) -> float:
+    """Response time headroom vs configured timeout."""
+    timeout_ms = (monitor.get("timeout") or 10) * 1000
+    last_ms = monitor.get("last_response_ms") or 0
+    if timeout_ms <= 0:
+        return 100.0
+    ratio = last_ms / timeout_ms
+    return max(0.0, min(100.0, (1.0 - ratio) * 100.0))
+
+
+def compute_service_health_scores(db_instance) -> dict:
+    """Per-service health scoring with weighted composite.
+
+    Weights: uptime (40%) + latency trend (25%) + error rate (20%) + resource headroom (15%)
+    """
+    import statistics as _statistics
+
+    monitors = db_instance.get_endpoint_monitors(enabled_only=True)
+    services = []
+    for m in monitors:
+        mid = m["id"]
+        uptime_score = _calc_uptime_score(db_instance, mid)
+        latency_score = _calc_latency_score(db_instance, mid)
+        error_score = _calc_error_rate_score(db_instance, mid)
+        headroom_score = _calc_headroom_score(m)
+
+        composite = (
+            uptime_score * 0.40
+            + latency_score * 0.25
+            + error_score * 0.20
+            + headroom_score * 0.15
+        )
+
+        services.append({
+            "name": m["name"],
+            "url": m.get("url", ""),
+            "composite_score": round(composite, 1),
+            "breakdown": {
+                "uptime": round(uptime_score, 1),
+                "latency": round(latency_score, 1),
+                "error_rate": round(error_score, 1),
+                "headroom": round(headroom_score, 1),
+            },
+            "grade": _score_to_grade(composite),
+        })
+
+    services.sort(key=lambda s: s["composite_score"])
+    overall = (
+        round(_statistics.mean(s["composite_score"] for s in services), 1)
+        if services
+        else 100.0
+    )
+    return {
+        "overall": overall,
+        "grade": _score_to_grade(overall),
+        "services": services,
+    }

@@ -150,6 +150,100 @@ def record_check_result(conn, lock, monitor_id: int, *,
         logger.error("record_check_result failed: %s", e)
 
 
+def record_endpoint_check_history(conn, lock, monitor_id: int, status: str,
+                                   response_ms: int | None = None,
+                                   error: str | None = None) -> None:
+    """Record a single endpoint check result into history."""
+    now = int(time.time())
+    try:
+        with lock:
+            conn.execute(
+                "INSERT INTO endpoint_check_history (monitor_id, timestamp, status, response_ms, error) "
+                "VALUES (?,?,?,?,?)",
+                (monitor_id, now, status, response_ms, error),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("record_endpoint_check_history failed: %s", e)
+
+
+def get_endpoint_check_history(conn, lock, monitor_id: int, hours: int = 720) -> list[dict]:
+    """Get check history for a monitor within the last N hours."""
+    cutoff = int(time.time()) - hours * 3600
+    try:
+        with lock:
+            rows = conn.execute(
+                "SELECT id, monitor_id, timestamp, status, response_ms, error "
+                "FROM endpoint_check_history "
+                "WHERE monitor_id = ? AND timestamp >= ? "
+                "ORDER BY timestamp DESC",
+                (monitor_id, cutoff),
+            ).fetchall()
+        return [
+            {
+                "id": r[0], "monitor_id": r[1], "timestamp": r[2],
+                "status": r[3], "response_ms": r[4], "error": r[5],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("get_endpoint_check_history failed: %s", e)
+        return []
+
+
+def get_endpoint_uptime(conn, lock, monitor_id: int, hours: int = 720) -> float:
+    """Calculate uptime percentage from check history (returns 0-100)."""
+    cutoff = int(time.time()) - hours * 3600
+    try:
+        with lock:
+            row = conn.execute(
+                "SELECT COUNT(*), SUM(CASE WHEN status = 'up' THEN 1 ELSE 0 END) "
+                "FROM endpoint_check_history "
+                "WHERE monitor_id = ? AND timestamp >= ?",
+                (monitor_id, cutoff),
+            ).fetchone()
+        total = row[0] or 0
+        up_count = row[1] or 0
+        if total == 0:
+            return 100.0  # No data — assume OK
+        return round((up_count / total) * 100, 2)
+    except Exception as e:
+        logger.error("get_endpoint_uptime failed: %s", e)
+        return 100.0
+
+
+def get_endpoint_avg_latency(conn, lock, monitor_id: int, hours: int = 720) -> float | None:
+    """Calculate average response time (ms) from successful checks."""
+    cutoff = int(time.time()) - hours * 3600
+    try:
+        with lock:
+            row = conn.execute(
+                "SELECT AVG(response_ms) "
+                "FROM endpoint_check_history "
+                "WHERE monitor_id = ? AND timestamp >= ? AND status = 'up' AND response_ms IS NOT NULL",
+                (monitor_id, cutoff),
+            ).fetchone()
+        avg = row[0] if row else None
+        return round(avg, 2) if avg is not None else None
+    except Exception as e:
+        logger.error("get_endpoint_avg_latency failed: %s", e)
+        return None
+
+
+def prune_endpoint_check_history(conn, lock, days: int = 90) -> None:
+    """Delete check history older than N days."""
+    cutoff = int(time.time()) - days * 86400
+    try:
+        with lock:
+            conn.execute(
+                "DELETE FROM endpoint_check_history WHERE timestamp < ?",
+                (cutoff,),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error("prune_endpoint_check_history failed: %s", e)
+
+
 def get_due_monitors(conn, lock) -> list[dict]:
     """Return enabled monitors whose next check is due (last_checked + interval < now)."""
     now = int(time.time())
