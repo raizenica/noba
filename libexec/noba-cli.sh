@@ -171,6 +171,97 @@ for d in disks:
 " 2>/dev/null
 }
 
+cmd_agents() {
+    _api GET "/api/agents" | python3 -c "
+import sys, json
+agents = json.load(sys.stdin)
+if not agents:
+    print('  No agents reporting.')
+    sys.exit(0)
+online = sum(1 for a in agents if a.get('online'))
+print(f'  {online}/{len(agents)} agents online\n')
+for a in agents:
+    icon = '●' if a.get('online') else '○'
+    cpu = a.get('cpu_percent', 0) or 0
+    mem = a.get('mem_percent', 0) or 0
+    last = a.get('last_seen_s', 0)
+    if last < 60: t = f'{last}s ago'
+    elif last < 3600: t = f'{last//60}m ago'
+    else: t = f'{last//3600}h ago'
+    print(f'  {icon} {a.get(\"hostname\", \"?\"):20s}  CPU {cpu:5.1f}%  RAM {mem:5.1f}%  {t}')
+" 2>/dev/null
+}
+
+cmd_exec() {
+    local target="${1:-}"
+    local cmd_type="${2:-}"
+    if [[ -z "$target" || -z "$cmd_type" ]]; then
+        echo "Usage: noba-cli exec <hostname|--all> <command_type> [params_json]" >&2
+        echo "  e.g.: noba-cli exec dnsa01 disk_usage" >&2
+        echo "        noba-cli exec --all ping" >&2
+        echo "        noba-cli exec dnsa01 exec '{\"command\":\"uptime\"}'" >&2
+        return 1
+    fi
+    local params="${3:-\{\}}"
+    if [[ "$target" == "--all" ]]; then
+        _api POST "/api/agents/bulk-command" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"$cmd_type\",\"params\":$params}" | python3 -m json.tool 2>/dev/null
+    else
+        _api POST "/api/agents/$target/command" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"$cmd_type\",\"params\":$params}" | python3 -m json.tool 2>/dev/null
+    fi
+}
+
+cmd_alerts() {
+    _api GET "/api/stats" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+alerts = data.get('alerts', [])
+if not alerts:
+    print('  No active alerts.')
+    sys.exit(0)
+for a in alerts:
+    level = a.get('level', 'info').upper()
+    icon = '!!!' if level == 'DANGER' else '! ' if level == 'WARNING' else '  '
+    print(f'  {icon} [{level:7s}] {a.get(\"msg\", \"?\")}')
+" 2>/dev/null
+}
+
+cmd_logs() {
+    local log_type="${1:-syserr}"
+    _api GET "/api/log-viewer?type=$log_type" 2>/dev/null
+}
+
+cmd_health() {
+    _api GET "/health" | python3 -c "
+import sys, json
+h = json.load(sys.stdin)
+status = h.get('status', '?')
+icon = '✓' if status == 'ok' else '⚠' if status == 'degraded' else '✗'
+print(f'  {icon} Status: {status}')
+print(f'    DB:     {h.get(\"db\", \"?\")}')
+print(f'    Uptime: {h.get(\"uptime_s\", 0) // 3600}h {(h.get(\"uptime_s\", 0) % 3600) // 60}m')
+" 2>/dev/null
+}
+
+cmd_predict() {
+    local metrics="${1:-disk_percent}"
+    _api GET "/api/predict/capacity?metrics=$metrics" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+c = d.get('combined', {})
+full_at = c.get('full_at', 'N/A')
+conf = c.get('confidence', '?')
+slope = c.get('slope_per_day', 0)
+print(f'  Prediction ({c.get(\"primary_metric\", \"?\")})')
+print(f'    Full at:    {full_at}')
+print(f'    Confidence: {conf}')
+print(f'    Growth:     {slope:.3f}%/day')
+" 2>/dev/null
+}
+
 cmd_help() {
     cat <<'HELP'
 noba-cli — Command-line interface for NOBA Command Center
@@ -180,8 +271,13 @@ Usage: noba-cli <command> [args...]
 Commands:
   login [user] [pass]     Authenticate and save token
   logout                  Clear saved token
-  status                  Show server health
+  health                  Quick health check (status, DB, uptime)
+  status                  Show server status (JSON)
   stats                   Show full system stats (JSON)
+  agents                  List remote agents with status
+  exec <host> <cmd> [p]   Send command to agent (--all for broadcast)
+  alerts                  Show active alerts
+  logs [type]             View system logs (syserr, syslog, auth, kern, ...)
   services                List monitored services
   runs [limit]            Show recent job runs
   run <script> [args]     Execute a script
@@ -189,6 +285,7 @@ Commands:
   trigger <auto_id>       Trigger an automation
   audit [limit]           Show audit log
   smart                   Show SMART disk health
+  predict [metric]        Capacity prediction (default: disk_percent)
 
 Environment:
   NOBA_URL     Server URL (default: http://localhost:8080)
@@ -203,8 +300,13 @@ main() {
     case "$cmd" in
         login)       cmd_login "$@" ;;
         logout)      cmd_logout ;;
+        health)      cmd_health ;;
         status)      cmd_status ;;
         stats)       cmd_stats ;;
+        agents)      cmd_agents ;;
+        exec)        cmd_exec "$@" ;;
+        alerts)      cmd_alerts ;;
+        logs)        cmd_logs "$@" ;;
         services)    cmd_services ;;
         runs)        cmd_runs "$@" ;;
         run)         cmd_run "$@" ;;
@@ -212,6 +314,7 @@ main() {
         trigger)     cmd_trigger "$@" ;;
         audit)       cmd_audit "$@" ;;
         smart)       cmd_smart ;;
+        predict)     cmd_predict "$@" ;;
         help|--help|-h) cmd_help ;;
         *)
             echo "Unknown command: $cmd" >&2
