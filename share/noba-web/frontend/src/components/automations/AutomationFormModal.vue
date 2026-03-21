@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import AppModal from '../ui/AppModal.vue'
+import WorkflowBuilder from './WorkflowBuilder.vue'
 import { useApi } from '../../composables/useApi'
 import { useNotificationsStore } from '../../stores/notifications'
 
@@ -31,6 +32,10 @@ const configWebhook  = ref('')   // webhook: url
 const configWorkflow = ref('[]') // workflow: steps JSON
 const configCron     = ref('')   // cron: expression
 const configAlert    = ref('')   // alert: condition
+
+// Workflow visual editor state
+const workflowTab    = ref('visual')  // 'visual' | 'code'
+const workflowGraph  = ref({ nodes: [], edges: [], entry: '' })
 
 // ── Templates ─────────────────────────────────────────────────────────────
 const templates        = ref([])
@@ -64,7 +69,17 @@ function syncConfigFromObject(cfg, type) {
   const t = type || form.value.type
   if (t === 'script')   configScript.value   = cfg.path || ''
   if (t === 'webhook')  configWebhook.value  = cfg.url || ''
-  if (t === 'workflow') configWorkflow.value = JSON.stringify(cfg.steps || [], null, 2)
+  if (t === 'workflow') {
+    // Support both legacy steps-array format and new graph format
+    if (cfg.nodes) {
+      workflowGraph.value  = { nodes: cfg.nodes || [], edges: cfg.edges || [], entry: cfg.entry || '' }
+      configWorkflow.value = JSON.stringify(workflowGraph.value, null, 2)
+    } else {
+      configWorkflow.value = JSON.stringify(cfg.steps || [], null, 2)
+      workflowGraph.value  = { nodes: [], edges: [], entry: '' }
+    }
+    workflowTab.value = 'visual'
+  }
   if (t === 'cron')     configCron.value     = cfg.expression || ''
   if (t === 'alert')    configAlert.value    = cfg.condition || ''
 }
@@ -74,8 +89,20 @@ function buildConfigObject() {
   if (t === 'script')   return { path: configScript.value.trim() }
   if (t === 'webhook')  return { url: configWebhook.value.trim() }
   if (t === 'workflow') {
-    try { return { steps: JSON.parse(configWorkflow.value) } }
-    catch { return { steps: [] } }
+    if (workflowTab.value === 'code') {
+      // Code tab is authoritative if user was editing there
+      try {
+        const parsed = JSON.parse(configWorkflow.value)
+        // Accept either graph format or legacy steps array
+        if (Array.isArray(parsed)) return { steps: parsed }
+        return { nodes: parsed.nodes || [], edges: parsed.edges || [], entry: parsed.entry || '' }
+      } catch { /* fall through to graph */ }
+    }
+    return {
+      nodes: workflowGraph.value.nodes || [],
+      edges: workflowGraph.value.edges || [],
+      entry: workflowGraph.value.entry || '',
+    }
   }
   if (t === 'cron')  return { expression: configCron.value.trim() }
   if (t === 'alert') return { condition: configAlert.value.trim() }
@@ -119,6 +146,8 @@ watch(() => props.show, (v) => {
     configWorkflow.value = '[]'
     configCron.value     = ''
     configAlert.value    = ''
+    workflowGraph.value  = { nodes: [], edges: [], entry: '' }
+    workflowTab.value    = 'visual'
   }
 })
 
@@ -155,7 +184,12 @@ const title = computed(() =>
 </script>
 
 <template>
-  <AppModal :show="show" :title="title" width="560px" @close="emit('close')">
+  <AppModal
+    :show="show"
+    :title="title"
+    :width="form.type === 'workflow' && workflowTab === 'visual' ? '900px' : '560px'"
+    @close="emit('close')"
+  >
     <div style="padding:1rem;display:flex;flex-direction:column;gap:.75rem">
 
       <!-- Template picker toggle -->
@@ -243,24 +277,48 @@ const title = computed(() =>
 
       <!-- Config: workflow -->
       <div v-if="form.type === 'workflow'">
-        <label class="field-label">
-          Workflow Steps (JSON array)
+        <!-- Tab bar -->
+        <div class="wf-tab-bar">
           <button
+            class="wf-tab"
+            :class="{ 'wf-tab-active': workflowTab === 'visual' }"
+            @click="workflowTab = 'visual'"
+          >
+            <i class="fas fa-project-diagram"></i> Visual
+          </button>
+          <button
+            class="wf-tab"
+            :class="{ 'wf-tab-active': workflowTab === 'code' }"
+            @click="workflowTab = 'code'"
+          >
+            <i class="fas fa-code"></i> Code
+          </button>
+          <button
+            v-if="workflowTab === 'code'"
             class="btn btn-xs"
-            style="margin-left:.4rem"
+            style="margin-left:auto"
             :disabled="validating"
             @click="validateWorkflow"
           >
             <i class="fas" :class="validating ? 'fa-spinner fa-spin' : 'fa-check-circle'"></i>
             Validate
           </button>
-        </label>
-        <textarea
-          v-model="configWorkflow"
-          class="field-input"
-          style="width:100%;font-family:monospace;font-size:.75rem;min-height:120px;resize:vertical"
-          placeholder='[{"automation_id": "abc123"}, {"automation_id": "def456"}]'
-        ></textarea>
+        </div>
+
+        <!-- Visual tab -->
+        <div v-if="workflowTab === 'visual'" style="margin-top:.25rem">
+          <WorkflowBuilder v-model="workflowGraph" />
+        </div>
+
+        <!-- Code tab -->
+        <div v-if="workflowTab === 'code'" style="margin-top:.25rem">
+          <textarea
+            v-model="configWorkflow"
+            class="field-input"
+            style="width:100%;font-family:monospace;font-size:.75rem;min-height:160px;resize:vertical"
+            placeholder='{"nodes":[],"edges":[],"entry":""}'
+          ></textarea>
+        </div>
       </div>
 
       <!-- Config: cron -->
@@ -323,6 +381,38 @@ const title = computed(() =>
 
 <style scoped>
 .tpl-row:hover { background: var(--surface); }
+
+/* Workflow tab bar */
+.wf-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: .1rem;
+  padding-bottom: .25rem;
+}
+.wf-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  padding: .2rem .55rem;
+  border-radius: 4px 4px 0 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: .75rem;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.wf-tab:hover { color: var(--text); background: var(--surface-2); }
+.wf-tab-active {
+  background: var(--surface-2);
+  border-color: var(--border);
+  border-bottom-color: var(--surface-2);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .field-input {
   background: var(--surface);
   border: 1px solid var(--border);
