@@ -9,7 +9,7 @@ def test_auto_builders_keys():
     """_AUTO_BUILDERS has all expected automation types."""
     from server.workflow_engine import _AUTO_BUILDERS
 
-    expected = {"script", "webhook", "service", "delay", "http", "notify", "condition", "agent_command"}
+    expected = {"script", "webhook", "service", "delay", "http", "notify", "condition", "agent_command", "remediation"}
     assert set(_AUTO_BUILDERS.keys()) == expected
 
 

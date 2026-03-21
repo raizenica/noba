@@ -130,7 +130,7 @@ SCRIPT_MAP = {
     "check_updates": "noba-update.sh",
 }
 ALLOWED_ACTIONS    = frozenset({"start", "stop", "restart", "poweroff"})
-ALLOWED_AUTO_TYPES = frozenset(["script", "webhook", "service", "workflow", "condition", "delay", "notify", "http", "agent_command"])
+ALLOWED_AUTO_TYPES = frozenset(["script", "webhook", "service", "workflow", "condition", "delay", "notify", "http", "agent_command", "remediation"])
 VALID_ROLES        = ("viewer", "operator", "admin")
 
 HISTORY_METRICS = [

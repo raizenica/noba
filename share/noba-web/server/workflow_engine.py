@@ -57,6 +57,9 @@ def _validate_auto_config(atype: str, config: dict) -> None:
             raise HTTPException(400, "agent_command requires 'hostname' in config")
         if not config.get("command"):
             raise HTTPException(400, "agent_command requires 'command' in config")
+    elif atype == "remediation":
+        if not config.get("remediation_type"):
+            raise HTTPException(400, "Remediation automation requires 'remediation_type' in config")
 
 
 # ── Builder functions ─────────────────────────────────────────────────────────
@@ -293,6 +296,24 @@ def _build_auto_agent_command_process(config: dict) -> subprocess.Popen | None:
     )
 
 
+def _build_auto_remediation_process(config: dict, run_id: int = 0) -> _HttpResult | None:
+    """Builder for remediation action types in workflows."""
+    from .remediation import execute_action
+
+    action_type = config.get("remediation_type", "")
+    params = config.get("params", {})
+    if not action_type:
+        return None
+    result = execute_action(
+        action_type, params, trigger_type="workflow", trigger_id=str(run_id),
+    )
+    output = result.get("output", "")
+    if result.get("error"):
+        output += f"\nError: {result['error']}"
+    exit_code = 0 if result.get("success") else 1
+    return _HttpResult(output.encode(), exit_code)
+
+
 # ── Builder registry ──────────────────────────────────────────────────────────
 
 _AUTO_BUILDERS = {
@@ -301,6 +322,7 @@ _AUTO_BUILDERS = {
     "http": _build_auto_http_process, "notify": _build_auto_notify_process,
     "condition": _build_auto_condition_process,
     "agent_command": _build_auto_agent_command_process,
+    "remediation": _build_auto_remediation_process,
 }
 _AUTO_TYPES = ALLOWED_AUTO_TYPES  # from config
 
