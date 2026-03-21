@@ -300,8 +300,12 @@ onMounted(() => {
   nextTick(() => { edgeVersion.value++ })
 })
 
-// Re-measure port positions after any DOM update (node add/remove/drag)
-onUpdated(() => { nextTick(() => { edgeVersion.value++ }) })
+// Re-measure port positions after nodes change (debounced to avoid infinite loops)
+let _edgeTimer = null
+watch([nodes, edges], () => {
+  clearTimeout(_edgeTimer)
+  _edgeTimer = setTimeout(() => { edgeVersion.value++ }, 50)
+}, { deep: true })
 onBeforeUnmount(() => { document.removeEventListener('contextmenu', onGlobalCtx) })
 </script>
 
