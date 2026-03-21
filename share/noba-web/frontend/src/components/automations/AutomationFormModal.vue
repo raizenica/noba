@@ -187,7 +187,7 @@ const title = computed(() =>
   <AppModal
     :show="show"
     :title="title"
-    :width="form.type === 'workflow' && workflowTab === 'visual' ? '900px' : '560px'"
+    :width="form.type === 'workflow' && workflowTab === 'visual' ? '1200px' : '560px'"
     @close="emit('close')"
   >
     <div style="padding:1rem;display:flex;flex-direction:column;gap:.75rem">

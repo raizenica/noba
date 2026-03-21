@@ -227,6 +227,13 @@ const canvasH = computed(() => {
   return Math.max(500, Math.max(...nodes.value.map(n => n.y + NODE_H + 100)))
 })
 
+// ── Zoom ───────────────────────────────────────────────────────────────────
+const zoom = ref(1)
+function zoomIn()  { zoom.value = Math.min(2, +(zoom.value + 0.15).toFixed(2)) }
+function zoomOut() { zoom.value = Math.max(0.3, +(zoom.value - 0.15).toFixed(2)) }
+function zoomReset() { zoom.value = 1 }
+function onWheel(e) { e.deltaY < 0 ? zoomIn() : zoomOut() }
+
 // ── Raw JSON import/export ─────────────────────────────────────────────────
 function switchToRaw() {
   rawJson.value = JSON.stringify({ nodes: nodes.value, edges: edges.value, entry: entry.value }, null, 2)
@@ -299,6 +306,11 @@ onBeforeUnmount(() => { document.removeEventListener('contextmenu', onGlobalCtx)
       </button>
     </div>
     <div class="wb-toolbar-right">
+      <div v-if="!showRaw" class="wb-zoom-controls">
+        <button class="wb-zoom-btn" @click="zoomOut" title="Zoom out"><i class="fas fa-search-minus"></i></button>
+        <span class="wb-zoom-label" @click="zoomReset" title="Reset zoom">{{ Math.round(zoom * 100) }}%</span>
+        <button class="wb-zoom-btn" @click="zoomIn" title="Zoom in"><i class="fas fa-search-plus"></i></button>
+      </div>
       <button v-if="!showRaw" class="wb-toggle-btn" @click="switchToRaw">
         <i class="fas fa-code"></i> JSON
       </button>
@@ -319,13 +331,19 @@ onBeforeUnmount(() => { document.removeEventListener('contextmenu', onGlobalCtx)
     v-if="!showRaw"
     ref="canvasRef"
     class="wb-canvas"
-    :style="{ width: canvasW + 'px', height: canvasH + 'px' }"
+    :style="{ minHeight: '500px' }"
     tabindex="0"
     @click="onCanvasClick"
     @keydown="onKeyDown"
     @keydown.escape="connectingFrom = null"
     @mouseup="onNodeMouseUp"
+    @wheel.prevent="onWheel"
   >
+    <!-- Zoom wrapper -->
+    <div
+      class="wb-zoom-layer"
+      :style="{ transform: `scale(${zoom})`, transformOrigin: '0 0', width: canvasW + 'px', height: canvasH + 'px' }"
+    >
     <!-- SVG edge layer -->
     <svg class="wb-svg" :width="canvasW" :height="canvasH">
       <defs>
@@ -406,6 +424,7 @@ onBeforeUnmount(() => { document.removeEventListener('contextmenu', onGlobalCtx)
       <i class="fas fa-project-diagram"></i>
       <p>No nodes yet — use the toolbar above to add your first node.</p>
     </div>
+    </div><!-- /wb-zoom-layer -->
   </div>
 
   <!-- Footer hint -->
@@ -543,8 +562,39 @@ onBeforeUnmount(() => { document.removeEventListener('contextmenu', onGlobalCtx)
   border-top: none;
   overflow: auto;
   min-height: 500px;
+  max-height: 70vh;
   outline: none;
 }
+.wb-zoom-layer {
+  position: relative;
+  transform-origin: 0 0;
+}
+
+/* ── Zoom controls ── */
+.wb-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: .5rem;
+}
+.wb-zoom-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  font-size: .7rem;
+  cursor: pointer;
+}
+.wb-zoom-btn:hover { color: var(--text); border-color: var(--accent); }
+.wb-zoom-label {
+  font-size: .7rem;
+  color: var(--text-muted);
+  min-width: 36px;
+  text-align: center;
+  cursor: pointer;
+}
+.wb-zoom-label:hover { color: var(--accent); }
 
 /* ── SVG ── */
 .wb-svg {
