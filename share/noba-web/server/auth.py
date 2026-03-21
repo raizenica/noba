@@ -326,10 +326,15 @@ class TokenStore:
         except Exception as exc:
             logger.debug("TokenStore load_from_db failed: %s", exc)
 
+    _MAX_TOKENS = 10_000  # safety cap — force cleanup if exceeded
+
     def generate(self, username: str, role: str) -> str:
         token = secrets.token_urlsafe(32)
         expires = datetime.now() + timedelta(hours=TOKEN_TTL_H)
         with self._lock:
+            # Memory cap: if store is overflowing, force cleanup
+            if len(self._tokens) + len(self._tokens_by_hash) > self._MAX_TOKENS:
+                self._evict_expired_locked()
             self._tokens[token] = (username, role, expires)
         # Persist to DB (hashed — never plaintext)
         self._db_insert(token, username, role, expires)
@@ -430,15 +435,20 @@ class TokenStore:
                     return True
             return False
 
-    def cleanup(self) -> None:
+    def _evict_expired_locked(self) -> int:
+        """Remove expired tokens while lock is held. Returns count removed."""
         now = datetime.now()
+        expired = [t for t, (_, _, exp) in list(self._tokens.items()) if exp <= now]
+        for t in expired:
+            del self._tokens[t]
+        expired_h = [h for h, (_, _, exp) in list(self._tokens_by_hash.items()) if exp <= now]
+        for h in expired_h:
+            del self._tokens_by_hash[h]
+        return len(expired) + len(expired_h)
+
+    def cleanup(self) -> None:
         with self._lock:
-            expired = [t for t, (_, _, exp) in list(self._tokens.items()) if exp <= now]
-            for t in expired:
-                del self._tokens[t]
-            expired_h = [h for h, (_, _, exp) in list(self._tokens_by_hash.items()) if exp <= now]
-            for h in expired_h:
-                del self._tokens_by_hash[h]
+            self._evict_expired_locked()
         # Also clean expired rows from DB
         try:
             _get_db().cleanup_tokens()
@@ -467,9 +477,16 @@ class RateLimiter:
             self._lockouts.pop(ip, None)
         return False
 
+    _MAX_ENTRIES = 50_000  # safety cap on tracked IPs
+
     def record_failure(self, ip: str) -> bool:
         now = datetime.now()
         with self._lock:
+            # Memory cap: force cleanup if too many tracked IPs
+            if len(self._attempts) > self._MAX_ENTRIES:
+                cutoff_now = now - timedelta(seconds=self.window_s)
+                self._attempts = {k: [t for t in v if t > cutoff_now]
+                                  for k, v in self._attempts.items() if v}
             cutoff   = now - timedelta(seconds=self.window_s)
             attempts = [t for t in self._attempts.get(ip, []) if t > cutoff]
             attempts.append(now)

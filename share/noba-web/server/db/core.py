@@ -190,6 +190,18 @@ class Database:
                 self._conn.execute("VACUUM;")  # one-time migration to enable it
         return self._conn
 
+    def execute_write(self, fn):
+        """Execute a write operation with proper lock + connection isolation.
+
+        Usage: db.execute_write(lambda conn: conn.execute("INSERT ...", params))
+        This is the preferred way to perform writes — avoids leaking _lock/_get_conn.
+        """
+        with self._lock:
+            conn = self._get_conn()
+            result = fn(conn)
+            conn.commit()
+            return result
+
     def _init_schema(self) -> None:
         import os
         os.makedirs(os.path.dirname(self._path), exist_ok=True)

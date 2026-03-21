@@ -49,11 +49,19 @@ async def _cleanup_loop() -> None:
     """Async cleanup loop — replaces the old thread-based version."""
     import asyncio as _aio
     counter = 0
+    _backoff = 0
     try:
         while True:
             await _aio.sleep(300)
-            token_store.cleanup()
-            rate_limiter.cleanup()
+            try:
+                token_store.cleanup()
+                rate_limiter.cleanup()
+            except Exception as e:
+                logger.warning("Cleanup tick failed: %s", e)
+                _backoff = min(_backoff + 5, 60)
+                await _aio.sleep(_backoff)
+                continue
+            _backoff = 0
             counter += 1
             if counter >= 12:
                 counter = 0
@@ -91,7 +99,7 @@ async def _cleanup_transfers() -> None:
 
     try:
         while True:
-            await _asyncio.sleep(900)  # Every 15 minutes
+            await _asyncio.sleep(900)
             now = int(time.time())
             with _transfer_lock:
                 expired = [tid for tid, t in _transfers.items()
