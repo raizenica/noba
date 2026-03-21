@@ -37,6 +37,8 @@ function toggleCollapse() {
         type="button"
         @click="toggleCollapse"
       ></button>
+
+      <i class="fas fa-grip-lines drag-handle" aria-hidden="true"></i>
     </div>
 
     <div

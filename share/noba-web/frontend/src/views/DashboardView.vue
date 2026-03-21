@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
+import Sortable from 'sortablejs'
 import { useDashboardStore } from '../stores/dashboard'
 import { useSettingsStore } from '../stores/settings'
 import { useApi } from '../composables/useApi'
@@ -54,6 +55,7 @@ const { get, post, del } = useApi()
 
 // ── Glance mode ──────────────────────────────────────────────────────────────
 const glanceMode = ref(false)
+const gridRef = ref(null)
 
 // ── Alert dismissal ──────────────────────────────────────────────────────────
 const dismissedAlerts = ref(new Set())
@@ -194,6 +196,17 @@ async function deleteDashboard(id) {
 onMounted(() => {
   fetchHealthScore()
   fetchDashboards()
+  // Initialize drag-to-reorder on card grid
+  nextTick(() => {
+    if (gridRef.value) {
+      Sortable.create(gridRef.value, {
+        animation: 150,
+        handle: '.drag-handle',
+        ghostClass: 'sortable-ghost',
+        dragClass: 'sortable-drag',
+      })
+    }
+  })
 })
 </script>
 
@@ -391,7 +404,7 @@ onMounted(() => {
     </div>
 
     <!-- ── Card grid ───────────────────────────────────────────────────────── -->
-    <div class="grid" :class="{ 'glance-mode': glanceMode }">
+    <div ref="gridRef" class="grid" :class="{ 'glance-mode': glanceMode }">
       <!-- System cards -->
       <CoreSystemCard     v-if="showCard('core')"                                        />
       <SystemHealthCard                                                                   />
