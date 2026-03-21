@@ -36,7 +36,7 @@ ENV NOBA_CONFIG=/app/config/config.yaml
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-    CMD curl -sf http://localhost:8080/api/status || exit 1
+    CMD curl -sf http://localhost:8080/api/status/public || exit 1
 
 EXPOSE 8080
 
