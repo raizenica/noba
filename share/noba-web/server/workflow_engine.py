@@ -81,21 +81,69 @@ def _build_auto_script_process(config: dict) -> subprocess.Popen | None:
     return None
 
 
-def _build_auto_webhook_process(config: dict) -> subprocess.Popen | None:
+class _HttpResult:
+    """Popen-compatible wrapper around an httpx response for job_runner."""
+
+    def __init__(self, stdout_bytes: bytes, returncode: int) -> None:
+        self.stdout = __import__("io").BytesIO(stdout_bytes)
+        self.returncode = returncode
+        self.pid = 0
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+    def poll(self) -> int:
+        return self.returncode
+
+    def kill(self) -> None:
+        pass
+
+
+def _do_http_request(
+    url: str,
+    method: str = "GET",
+    headers: dict | None = None,
+    body: str | bytes | None = None,
+    auth: tuple[str, str] | None = None,
+    timeout: float = 30,
+) -> _HttpResult:
+    """Perform an HTTP request via httpx and return a Popen-compatible result."""
+    import httpx
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        r = httpx.request(
+            method,
+            url,
+            headers=headers,
+            content=body,
+            auth=auth,
+            timeout=timeout,
+            follow_redirects=True,
+        )
+        elapsed = _time.monotonic() - t0
+        out = r.text + f"\n--- HTTP {r.status_code} ({elapsed:.3f}s) ---"
+        return _HttpResult(out.encode(), 0 if r.status_code < 400 else 1)
+    except Exception as exc:
+        elapsed = _time.monotonic() - t0
+        out = f"Request failed: {exc}\n--- HTTP 0 ({elapsed:.3f}s) ---"
+        return _HttpResult(out.encode(), 1)
+
+
+def _build_auto_webhook_process(config: dict) -> _HttpResult | None:
     url = config.get("url", "")
     method = config.get("method", "POST").upper()
+    headers = dict(config.get("headers", {}))
     body = config.get("body")
-    cmd = ["curl", "-sS", "-w", "\n--- HTTP %{http_code} (%{time_total}s) ---", "-X", method]
-    for k, v in config.get("headers", {}).items():
-        cmd += ["-H", f"{k}: {v}"]
+    content = None
     if body:
         if isinstance(body, (dict, list)):
-            cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
+            headers["Content-Type"] = "application/json"
+            content = json.dumps(body).encode()
         elif isinstance(body, str):
-            cmd += ["-d", body]
-    cmd.append(url)
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            start_new_session=True)
+            content = body.encode()
+    return _do_http_request(url, method, headers=headers, body=content)
 
 
 def _build_auto_service_process(config: dict) -> subprocess.Popen | None:
@@ -117,25 +165,25 @@ def _build_auto_delay_process(config: dict) -> subprocess.Popen | None:
                            stderr=subprocess.STDOUT, start_new_session=True)
 
 
-def _build_auto_http_process(config: dict) -> subprocess.Popen | None:
+def _build_auto_http_process(config: dict) -> _HttpResult | None:
     url = config.get("url", "")
     method = config.get("method", "GET").upper()
-    cmd = ["curl", "-sS", "-w", "\n--- HTTP %{http_code} (%{time_total}s) ---", "-X", method]
-    for k, v in config.get("headers", {}).items():
-        cmd += ["-H", f"{k}: {v}"]
+    headers = dict(config.get("headers", {}))
     auth_type = config.get("auth_type", "")
+    auth = None
     if auth_type == "bearer":
-        cmd += ["-H", f"Authorization: Bearer {config.get('auth_token', '')}"]
+        headers["Authorization"] = f"Bearer {config.get('auth_token', '')}"
     elif auth_type == "basic":
-        cmd += ["-u", f"{config.get('auth_user', '')}:{config.get('auth_pass', '')}"]
+        auth = (config.get("auth_user", ""), config.get("auth_pass", ""))
     body = config.get("body")
+    content = None
     if body:
         if isinstance(body, (dict, list)):
-            cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
+            headers["Content-Type"] = "application/json"
+            content = json.dumps(body).encode()
         elif isinstance(body, str):
-            cmd += ["-d", body]
-    cmd.append(url)
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+            content = body.encode()
+    return _do_http_request(url, method, headers=headers, body=content, auth=auth)
 
 
 def _build_auto_notify_process(config: dict) -> subprocess.Popen | None:

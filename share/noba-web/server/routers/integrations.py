@@ -280,6 +280,8 @@ async def api_cloud_remote_create(request: Request, auth=Depends(_require_admin)
         raise HTTPException(400, "Invalid remote name")
     cmd = ["rclone", "config", "create", name, remote_type]
     for k, v in params.items():
+        if not re.match(r'^[a-zA-Z0-9_-]+$', str(k)):
+            raise HTTPException(400, f"Invalid parameter key: {k}")
         cmd.append(f"{k}={v}")
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)

@@ -184,8 +184,8 @@ async def api_oidc_callback(request: Request):
             users.add(email, "oidc:external", "viewer")
         noba_token = token_store.generate(email, "viewer")
         db.audit_log("oidc_login", email, "OIDC login", _client_ip(request))
-        # Redirect to frontend with token
-        return RedirectResponse(f"/?token={noba_token}")
+        # Redirect to frontend with token in fragment (not logged by servers)
+        return RedirectResponse(f"/#token={noba_token}")
     except HTTPException:
         raise
     except Exception as e:

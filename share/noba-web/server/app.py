@@ -44,6 +44,12 @@ def _cleanup_loop() -> None:
             db.prune_audit()
             db.prune_job_runs()
             db.prune_rollups()
+            # Checkpoint WAL to prevent unbounded growth on long-running instances
+            try:
+                with db._lock:
+                    db._get_conn().execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception as exc:
+                logger.debug("WAL checkpoint failed: %s", exc)
         if _prune_counter == 6:  # Every ~30 minutes
             try:
                 if os.path.exists(NOBA_YAML):
@@ -65,33 +71,37 @@ async def _cleanup_transfers() -> None:
 
     from .agent_store import _TRANSFER_DIR, _TRANSFER_MAX_AGE, _transfer_lock, _transfers
 
-    while True:
-        await _asyncio.sleep(900)  # Every 15 minutes
-        now = int(time.time())
-        with _transfer_lock:
-            expired = [tid for tid, t in _transfers.items()
-                       if now - t.get("created_at", 0) > _TRANSFER_MAX_AGE]
-            for tid in expired:
-                transfer = _transfers.pop(tid)
-                # Clean up final file
-                final = transfer.get("final_path", "")
-                if final and os.path.exists(final):
+    try:
+        while True:
+            await _asyncio.sleep(900)  # Every 15 minutes
+            now = int(time.time())
+            with _transfer_lock:
+                expired = [tid for tid, t in _transfers.items()
+                           if now - t.get("created_at", 0) > _TRANSFER_MAX_AGE]
+                for tid in expired:
+                    transfer = _transfers.pop(tid)
+                    # Clean up final file
+                    final = transfer.get("final_path", "")
+                    if final and os.path.exists(final):
+                        try:
+                            os.remove(final)
+                        except OSError:
+                            pass
+                    # Clean up orphaned chunks
                     try:
-                        os.remove(final)
+                        for fname in os.listdir(_TRANSFER_DIR):
+                            if fname.startswith(tid):
+                                try:
+                                    os.remove(os.path.join(_TRANSFER_DIR, fname))
+                                except OSError:
+                                    pass
                     except OSError:
                         pass
-                # Clean up orphaned chunks
-                try:
-                    for fname in os.listdir(_TRANSFER_DIR):
-                        if fname.startswith(tid):
-                            try:
-                                os.remove(os.path.join(_TRANSFER_DIR, fname))
-                            except OSError:
-                                pass
-                except OSError:
-                    pass
-        if expired:
-            logger.info("[cleanup] Removed %d expired transfer(s)", len(expired))
+            if expired:
+                logger.info("[cleanup] Removed %d expired transfer(s)", len(expired))
+    except _asyncio.CancelledError:
+        logger.info("Transfer cleanup task stopped.")
+        raise
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────

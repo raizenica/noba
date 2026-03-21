@@ -347,8 +347,8 @@ def get_traefik(url: str) -> dict | None:
         service_list = services if isinstance(services, list) else []
         errors = sum(
             1 for s in service_list
-            if s.get("status") == "error" or s.get("serverStatus", {}) != {}
-            and any(v == "DOWN" for v in s.get("serverStatus", {}).values())
+            if s.get("status") == "error"
+            or any(v == "DOWN" for v in s.get("serverStatus", {}).values())
         )
         return {
             "routers": len(router_list),

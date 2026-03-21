@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait as _wait_futures
 from datetime import datetime
 
 from .config import STATS_INTERVAL, _WORKER_THREADS
@@ -233,12 +233,31 @@ def collect_stats(qs: dict) -> dict:
             _docker_update_cycle = 0
             docker_upd_fut = _pool.submit(check_docker_updates)
 
+    # ── Wait for ALL futures with a single global timeout ───────────────────
+    _all_futs = [f for f in [
+        wan_fut, lan_fut, ph_fut, plex_fut, kuma_fut, ct_fut, tn_fut,
+        rad_fut, son_fut, qbit_fut, pmx_fut, ag_fut, jf_fut, hass_fut,
+        unifi_fut, spd_fut, tau_fut, ovs_fut, prowl_fut, lidarr_fut,
+        readarr_fut, bazarr_fut, rad_ext_fut, son_ext_fut, rad_cal_fut,
+        son_cal_fut, nc_fut, traefik_fut, npm_fut, ak_fut, cf_fut,
+        omv_fut, xcp_fut, hb_fut, z2m_fut, esp_fut, protect_fut,
+        pikvm_fut, k8s_fut, gitea_fut, gitlab_fut, github_fut,
+        paperless_fut, vw_fut, weather_fut, cert_fut, domain_fut,
+        vpn_fut, docker_upd_fut, presence_fut, scrutiny_fut, energy_fut,
+        frigate_fut, tailscale_fut,
+        *svc_futs.keys(), *ping_futs.keys(), *bmc_futs.keys(),
+    ] if f is not None]
+    _done, _not_done = _wait_futures(_all_futs, timeout=4.5)
+
     # ── Collect service status results ────────────────────────────────────────
     services = []
     for fut, svc in svc_futs.items():
-        try:
-            status, is_user = fut.result(timeout=4)
-        except Exception:
+        if fut in _done:
+            try:
+                status, is_user = fut.result(timeout=0)
+            except Exception:
+                status, is_user = "error", False
+        else:
             status, is_user = "error", False
         services.append({"name": svc, "status": status, "is_user": is_user})
     stats["services"] = services
@@ -246,42 +265,47 @@ def collect_stats(qs: dict) -> dict:
     # ── Collect ping results ──────────────────────────────────────────────────
     radar = []
     for fut, ip in ping_futs.items():
-        try:
-            ip_r, up, ms = fut.result(timeout=4)
-            radar.append({"ip": ip_r, "status": "Up" if up else "Down", "ms": ms if up else 0})
-        except Exception:
-            radar.append({"ip": ip, "status": "Down", "ms": 0})
+        if fut in _done:
+            try:
+                ip_r, up, ms = fut.result(timeout=0)
+                radar.append({"ip": ip_r, "status": "Up" if up else "Down", "ms": ms if up else 0})
+                continue
+            except Exception:
+                pass
+        radar.append({"ip": ip, "status": "Down", "ms": 0})
     stats["radar"] = radar
 
     # ── Net health ────────────────────────────────────────────────────────────
     stats["netHealth"] = {"wan": "Down", "lan": "Down", "configured": bool(wan_ip or lan_ip)}
-    if wan_fut:
+    if wan_fut and wan_fut in _done:
         try:
-            _, wan_up, _ = wan_fut.result(timeout=3)
+            _, wan_up, _ = wan_fut.result(timeout=0)
             stats["netHealth"]["wan"] = "Up" if wan_up else "Down"
         except Exception:
             pass
-    if lan_fut:
+    if lan_fut and lan_fut in _done:
         try:
-            _, lan_up, _ = lan_fut.result(timeout=3)
+            _, lan_up, _ = lan_fut.result(timeout=0)
             stats["netHealth"]["lan"] = "Up" if lan_up else "Down"
         except Exception:
             pass
 
     # ── Integration results ───────────────────────────────────────────────────
-    def _get(fut, timeout=4, default=None):
+    def _get(fut, default=None):
+        if fut is None or fut not in _done:
+            return default
         try:
-            return fut.result(timeout=timeout) if fut else default
+            return fut.result(timeout=0)
         except Exception:
             return default
 
-    def _cached_get(fut, cache_key, timeout=4, default=None, ttl=30):
+    def _cached_get(fut, cache_key, default=None, ttl=30):
         """Get a future result with optional cache layer."""
         if _cache.is_redis and cache_key:
             cached = _cache.get(cache_key)
             if cached is not None:
                 return cached
-        result = _get(fut, timeout, default)
+        result = _get(fut, default)
         if _cache.is_redis and cache_key and result is not None:
             _cache.set(cache_key, result, ttl=ttl)
         return result
@@ -289,12 +313,12 @@ def collect_stats(qs: dict) -> dict:
     stats["kuma"]       = _get(kuma_fut, default=[])
     stats["pihole"]     = _get(ph_fut)
     stats["plex"]       = _get(plex_fut)
-    stats["containers"] = _get(ct_fut, timeout=5, default=[])
-    stats["truenas"]    = _cached_get(tn_fut, "noba:int:truenas", timeout=5, ttl=15)
+    stats["containers"] = _get(ct_fut, default=[])
+    stats["truenas"]    = _cached_get(tn_fut, "noba:int:truenas", ttl=15)
     stats["radarr"]     = _get(rad_fut)
     stats["sonarr"]     = _get(son_fut)
     stats["qbit"]       = _get(qbit_fut)
-    stats["proxmox"]    = _cached_get(pmx_fut, "noba:int:proxmox", timeout=6, ttl=15)
+    stats["proxmox"]    = _cached_get(pmx_fut, "noba:int:proxmox", ttl=15)
     stats["adguard"]    = _get(ag_fut)
     stats["jellyfin"]   = _get(jf_fut)
     stats["hass"]       = _get(hass_fut)
@@ -318,7 +342,7 @@ def collect_stats(qs: dict) -> dict:
     stats["authentik"]      = _get(ak_fut)
     stats["cloudflare"]     = _cached_get(cf_fut, "noba:int:cloudflare", ttl=60)
     stats["omv"]            = _get(omv_fut)
-    stats["xcpng"]          = _cached_get(xcp_fut, "noba:int:xcpng", timeout=6, ttl=15)
+    stats["xcpng"]          = _cached_get(xcp_fut, "noba:int:xcpng", ttl=15)
     stats["homebridge"]     = _get(hb_fut)
     stats["z2m"]            = _get(z2m_fut)
     stats["esphome"]        = _get(esp_fut)
@@ -373,8 +397,10 @@ def collect_stats(qs: dict) -> dict:
 
     # ── BMC sentinel ─────────────────────────────────────────────────────────
     for fut, (os_ip, bmc_ip) in bmc_futs.items():
+        if fut not in _done:
+            continue
         try:
-            _, bmc_up, _ = fut.result(timeout=4)
+            _, bmc_up, _ = fut.result(timeout=0)
             os_status = next((r["status"] for r in radar if r["ip"] == os_ip), None)
             if os_status == "Down" and bmc_up:
                 stats["alerts"].append({

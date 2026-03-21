@@ -460,8 +460,12 @@ def _dispatch_agent_endpoint_check(monitor: dict) -> dict:
     agent_result = None
     while time.time() < deadline:
         with _agent_cmd_lock:
-            if cmd_id in _agent_cmd_results.get(hostname, {}):
-                agent_result = _agent_cmd_results[hostname].pop(cmd_id)
+            rlist = _agent_cmd_results.get(hostname, [])
+            for i, r in enumerate(rlist):
+                if isinstance(r, dict) and r.get("id") == cmd_id:
+                    agent_result = rlist.pop(i)
+                    break
+            if agent_result is not None:
                 break
         time.sleep(0.5)
 
@@ -547,37 +551,42 @@ class EndpointChecker:
                 logger.error("Endpoint checker tick error: %s", e)
             self._shutdown.wait(60)
 
+    def _process_monitor(self, monitor: dict) -> None:
+        """Check a single endpoint monitor and fire alerts."""
+        try:
+            result = _run_endpoint_check(monitor)
+            # Check for cert expiry alerts
+            cert_days = result.get("cert_expiry_days")
+            notify_days = monitor.get("notify_cert_days", 14)
+            if cert_days is not None and cert_days <= notify_days:
+                db.insert_alert_history(
+                    f"cert_expiry:{monitor['name']}",
+                    "warning" if cert_days > 7 else "critical",
+                    f"Certificate for {monitor['name']} ({monitor['url']}) "
+                    f"expires in {cert_days} day(s)",
+                )
+            # Check for endpoint down alerts
+            if result.get("last_status") == "down":
+                db.insert_alert_history(
+                    f"endpoint_down:{monitor['name']}",
+                    "critical",
+                    f"Endpoint {monitor['name']} ({monitor['url']}) is DOWN"
+                    + (f": {result.get('error', '')}" if result.get("error") else ""),
+                )
+            elif result.get("last_status") == "up":
+                # Resolve any existing alert for this endpoint
+                db.resolve_alert(f"endpoint_down:{monitor['name']}")
+        except Exception as e:
+            logger.error("Endpoint check failed for %s: %s", monitor.get("name"), e)
+
     def _tick(self) -> None:
         due = db.get_due_endpoint_monitors()
         if not due:
             return
         logger.debug("Endpoint checker: %d monitors due", len(due))
-        for monitor in due:
-            try:
-                result = _run_endpoint_check(monitor)
-                # Check for cert expiry alerts
-                cert_days = result.get("cert_expiry_days")
-                notify_days = monitor.get("notify_cert_days", 14)
-                if cert_days is not None and cert_days <= notify_days:
-                    db.insert_alert_history(
-                        f"cert_expiry:{monitor['name']}",
-                        "warning" if cert_days > 7 else "critical",
-                        f"Certificate for {monitor['name']} ({monitor['url']}) "
-                        f"expires in {cert_days} day(s)",
-                    )
-                # Check for endpoint down alerts
-                if result.get("last_status") == "down":
-                    db.insert_alert_history(
-                        f"endpoint_down:{monitor['name']}",
-                        "critical",
-                        f"Endpoint {monitor['name']} ({monitor['url']}) is DOWN"
-                        + (f": {result.get('error', '')}" if result.get("error") else ""),
-                    )
-                elif result.get("last_status") == "up":
-                    # Resolve any existing alert for this endpoint
-                    db.resolve_alert(f"endpoint_down:{monitor['name']}")
-            except Exception as e:
-                logger.error("Endpoint check failed for %s: %s", monitor.get("name"), e)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(10, len(due))) as pool:
+            list(pool.map(self._process_monitor, due))
 
 
 class DriftChecker:

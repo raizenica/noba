@@ -965,10 +965,16 @@ function systemActionsMixin() {
 
         async deleteAlertRule(ruleId) {
             if (!confirm('Delete this alert rule?')) return;
-            await fetch(`/api/alert-rules/${ruleId}`, {
-                method: 'DELETE', headers: { 'Authorization': 'Bearer ' + this._token() },
-            });
-            this.fetchAlertRules();
+            try {
+                const res = await fetch(`/api/alert-rules/${ruleId}`, {
+                    method: 'DELETE', headers: { 'Authorization': 'Bearer ' + this._token() },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                this.addToast('Alert rule deleted', 'success');
+                this.fetchAlertRules();
+            } catch (e) {
+                this.addToast('Delete failed: ' + e.message, 'error');
+            }
         },
 
         async testAlertRule(ruleId) {
@@ -2162,6 +2168,7 @@ function systemActionsMixin() {
             });
 
             // Draw nodes
+            function escSvg(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
             nodes.forEach(function(n) {
                 var p = positions[n.id];
                 var color = healthColors[n.health] || healthColors.unknown;
@@ -2169,8 +2176,10 @@ function systemActionsMixin() {
                 var isTarget = self.topologyImpactService === n.id;
                 var strokeW = (isImpacted || isTarget) ? 3 : 1.5;
                 var strokeC = isTarget ? '#f97316' : (isImpacted ? '#ef4444' : 'var(--border)');
-                html += '<circle cx="' + p.x + '" cy="' + p.y + '" r="20" fill="' + color + '" stroke="' + strokeC + '" stroke-width="' + strokeW + '" style="cursor:pointer" onclick="document.dispatchEvent(new CustomEvent(\'topo-click\',{detail:\'' + n.id + '\'}))" />';
-                html += '<text x="' + p.x + '" y="' + (p.y + 34) + '" text-anchor="middle" fill="var(--text)" font-size="11" font-weight="600">' + n.label + '</text>';
+                var safeId = escSvg(n.id);
+                var safeLabel = escSvg(n.label);
+                html += '<circle cx="' + p.x + '" cy="' + p.y + '" r="20" fill="' + color + '" stroke="' + strokeC + '" stroke-width="' + strokeW + '" style="cursor:pointer" onclick="document.dispatchEvent(new CustomEvent(\'topo-click\',{detail:\'' + safeId + '\'}))" />';
+                html += '<text x="' + p.x + '" y="' + (p.y + 34) + '" text-anchor="middle" fill="var(--text)" font-size="11" font-weight="600">' + safeLabel + '</text>';
             });
 
             svg.innerHTML = html;
@@ -2306,16 +2315,16 @@ function systemActionsMixin() {
                     headers: { 'Authorization': 'Bearer ' + this._token() },
                 });
                 if (res.ok) {
-                    this.toast('Discovery started on ' + this.networkDiscoverHost, 'success');
+                    this.addToast('Discovery started on ' + this.networkDiscoverHost, 'success');
                     // Poll for results after a delay
                     var self = this;
                     setTimeout(function() { self.fetchNetworkDevices(); }, 8000);
                 } else {
                     var data = await res.json().catch(function() { return {}; });
-                    this.toast(data.detail || 'Discovery failed', 'error');
+                    this.addToast(data.detail || 'Discovery failed', 'error');
                 }
             } catch {
-                this.toast('Network error', 'error');
+                this.addToast('Network error', 'error');
             } finally {
                 this.networkDiscoverLoading = false;
             }
@@ -2330,7 +2339,7 @@ function systemActionsMixin() {
                 });
                 if (res.ok) {
                     this.networkDevices = this.networkDevices.filter(function(d) { return d.id !== id; });
-                    this.toast('Device removed', 'success');
+                    this.addToast('Device removed', 'success');
                 }
             } catch { /* silent */ }
         },
