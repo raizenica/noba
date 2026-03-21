@@ -8,6 +8,12 @@ const saveMsg = ref('')
 
 onMounted(async () => {
   await settingsStore.fetchPreferences()
+  // Ensure all vis keys exist — default to true (visible) when not explicitly set
+  for (const item of visItems) {
+    if (settingsStore.vis[item.key] === undefined) {
+      settingsStore.vis[item.key] = true
+    }
+  }
 })
 
 const visItems = [

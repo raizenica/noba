@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, onUpdated, nextTick } from 'vue'
 import WorkflowNode from './WorkflowNode.vue'
 
 const props = defineProps({
@@ -105,7 +105,7 @@ function deleteNode(id) {
 function onNodePosition({ id, x, y }) {
   const n = nodes.value.find(n => n.id === id)
   if (n) { n.x = x; n.y = y }
-  // Emit on mouseup instead of every move for performance
+  edgeVersion.value++  // recalculate edges on drag
 }
 
 function onNodeMouseUp() {
@@ -168,47 +168,64 @@ function onKeyDown(e) {
 }
 
 // ── SVG edge geometry ──────────────────────────────────────────────────────
-const NODE_W = 175   // 170px width + 4px left border + 1px right border
-const NODE_H = 88
+// Use DOM-based port positions for accurate edge drawing
+const edgeVersion = ref(0)  // bump to trigger recalc after render
 
-function portOffsetX(portId, ports) {
-  if (ports.length === 1) return NODE_W / 2
-  const idx = ports.indexOf(portId)
-  return idx === 0 ? NODE_W * 0.3 : NODE_W * 0.7
-}
+function getPortPos(nodeId, portId, isInput) {
+  const canvasEl = canvasRef.value
+  if (!canvasEl) return null
+  const nodeEl = canvasEl.querySelector(`[data-node-id="${nodeId}"]`)
+  if (!nodeEl) return null
 
-function getOutputPorts(type) {
-  if (type === 'condition')     return ['true', 'false']
-  if (type === 'approval_gate') return ['approved', 'denied']
-  return ['default']
+  let portEl
+  if (isInput) {
+    portEl = nodeEl.querySelector('.wn-port-in')
+  } else {
+    portEl = nodeEl.querySelector(`.wn-port-out[data-port="${portId}"]`)
+      || nodeEl.querySelector('.wn-port-out')
+  }
+  if (!portEl) return null
+
+  const canvasRect = canvasEl.getBoundingClientRect()
+  const portRect = portEl.getBoundingClientRect()
+  const z = zoom.value || 1
+  return {
+    x: (portRect.left + portRect.width / 2 - canvasRect.left + canvasEl.scrollLeft) / z,
+    y: (portRect.top + portRect.height / 2 - canvasRect.top + canvasEl.scrollTop) / z,
+  }
 }
 
 const edgePaths = computed(() => {
+  // eslint-disable-next-line no-unused-expressions
+  edgeVersion.value  // depend on version to recalc after DOM updates
+
   return edges.value.map(edge => {
-    const fromNode = nodes.value.find(n => n.id === edge.from)
-    const toNode   = nodes.value.find(n => n.id === edge.to)
-    if (!fromNode || !toNode) return null
+    const src = getPortPos(edge.from, edge.port || 'default', false)
+    const tgt = getPortPos(edge.to, null, true)
+    if (!src || !tgt) {
+      // Fallback: use node position estimates
+      const fromNode = nodes.value.find(n => n.id === edge.from)
+      const toNode   = nodes.value.find(n => n.id === edge.to)
+      if (!fromNode || !toNode) return null
+      const x1 = fromNode.x + 87, y1 = fromNode.y + 80
+      const x2 = toNode.x + 87,   y2 = toNode.y
+      const cpOff = Math.max(30, Math.abs(y2 - y1) * 0.4)
+      return {
+        edge,
+        d: `M ${x1} ${y1} C ${x1} ${y1 + cpOff}, ${x2} ${y2 - cpOff}, ${x2} ${y2}`,
+        stroke: 'var(--text-muted)',
+        mx: (x1 + x2) / 2, my: (y1 + y2) / 2,
+      }
+    }
 
-    const ports = getOutputPorts(fromNode.type)
-    const ox = portOffsetX(edge.port, ports)
-    const x1 = fromNode.x + ox
-    const y1 = fromNode.y + NODE_H
-    const x2 = toNode.x + NODE_W / 2
-    const y2 = toNode.y
-
+    const { x: x1, y: y1 } = src
+    const { x: x2, y: y2 } = tgt
     const dx = Math.abs(x2 - x1)
     const dy = y2 - y1
-
-    let d
-    if (dy > 30) {
-      // Vertical flow: gentle S-curve from bottom to top
-      const cpOff = Math.max(30, Math.min(80, Math.abs(dy) * 0.4))
-      d = `M ${x1} ${y1} C ${x1} ${y1 + cpOff}, ${x2} ${y2 - cpOff}, ${x2} ${y2}`
-    } else {
-      // Horizontal flow: curve exits bottom, enters top with shallow arc
-      const cpY = Math.max(30, dx * 0.15)
-      d = `M ${x1} ${y1} C ${x1} ${y1 + cpY}, ${x2} ${y2 - cpY}, ${x2} ${y2}`
-    }
+    const cpOff = dy > 30
+      ? Math.max(30, Math.min(80, Math.abs(dy) * 0.4))
+      : Math.max(30, dx * 0.15)
+    const d = `M ${x1} ${y1} C ${x1} ${y1 + cpOff}, ${x2} ${y2 - cpOff}, ${x2} ${y2}`
 
     let stroke = 'var(--text-muted)'
     if (edge.port === 'true' || edge.port === 'approved')  stroke = 'var(--success)'
@@ -220,11 +237,11 @@ const edgePaths = computed(() => {
 
 const canvasW = computed(() => {
   if (!nodes.value.length) return 800
-  return Math.max(800, Math.max(...nodes.value.map(n => n.x + NODE_W + 80)))
+  return Math.max(800, Math.max(...nodes.value.map(n => n.x + 250)))
 })
 const canvasH = computed(() => {
   if (!nodes.value.length) return 500
-  return Math.max(500, Math.max(...nodes.value.map(n => n.y + NODE_H + 100)))
+  return Math.max(500, Math.max(...nodes.value.map(n => n.y + 180)))
 })
 
 // ── Zoom ───────────────────────────────────────────────────────────────────
@@ -277,7 +294,14 @@ function deleteFromCtx() {
   ctxMenu.value.show = false
 }
 
-onMounted(() => { document.addEventListener('contextmenu', onGlobalCtx) })
+onMounted(() => {
+  document.addEventListener('contextmenu', onGlobalCtx)
+  // Bump edgeVersion after initial render so DOM-based port positions are available
+  nextTick(() => { edgeVersion.value++ })
+})
+
+// Re-measure port positions after any DOM update (node add/remove/drag)
+onUpdated(() => { nextTick(() => { edgeVersion.value++ }) })
 onBeforeUnmount(() => { document.removeEventListener('contextmenu', onGlobalCtx) })
 </script>
 
