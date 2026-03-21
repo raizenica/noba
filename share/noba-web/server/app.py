@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,37 +30,56 @@ _WEB_DIR = Path(__file__).parent.parent   # share/noba-web/
 _prune_counter = 0
 
 
-def _cleanup_loop() -> None:
-    global _prune_counter
-    shutdown = get_shutdown_flag()
-    while not shutdown.wait(300):
-        token_store.cleanup()
-        rate_limiter.cleanup()
-        _prune_counter += 1
-        if _prune_counter >= 12:
-            _prune_counter = 0
-            db.prune_history()
-            db.prune_audit()
-            db.prune_job_runs()
-            db.prune_rollups()
-            db.prune_endpoint_check_history()
-            # Checkpoint WAL to prevent unbounded growth on long-running instances
-            try:
-                db.wal_checkpoint()
-            except Exception as exc:
-                logger.debug("WAL checkpoint failed: %s", exc)
-        if _prune_counter == 6:  # Every ~30 minutes
-            try:
-                if os.path.exists(NOBA_YAML):
-                    import shutil
-                    bak = f"{NOBA_YAML}.auto.{int(time.time())}"
-                    shutil.copy2(NOBA_YAML, bak)
-                    # Keep only last 10 auto backups
-                    import glob as glob_mod
-                    for old in sorted(glob_mod.glob(f"{NOBA_YAML}.auto.*"))[:-10]:
-                        os.unlink(old)
-            except Exception as e:
-                logger.debug("Auto config backup failed: %s", e)
+def _safe_remove(path: str, allowed_dir: str) -> bool:
+    """Remove a file only if it lives inside allowed_dir. Returns True on success."""
+    try:
+        real = os.path.realpath(path)
+        if not real.startswith(os.path.realpath(allowed_dir)):
+            logger.warning("Blocked path-traversal delete: %s (outside %s)", real, allowed_dir)
+            return False
+        if os.path.exists(real):
+            os.remove(real)
+            return True
+    except OSError as e:
+        logger.debug("File removal failed: %s — %s", path, e)
+    return False
+
+
+async def _cleanup_loop() -> None:
+    """Async cleanup loop — replaces the old thread-based version."""
+    import asyncio as _aio
+    counter = 0
+    try:
+        while True:
+            await _aio.sleep(300)
+            token_store.cleanup()
+            rate_limiter.cleanup()
+            counter += 1
+            if counter >= 12:
+                counter = 0
+                db.prune_history()
+                db.prune_audit()
+                db.prune_job_runs()
+                db.prune_rollups()
+                db.prune_endpoint_check_history()
+                try:
+                    db.wal_checkpoint()
+                except Exception as exc:
+                    logger.debug("WAL checkpoint failed: %s", exc)
+            if counter == 6:  # Every ~30 minutes
+                try:
+                    if os.path.exists(NOBA_YAML):
+                        import shutil
+                        bak = f"{NOBA_YAML}.auto.{int(time.time())}"
+                        shutil.copy2(NOBA_YAML, bak)
+                        import glob as glob_mod
+                        for old in sorted(glob_mod.glob(f"{NOBA_YAML}.auto.*"))[:-10]:
+                            os.unlink(old)
+                except Exception as e:
+                    logger.debug("Auto config backup failed: %s", e)
+    except _aio.CancelledError:
+        logger.info("Cleanup loop stopped.")
+        raise
 
 
 # ── Transfer cleanup (Phase 1c) ──────────────────────────────────────────────
@@ -82,21 +100,15 @@ async def _cleanup_transfers() -> None:
                     transfer = _transfers.pop(tid)
                     # Clean up final file
                     final = transfer.get("final_path", "")
-                    if final and os.path.exists(final):
-                        try:
-                            os.remove(final)
-                        except OSError:
-                            pass
+                    if final:
+                        _safe_remove(final, _TRANSFER_DIR)
                     # Clean up orphaned chunks
                     try:
                         for fname in os.listdir(_TRANSFER_DIR):
                             if fname.startswith(tid):
-                                try:
-                                    os.remove(os.path.join(_TRANSFER_DIR, fname))
-                                except OSError:
-                                    pass
-                    except OSError:
-                        pass
+                                _safe_remove(os.path.join(_TRANSFER_DIR, fname), _TRANSFER_DIR)
+                    except OSError as e:
+                        logger.debug("transfer chunk cleanup: %s", e)
             if expired:
                 logger.info("[cleanup] Removed %d expired transfer(s)", len(expired))
     except _asyncio.CancelledError:
@@ -110,10 +122,11 @@ async def lifespan(app: FastAPI):
     # Hydrate token store from DB (tokens survive restarts)
     token_store.load_from_db()
     db.mark_stale_jobs()
+    import asyncio as _asyncio
     db.audit_log("system_start", "system", f"Noba v{VERSION} starting (FastAPI)")
     bg_collector.start()
     _deps.bg_collector = bg_collector  # expose to route modules via deps
-    threading.Thread(target=_cleanup_loop, daemon=True, name="token-cleanup").start()
+    _cleanup_task = _asyncio.create_task(_cleanup_loop())
     # warm up psutil CPU measurement
     import psutil
     psutil.cpu_percent(interval=None)
@@ -144,13 +157,14 @@ async def lifespan(app: FastAPI):
                         "agent_version": agent["agent_version"],
                         "hostname": agent["hostname"],
                     }
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to load persisted agents: %s", e)
     # Start file transfer cleanup background task (Phase 1c)
     import asyncio as _asyncio
     _transfer_cleanup_task = _asyncio.create_task(_cleanup_transfers())
     logger.info("Noba v%s started (%d plugins)", VERSION, plugin_manager.count)
     yield
+    _cleanup_task.cancel()
     _transfer_cleanup_task.cancel()
     rss_watcher.stop()
     endpoint_checker.stop()
