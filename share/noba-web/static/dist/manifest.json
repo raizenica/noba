@@ -1,0 +1,12 @@
+{
+  "name": "NOBA Command Center",
+  "short_name": "NOBA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#060a10",
+  "theme_color": "#00c8ff",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
+  ]
+}

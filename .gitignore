@@ -18,4 +18,3 @@ onnxruntime_test
 whisper.cpp
 run-hogwarts-trainer.sh
 .superpowers/
-share/noba-web/static/dist/

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .collector import bg_collector, get_shutdown_flag
@@ -211,19 +211,7 @@ async def add_security_headers(request: Request, call_next):
 
 
 # ── Static / frontend ─────────────────────────────────────────────────────────
-@app.get("/")
-async def index():
-    return FileResponse(_WEB_DIR / "index.html")
-
-
-@app.get("/manifest.json")
-async def manifest():
-    return FileResponse(_WEB_DIR / "manifest.json", media_type="application/json")
-
-
-@app.get("/service-worker.js")
-async def service_worker():
-    return FileResponse(_WEB_DIR / "service-worker.js", media_type="application/javascript")
+_VUE_DIST = _WEB_DIR / "static" / "dist"
 
 
 class _CachedStaticFiles(StaticFiles):
@@ -237,24 +225,41 @@ class _CachedStaticFiles(StaticFiles):
             await send(msg)
         await super().__call__(scope, receive, _send_with_cache)
 
+
+# Serve Vite-built assets (hashed filenames = immutable)
+if (_VUE_DIST / "assets").exists():
+    app.mount("/assets", _CachedStaticFiles(directory=str(_VUE_DIST / "assets")), name="vue-assets")
+
+# Keep /static mount for favicons and other non-Vue static files
 app.mount("/static", _CachedStaticFiles(directory=str(_WEB_DIR / "static")), name="static")
 
-# ── Vue frontend (Phase 2 — test at /v3) ────────────────────────────────────
-_VUE_DIST = _WEB_DIR / "static" / "dist"
 
-if (_VUE_DIST / "assets").exists():
-    app.mount("/assets", StaticFiles(directory=str(_VUE_DIST / "assets")), name="vue-assets")
+@app.get("/manifest.json")
+async def manifest():
+    return FileResponse(_VUE_DIST / "manifest.json", media_type="application/json")
 
 
-@app.get("/v3/{rest:path}")
-@app.get("/v3")
-async def vue_app(rest: str = ""):
-    idx = _VUE_DIST / "index.html"
-    if idx.exists():
-        return FileResponse(idx)
-    return PlainTextResponse("Vue build not found. Run: scripts/build-frontend.sh", status_code=404)
+@app.get("/service-worker.js")
+async def service_worker():
+    return FileResponse(_VUE_DIST / "service-worker.js", media_type="application/javascript")
+
+
+@app.get("/favicon.svg")
+async def favicon_svg():
+    return FileResponse(_VUE_DIST / "favicon.svg", media_type="image/svg+xml")
+
+
+@app.get("/favicon.ico")
+async def favicon_ico():
+    return FileResponse(_VUE_DIST / "favicon.ico", media_type="image/x-icon")
 
 
 # ── Include API routers ───────────────────────────────────────────────────────
 from .routers import api_router  # noqa: E402
 app.include_router(api_router)
+
+
+# ── SPA fallback (must be last) ──────────────────────────────────────────────
+@app.get("/{rest:path}")
+async def spa_fallback(rest: str = ""):
+    return FileResponse(_VUE_DIST / "index.html")
