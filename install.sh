@@ -502,7 +502,7 @@ fi
 # 4. Web dashboard
 header "Installing Web Dashboard"
 
-for f in server.py index.html status.html manifest.json service-worker.js; do
+for f in server.py; do
     src="$SCRIPT_DIR/share/noba-web/$f"
     dst="$LIBEXEC_DIR/web/$f"
     if [[ -f "$src" ]]; then
@@ -574,12 +574,13 @@ if [[ -d "$server_pkg_src" ]]; then
     fi
 fi
 
-# Deploy all static assets (auto-discover instead of hardcoded list)
+# Deploy all static assets (including Vue build in static/dist/)
 _static_src="$SCRIPT_DIR/share/noba-web/static"
 _static_dst="$LIBEXEC_DIR/web/static"
 if [[ -d "$_static_src" ]]; then
     _static_count=0
     mkdir -p "$_static_dst"
+    # Copy top-level static files (favicon, style.css, etc.)
     for f in "$_static_src"/*; do
         [[ -f "$f" ]] || continue
         fname=$(basename "$f")
@@ -591,7 +592,19 @@ if [[ -d "$_static_src" ]]; then
             _static_count=$(( _static_count + 1 ))
         fi
     done
-    [[ "$DRY_RUN" != true ]] && say_ok "Web static assets ($_static_count files)"
+    # Copy Vue build output (static/dist/ with assets/)
+    if [[ -d "$_static_src/dist" ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            dry "install $_static_src/dist/ → $_static_dst/dist/"
+        else
+            mkdir -p "$_static_dst/dist"
+            cp -r "$_static_src/dist/"* "$_static_dst/dist/"
+            _dist_count=$(find "$_static_dst/dist" -type f | wc -l)
+            _static_count=$(( _static_count + _dist_count ))
+            say_ok "Vue build output ($_dist_count files)"
+        fi
+    fi
+    [[ "$DRY_RUN" != true ]] && say_ok "Web static assets ($_static_count files total)"
 fi
 
 # Deploy agent script (served via /api/agent/update for remote agent self-update)
