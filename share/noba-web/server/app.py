@@ -182,7 +182,14 @@ async def lifespan(app: FastAPI):
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Noba Command Center", version=VERSION, lifespan=lifespan, docs_url="/api/docs", redoc_url="/api/redoc")
+app = FastAPI(
+    title="Noba Command Center",
+    version=VERSION,
+    lifespan=lifespan,
+    openapi_url="/api/openapi.json",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+)
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 _cors_origins = os.environ.get("NOBA_CORS_ORIGINS", "").split(",")
@@ -197,7 +204,7 @@ app.add_middleware(
 
 
 # ── Security headers middleware ───────────────────────────────────────────────
-_DOCS_PATHS = ("/api/docs", "/api/redoc", "/openapi.json")
+_DOCS_PATHS = ("/api/docs", "/api/redoc", "/api/openapi.json")
 
 
 @app.middleware("http")
