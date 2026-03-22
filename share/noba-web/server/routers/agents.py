@@ -395,6 +395,9 @@ async def agent_terminal_ws(hostname: str, ws: WebSocket):
 
             # PTY messages — forward directly to agent WS
             if msg_type in ("pty_open", "pty_input", "pty_resize", "pty_close"):
+                # Inject server-verified role into pty_open (agent trusts this)
+                if msg_type == "pty_open":
+                    data["role"] = role
                 with _agent_ws_lock:
                     agent_ws = _agent_websockets.get(hostname)
                 if agent_ws:

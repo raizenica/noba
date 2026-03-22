@@ -32,7 +32,7 @@ import urllib.parse
 import urllib.request
 
 # ── Configuration ────────────────────────────────────────────────────────────
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 DEFAULT_INTERVAL = 30
 DEFAULT_CONFIG = (
     os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"), "noba-agent", "agent.yaml")
@@ -2799,19 +2799,42 @@ _pty_sessions: dict[str, dict] = {}  # session_id -> {proc, master_fd, reader_th
 _pty_lock = threading.Lock()
 
 
-def _pty_open(session_id: str, ws_send, cols: int = 80, rows: int = 24) -> dict:
-    """Open a PTY shell session."""
+def _pty_find_restricted_user() -> str | None:
+    """Find a non-root user to drop to for operator sessions (Linux)."""
+    import pwd
+    for name in ("noba-agent", "noba", "nobody"):
+        try:
+            pwd.getpwnam(name)
+            return name
+        except KeyError:
+            continue
+    return None
+
+
+def _pty_open(session_id: str, ws_send, cols: int = 80, rows: int = 24,
+              role: str = "admin") -> dict:
+    """Open a PTY shell session. Operators get a restricted shell."""
     with _pty_lock:
         if session_id in _pty_sessions:
             return {"type": "pty_error", "session": session_id, "error": "Session already exists"}
 
+    is_restricted = role != "admin"
+
     if _PLATFORM == "windows":
-        # Windows: use subprocess with CREATE_NEW_PROCESS_GROUP
-        # ConPTY is handled transparently by Python 3.12+ on Windows
-        shell = os.environ.get("COMSPEC", "powershell.exe")
+        # Windows: PowerShell with Constrained Language Mode for operators
+        shell_cmd = ["powershell.exe", "-NoProfile"]
+        if is_restricted:
+            # Constrained Language Mode blocks .NET, COM, unsafe operations
+            shell_cmd = [
+                "powershell.exe", "-NoProfile", "-Command",
+                "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'; "
+                "Write-Host '[ Restricted session — ConstrainedLanguage mode ]' -ForegroundColor Yellow; "
+                "Set-Location $env:USERPROFILE; "
+                "powershell.exe -NoProfile",
+            ]
         try:
             proc = subprocess.Popen(
-                [shell],
+                shell_cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -2857,15 +2880,28 @@ def _pty_open(session_id: str, ws_send, cols: int = 80, rows: int = 24) -> dict:
         winsize = struct.pack("HHHH", rows, cols, 0, 0)
         fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
 
-        shell = os.environ.get("SHELL", "/bin/bash")
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
         env["COLUMNS"] = str(cols)
         env["LINES"] = str(rows)
 
+        if is_restricted:
+            restricted_user = _pty_find_restricted_user()
+            if restricted_user:
+                # Drop to restricted user via su
+                shell_cmd = ["su", "-", restricted_user, "-s", "/bin/bash"]
+                env["HOME"] = f"/home/{restricted_user}" if restricted_user != "nobody" else "/tmp"
+            else:
+                # No restricted user available — use bash with rbash
+                shell_cmd = ["/bin/bash", "--restricted"]
+                env["PS1"] = "[restricted]\\u@\\h:\\w\\$ "
+        else:
+            shell = os.environ.get("SHELL", "/bin/bash")
+            shell_cmd = [shell]
+
         try:
             proc = subprocess.Popen(
-                [shell],
+                shell_cmd,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
@@ -3067,7 +3103,8 @@ def _ws_thread(server: str, api_key: str, hostname: str, ctx: dict) -> None:
                     sid = msg.get("session", "")
                     cols = msg.get("cols", 80)
                     rows = msg.get("rows", 24)
-                    result = _pty_open(sid, lambda m: ws.send_json(m), cols, rows)
+                    pty_role = msg.get("role", "operator")
+                    result = _pty_open(sid, lambda m: ws.send_json(m), cols, rows, role=pty_role)
                     ws.send_json(result)
 
                 elif msg.get("type") == "pty_input":
