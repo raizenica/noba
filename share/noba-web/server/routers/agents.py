@@ -323,13 +323,11 @@ async def agent_terminal_ws(hostname: str, ws: WebSocket):
     if not token:
         await ws.close(code=4001, reason="Missing token")
         return
-    from ..deps import _get_auth_sse
-    try:
-        auth = _get_auth_sse(token)
-    except Exception:
+    from ..deps import token_store
+    username, role = token_store.validate(token)
+    if not username:
         await ws.close(code=4001, reason="Invalid token")
         return
-    username, role = auth
     if role not in ("operator", "admin"):
         await ws.close(code=4003, reason="Operator access required")
         return
