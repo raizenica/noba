@@ -201,12 +201,15 @@ class Scheduler:
             try:
                 from .healing.ledger import generate_suggestions
                 from .healing.governor import evaluate_promotions
+                from .healing.auto_discovery import run_auto_discovery
                 generate_suggestions(db)
                 promotion_suggestions = evaluate_promotions(db)
                 for s in promotion_suggestions:
                     db.insert_heal_suggestion(**s)
                 if promotion_suggestions:
                     logger.info("Trust governor: %d promotion suggestion(s)", len(promotion_suggestions))
+                # Auto-discovery: detect co-failure patterns
+                run_auto_discovery(db)
             except Exception as exc:
                 logger.error("Heal suggestion generation failed: %s", exc)
 
