@@ -192,6 +192,12 @@ Returns `None` if the event was absorbed into an existing group. Returns a `Heal
 
 **Purpose:** Given a correlated `HealRequest`, decide what action to take. Owns escalation chains, adaptive scoring, and predictive trigger handling.
 
+### Escalation State
+
+The planner holds in-memory escalation state: `{correlation_key: current_step}` guarded by a lock. This tracks which step is active for a given target. If a new event fires for a target that already has an escalation chain in progress, the new event is ignored (the existing chain handles it). The state entry is cleared when the chain completes (success or exhaustion). This prevents parallel chains for the same target.
+
+A hard cap of `MAX_ESCALATION_DEPTH = 6` is enforced regardless of chain definition length — cheap safety net against malformed YAML.
+
 ### Escalation Chains
 
 A rule can define an ordered list of actions with increasing severity:
@@ -317,7 +323,9 @@ def _on_heal_complete(outcome: HealOutcome) -> None:
             executor.execute(next_plan, on_complete=_on_heal_complete)
 ```
 
-Each escalation step runs in its own daemon thread — no recursive blocking. Bounded by chain length and circuit breaker via the Trust Governor.
+Each escalation step runs in its own daemon thread — no recursive blocking. Bounded by chain length, `MAX_ESCALATION_DEPTH`, and circuit breaker via the Trust Governor.
+
+**Note on daemon threads:** Executor threads are daemon threads, meaning in-progress heal actions are killed on process shutdown without recording their outcome. This is acceptable for a homelab — the action will simply re-trigger on the next alert evaluation after restart. Non-daemon threads with graceful shutdown would add complexity for minimal benefit.
 
 ## Layer 4: Heal Ledger
 
@@ -476,7 +484,7 @@ class TrustPolicy:
 
 ### Demotion Criteria
 
-- Circuit breaker opens: immediate demotion to `notify`, create suggestion.
+- Circuit breaker opens: 3 consecutive verified=False outcomes for the same rule within 1 hour triggers immediate demotion to `notify` and creates a suggestion. The governor owns this logic (replaces the old `AlertState` circuit breaker).
 - Success rate drops below 40% over rolling 30-day window: demote one level.
 - Predictive-sourced heals are always capped one level below the rule's current trust.
 
@@ -531,6 +539,9 @@ def handle_heal_event(event: HealEvent) -> None:
 
     elif plan.trust_level == "approve":
         # Insert into existing approval_queue, record ledger entry with approval_id
+        # Note: automation_id is reused for the heal rule_id. The approval UI
+        # may show this as an "automation" — acceptable since heal rules are
+        # conceptually a type of automation trigger. No UI change needed.
         approval_id = db.insert_approval(
             automation_id=plan.request.events[0].rule_id,
             trigger=f"heal:{plan.request.correlation_key}",
@@ -576,6 +587,10 @@ This ensures the ledger has complete data even for the approve path.
 Replace the inline `_execute_heal` block in `evaluate_alert_rules()` with a call to `handle_heal_event(HealEvent(...))`. Alert evaluation, condition parsing, and notification dispatch stay in `alerts.py`. The `AlertState` heal tracking (retries, circuit breaker) is superseded by the governor and ledger — can be removed once the pipeline is fully wired.
 
 Update `_safe_eval` imports to use `healing.condition_eval.safe_eval`.
+
+### routers/stats.py
+
+Also imports `_safe_eval` from `alerts.py` — update to use `healing.condition_eval.safe_eval`.
 
 ### remediation.py
 
