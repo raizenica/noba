@@ -81,9 +81,9 @@ function connect() {
         else output = JSON.stringify(msg, null, 2)
 
         const isError = msg.status === 'error' || (msg.exit_code !== undefined && msg.exit_code !== 0)
-        // Push as single block — pre-wrap handles newlines
-        const trimmed = output.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
-        if (trimmed) pushLine(trimmed, isError ? 'error' : 'output')
+        // Split into lines, skip empty ones, push as block
+        const cleaned = output.replace(/\r\n/g, '\n').split('\n').filter(l => l.trim()).join('\n')
+        if (cleaned) pushLine(cleaned, isError ? 'error' : 'output')
 
         if (msg.exit_code !== undefined && msg.exit_code !== 0) {
           pushLine(`(exit code: ${msg.exit_code})`, 'system')
