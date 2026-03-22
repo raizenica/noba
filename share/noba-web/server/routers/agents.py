@@ -298,6 +298,10 @@ async def agent_websocket(ws: WebSocket):
                 # Forward stream lines to browser terminal
                 notify_terminal_subscribers(hostname, msg)
 
+            elif msg_type in ("pty_output", "pty_exit", "pty_opened", "pty_error"):
+                # Forward PTY messages to browser terminal subscribers
+                notify_terminal_subscribers(hostname, msg)
+
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
 
@@ -358,7 +362,23 @@ async def agent_terminal_ws(hostname: str, ws: WebSocket):
     try:
         while True:
             data = await ws.receive_json()
-            cmd_type = data.get("type", "exec")
+            msg_type = data.get("type", "exec")
+
+            # PTY messages — forward directly to agent WS
+            if msg_type in ("pty_open", "pty_input", "pty_resize", "pty_close"):
+                with _agent_ws_lock:
+                    agent_ws = _agent_websockets.get(hostname)
+                if agent_ws:
+                    try:
+                        await agent_ws.send_json(data)
+                    except Exception:
+                        await ws.send_json({"type": "pty_error", "error": "Agent WebSocket disconnected"})
+                else:
+                    await ws.send_json({"type": "pty_error", "error": "Agent not connected via WebSocket"})
+                continue
+
+            # Regular command execution
+            cmd_type = msg_type
             params = data.get("params", {})
             if cmd_type == "exec" and "command" in data:
                 params = {"command": data["command"], "timeout": data.get("timeout", 30)}
@@ -389,7 +409,6 @@ async def agent_terminal_ws(hostname: str, ws: WebSocket):
                         _agent_websockets.pop(hostname, None)
 
             if not delivered:
-                # Queue for HTTP pickup
                 cmd = {"id": cmd_id, "type": cmd_type, "params": params,
                        "queued_by": username, "queued_at": int(time.time())}
                 with _agent_cmd_lock:
@@ -406,6 +425,14 @@ async def agent_terminal_ws(hostname: str, ws: WebSocket):
     except Exception as exc:
         _ws_logger.warning("[terminal] Error for %s: %s", hostname, exc)
     finally:
+        # Close any PTY sessions opened through this terminal
+        with _agent_ws_lock:
+            agent_ws = _agent_websockets.get(hostname)
+        if agent_ws:
+            try:
+                await agent_ws.send_json({"type": "pty_close", "session": f"term-{hostname}"})
+            except Exception:
+                pass
         forward_task.cancel()
         with _terminal_sub_lock:
             subs = _terminal_subscribers.get(hostname, [])
