@@ -23,6 +23,25 @@ _agent_cmd_lock = threading.Lock()
 _agent_websockets: dict[str, WebSocket] = {}  # hostname -> active WebSocket
 _agent_ws_lock = threading.Lock()
 
+# Browser terminal WebSocket subscribers: {hostname: [asyncio.Queue, ...]}
+_terminal_subscribers: dict[str, list] = {}
+_terminal_sub_lock = threading.Lock()
+
+
+def notify_terminal_subscribers(hostname: str, msg: dict) -> None:
+    """Push a message to all browser terminal WS subscribers for a hostname."""
+    with _terminal_sub_lock:
+        subs = _terminal_subscribers.get(hostname, [])
+        dead: list = []
+        for q in subs:
+            try:
+                q.put_nowait(msg)
+            except Exception:
+                dead.append(q)
+        for q in dead:
+            subs.remove(q)
+
+
 # ── Live log stream state ─────────────────────────────────────────────────────
 # Buffered stream lines from agents: {stream_id: [line, ...]}
 _agent_stream_lines: dict[str, list[str]] = {}

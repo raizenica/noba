@@ -24,6 +24,8 @@ from ..agent_store import (
     _agent_stream_lines, _agent_stream_lines_lock, _STREAM_LINES_MAX,
     _agent_streams, _agent_streams_lock,
     _agent_websockets, _agent_ws_lock,
+    _terminal_subscribers, _terminal_sub_lock,
+    notify_terminal_subscribers,
     _CHUNK_SIZE, _MAX_TRANSFER_SIZE, _TRANSFER_DIR,
     _transfer_lock, _transfers,
 )
@@ -251,6 +253,8 @@ async def agent_websocket(ws: WebSocket):
                     _agent_cmd_results.setdefault(hostname, []).append(msg)
                     if len(_agent_cmd_results[hostname]) > 50:
                         _agent_cmd_results[hostname] = _agent_cmd_results[hostname][-50:]
+                # Forward to browser terminal subscribers
+                notify_terminal_subscribers(hostname, msg)
                 # Complete command in history DB (same as HTTP report path)
                 cmd_id = msg.get("id", "")
                 if cmd_id:
@@ -291,6 +295,8 @@ async def agent_websocket(ws: WebSocket):
                     buf.append(msg)
                     if len(buf) > 500:
                         _agent_cmd_results[stream_key] = buf[-500:]
+                # Forward stream lines to browser terminal
+                notify_terminal_subscribers(hostname, msg)
 
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
@@ -305,6 +311,108 @@ async def agent_websocket(ws: WebSocket):
                 if _agent_websockets.get(hostname) is ws:
                     del _agent_websockets[hostname]
             _ws_logger.info("[ws] Agent %s disconnected", hostname)
+
+
+@router.websocket("/api/agents/{hostname}/terminal")
+async def agent_terminal_ws(hostname: str, ws: WebSocket):
+    """Browser-facing WebSocket for real-time terminal interaction with an agent."""
+    import asyncio
+
+    # Auth via query param token (WebSocket can't set headers)
+    token = ws.query_params.get("token", "")
+    if not token:
+        await ws.close(code=4001, reason="Missing token")
+        return
+    from ..deps import _get_auth_sse
+    try:
+        auth = _get_auth_sse(token)
+    except Exception:
+        await ws.close(code=4001, reason="Invalid token")
+        return
+    username, role = auth
+    if role not in ("operator", "admin"):
+        await ws.close(code=4003, reason="Operator access required")
+        return
+
+    await ws.accept()
+
+    # Subscribe to agent results
+    q: asyncio.Queue = asyncio.Queue(maxsize=100)
+    with _terminal_sub_lock:
+        _terminal_subscribers.setdefault(hostname, []).append(q)
+
+    async def forward_results():
+        """Forward agent results to browser."""
+        try:
+            while True:
+                msg = await asyncio.get_event_loop().run_in_executor(None, q.get)
+                try:
+                    await ws.send_json(msg)
+                except Exception:
+                    break
+        except Exception:
+            pass
+
+    forward_task = asyncio.create_task(forward_results())
+
+    try:
+        while True:
+            data = await ws.receive_json()
+            cmd_type = data.get("type", "exec")
+            params = data.get("params", {})
+            if cmd_type == "exec" and "command" in data:
+                params = {"command": data["command"], "timeout": data.get("timeout", 30)}
+
+            # Validate
+            risk = RISK_LEVELS.get(cmd_type)
+            if not risk:
+                await ws.send_json({"type": "error", "error": f"Unknown command: {cmd_type}"})
+                continue
+            if not check_role_permission(role, risk):
+                await ws.send_json({"type": "error", "error": f"Insufficient permissions for {cmd_type}"})
+                continue
+
+            cmd_id = secrets.token_hex(8)
+            # Try agent WebSocket first
+            delivered = False
+            with _agent_ws_lock:
+                agent_ws = _agent_websockets.get(hostname)
+            if agent_ws:
+                try:
+                    await agent_ws.send_json({
+                        "type": "command", "id": cmd_id,
+                        "cmd": cmd_type, "params": params,
+                    })
+                    delivered = True
+                except Exception:
+                    with _agent_ws_lock:
+                        _agent_websockets.pop(hostname, None)
+
+            if not delivered:
+                # Queue for HTTP pickup
+                cmd = {"id": cmd_id, "type": cmd_type, "params": params,
+                       "queued_by": username, "queued_at": int(time.time())}
+                with _agent_cmd_lock:
+                    _agent_commands.setdefault(hostname, []).append(cmd)
+
+            db.record_command(cmd_id, hostname, cmd_type, params, username)
+            await ws.send_json({
+                "type": "ack", "id": cmd_id,
+                "delivery": "websocket" if delivered else "queued",
+            })
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        _ws_logger.warning("[terminal] Error for %s: %s", hostname, exc)
+    finally:
+        forward_task.cancel()
+        with _terminal_sub_lock:
+            subs = _terminal_subscribers.get(hostname, [])
+            if q in subs:
+                subs.remove(q)
+            if not subs:
+                _terminal_subscribers.pop(hostname, None)
 
 
 @router.get("/api/agents/{hostname}/stream/{cmd_id}")
