@@ -29,6 +29,27 @@ def _get_fresh_metrics() -> dict:
         return {}
 
 
+def _get_capability_manifest(hostname: str):
+    """Fetch and parse capability manifest for a host from DB.
+
+    Returns CapabilityManifest or None if not found.
+    """
+    import json
+
+    try:
+        from ..db import db as _db
+        from .capabilities import CapabilityManifest
+
+        row = _db.get_capability_manifest(hostname)
+        if row is None:
+            return None
+        parsed = json.loads(row["manifest"])
+        return CapabilityManifest.from_dict(parsed)
+    except Exception:
+        logger.debug("Failed to fetch capability manifest for %s", hostname)
+        return None
+
+
 class HealExecutor:
     """Execute heal actions asynchronously with condition-based verification."""
 
@@ -51,12 +72,37 @@ class HealExecutor:
         self, plan: HealPlan,
         on_complete: Callable[[HealOutcome], None],
     ) -> None:
-        from ..remediation import execute_action
+        from ..remediation import execute_action, FALLBACK_CHAINS
+        from .preflight import run_preflight
 
         start = time.time()
         metrics_before = {}
         if plan.request.events:
             metrics_before = plan.request.events[0].metrics
+
+        # Pre-flight check (before execution)
+        fallback_handlers = FALLBACK_CHAINS.get(plan.action_type)
+        if fallback_handlers:
+            manifest = _get_capability_manifest(plan.request.primary_target)
+            preflight_result = run_preflight(
+                action_type=plan.action_type,
+                handlers=fallback_handlers,
+                manifest=manifest,
+                target=plan.request.primary_target,
+            )
+            if not preflight_result.passed:
+                outcome = HealOutcome(
+                    plan=plan,
+                    action_success=False,
+                    verified=False,
+                    verification_detail=f"preflight_failed: {preflight_result.failure_reason}",
+                    duration_s=0,
+                    metrics_before=metrics_before,
+                )
+                on_complete(outcome)
+                return
+        # If no fallback chain exists (e.g., webhook, automation), skip preflight
+        # and proceed with normal execution
 
         try:
             result = execute_action(
