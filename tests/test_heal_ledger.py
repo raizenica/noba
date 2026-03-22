@@ -128,9 +128,9 @@ class TestTrustState:
     def test_update_promotion(self):
         db = _db()
         db.upsert_trust_state("rule-y", "notify", "execute")
-        db.upsert_trust_state("rule-y", "suggest", "execute")
+        db.upsert_trust_state("rule-y", "approve", "execute")
         state = db.get_trust_state("rule-y")
-        assert state["current_level"] == "suggest"
+        assert state["current_level"] == "approve"
         assert state["promotion_count"] == 1
         assert state["demotion_count"] == 0
         assert state["promoted_at"] is not None
