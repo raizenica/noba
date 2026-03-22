@@ -312,13 +312,13 @@ const predChartConfig = computed(() => {
     if (!points.length) return
     if (!labels) labels = points.map(p => new Date(p.time * 1000))
     const color = colors[i % colors.length]
-    const alpha = 'rgba(0,200,255,0.07)'
+    const alpha = 'rgba(0,200,255,0.18)'
     datasets.push(
       {
         label: key.replace(/_/g, ' '),
         data: points.map(p => p.predicted),
         borderColor: color,
-        borderWidth: 2,
+        borderWidth: 3,
         pointRadius: 0,
         fill: false,
       },
@@ -326,7 +326,7 @@ const predChartConfig = computed(() => {
         label: `${key} 68% band`,
         data: points.map(p => p.upper_68),
         borderColor: 'transparent',
-        backgroundColor: alpha,
+        backgroundColor: 'rgba(0,200,255,0.18)',
         pointRadius: 0,
         fill: '+1',
       },
@@ -341,8 +341,8 @@ const predChartConfig = computed(() => {
         label: `${key} 95% upper`,
         data: points.map(p => p.upper_95),
         borderDash: [5, 5],
-        borderColor: 'rgba(0,200,255,0.25)',
-        borderWidth: 1,
+        borderColor: 'rgba(0,200,255,0.5)',
+        borderWidth: 1.5,
         pointRadius: 0,
         fill: false,
       },
@@ -350,8 +350,8 @@ const predChartConfig = computed(() => {
         label: `${key} 95% lower`,
         data: points.map(p => p.lower_95),
         borderDash: [5, 5],
-        borderColor: 'rgba(0,200,255,0.25)',
-        borderWidth: 1,
+        borderColor: 'rgba(0,200,255,0.5)',
+        borderWidth: 1.5,
         pointRadius: 0,
         fill: false,
       },
@@ -377,7 +377,7 @@ const predChartConfig = computed(() => {
           min: 0,
           max: 100,
           ticks: { color: 'rgba(200,223,240,.6)', callback: v => v + '%' },
-          grid: { color: 'rgba(255,255,255,.06)' },
+          grid: { color: 'rgba(255,255,255,.12)' },
         },
       },
       plugins: {
