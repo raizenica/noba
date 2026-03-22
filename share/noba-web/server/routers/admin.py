@@ -794,18 +794,53 @@ def api_plugins_available(auth=Depends(_require_admin)):
     return plugin_manager.get_available(catalog_url)
 
 
+@router.get("/api/plugins/bundled")
+def api_plugins_bundled(auth=Depends(_require_admin)):
+    """List bundled catalog plugins shipped with NOBA."""
+    return plugin_manager.get_bundled_catalog()
+
+
 @router.post("/api/plugins/install")
 async def api_plugins_install(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
-    url = body.get("url", "")
+    # Support bundled installs (no url, just filename)
     filename = body.get("filename", "")
-    if not url or not filename:
-        raise HTTPException(400, "URL and filename required")
-    ok = plugin_manager.install_plugin(url, filename)
+    url = body.get("url", "")
+    bundled = body.get("bundled", False)
+    if not filename:
+        raise HTTPException(400, "Filename required")
+    if bundled:
+        ok = plugin_manager.install_bundled(filename)
+    else:
+        if not url:
+            raise HTTPException(400, "URL required for remote install")
+        ok = plugin_manager.install_plugin(url, filename)
     if not ok:
         raise HTTPException(400, "Install failed")
     db.audit_log("plugin_install", username, f"Installed {filename}", _client_ip(request))
+    return {"status": "ok"}
+
+
+# ── /api/plugins/{id}/config ─────────────────────────────────────────────────
+@router.get("/api/plugins/{plugin_id}/config")
+def api_plugin_config_get(plugin_id: str, auth=Depends(_require_admin)):
+    """Return current config and schema for a plugin."""
+    config, schema = plugin_manager.get_plugin_config(plugin_id)
+    if not schema:
+        raise HTTPException(404, "Plugin has no configurable settings")
+    return {"config": config, "schema": schema}
+
+
+@router.post("/api/plugins/{plugin_id}/config")
+async def api_plugin_config_post(plugin_id: str, request: Request, auth=Depends(_require_admin)):
+    """Validate and save plugin config."""
+    username, _ = auth
+    body = await _read_body(request)
+    errors = plugin_manager.set_plugin_config(plugin_id, body)
+    if errors:
+        raise HTTPException(400, "; ".join(errors))
+    db.audit_log("plugin_config", username, f"Updated config for plugin {plugin_id}", _client_ip(request))
     return {"status": "ok"}
 
 

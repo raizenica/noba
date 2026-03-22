@@ -41,9 +41,10 @@ class PluginContext:
     to work unchanged — the manager calls them with the raw objects.
     """
 
-    def __init__(self, app, db) -> None:
+    def __init__(self, app, db, plugin_id: str = "") -> None:
         self._app = app
         self._db = db
+        self._plugin_id = plugin_id
 
     def add_route(self, path: str, endpoint, methods=None, **kwargs) -> None:
         """Register a new API route."""
@@ -58,6 +59,10 @@ class PluginContext:
             cur = conn.execute(sql, params or ())
             return [dict(r) for r in cur.fetchall()]
 
+    def get_config(self) -> dict:
+        """Return the plugin's current config with defaults filled in."""
+        return _read_plugin_config(self._plugin_id) if self._plugin_id else {}
+
     def log(self, message: str, level: str = "info") -> None:
         """Log a message under the plugin namespace."""
         logging.getLogger("noba.plugin").log(
@@ -69,11 +74,17 @@ PLUGIN_DIR = Path(os.environ.get(
     os.path.expanduser("~/.config/noba/plugins"),
 ))
 
+# Bundled catalog plugins shipped with NOBA
+BUNDLED_PLUGIN_DIR = Path(__file__).resolve().parent.parent / "plugins" / "catalog"
+
 # Legacy directory -- checked as fallback
 _LEGACY_PLUGIN_DIR = Path(os.path.expanduser("~/.config/noba-web/plugins"))
 
 # File that tracks which plugins are disabled
 _DISABLED_FILE = PLUGIN_DIR / ".disabled.json"
+
+# Directory for per-plugin config files
+_CONFIG_DIR = PLUGIN_DIR / "config"
 
 
 def _read_disabled() -> set[str]:
@@ -100,6 +111,73 @@ def _write_disabled(disabled: set[str]) -> None:
         logger.error("Failed to write disabled plugins file: %s", e)
 
 
+def _read_plugin_config(plugin_id: str) -> dict:
+    """Read saved config for a plugin from disk."""
+    path = _CONFIG_DIR / f"{plugin_id}.json"
+    try:
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _write_plugin_config(plugin_id: str, config: dict) -> None:
+    """Write config for a plugin to disk."""
+    try:
+        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        path = _CONFIG_DIR / f"{plugin_id}.json"
+        path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.error("Failed to write config for plugin %s: %s", plugin_id, e)
+
+
+def _validate_config(schema: dict, values: dict) -> tuple[dict, list[str]]:
+    """Validate config values against a schema.
+
+    Returns (validated_config, errors).  Fills in defaults for missing keys.
+    """
+    result = {}
+    errors = []
+    for key, field in schema.items():
+        ftype = field.get("type", "string")
+        default = field.get("default", "" if ftype == "string" else
+                            0 if ftype == "number" else
+                            False if ftype == "boolean" else [])
+        value = values.get(key)
+
+        # Use default if not provided
+        if value is None:
+            if field.get("required") and default in ("", 0, False, []):
+                errors.append(f"{field.get('label', key)} is required")
+            result[key] = default
+            continue
+
+        # Type coercion + validation
+        if ftype == "string":
+            result[key] = str(value)
+        elif ftype == "number":
+            try:
+                result[key] = float(value)
+                if "min" in field and result[key] < field["min"]:
+                    errors.append(f"{field.get('label', key)} must be >= {field['min']}")
+                if "max" in field and result[key] > field["max"]:
+                    errors.append(f"{field.get('label', key)} must be <= {field['max']}")
+            except (ValueError, TypeError):
+                errors.append(f"{field.get('label', key)} must be a number")
+        elif ftype == "boolean":
+            result[key] = bool(value)
+        elif ftype == "list":
+            if isinstance(value, list):
+                result[key] = [str(v) for v in value]
+            else:
+                errors.append(f"{field.get('label', key)} must be a list")
+        else:
+            result[key] = value
+
+    return result, errors
+
+
 class Plugin:
     """Wrapper around a loaded plugin module."""
 
@@ -112,6 +190,7 @@ class Plugin:
         self.icon: str = getattr(mod, "PLUGIN_ICON", "fa-puzzle-piece")
         self.description: str = getattr(mod, "PLUGIN_DESCRIPTION", "")
         self.interval: int = getattr(mod, "PLUGIN_INTERVAL", 10)
+        self.config_schema: dict = getattr(mod, "PLUGIN_CONFIG_SCHEMA", {})
         self.enabled: bool = enabled
         self.data: dict = {}
         self.html: str = ""
@@ -140,6 +219,20 @@ class Plugin:
             "error": self.error,
         }
 
+    def get_config(self) -> dict:
+        """Return current config, with defaults filled in from schema."""
+        saved = _read_plugin_config(self.id)
+        if not self.config_schema:
+            return saved
+        result = {}
+        for key, field in self.config_schema.items():
+            ftype = field.get("type", "string")
+            default = field.get("default", "" if ftype == "string" else
+                                0 if ftype == "number" else
+                                False if ftype == "boolean" else [])
+            result[key] = saved.get(key, default)
+        return result
+
     def to_managed_dict(self) -> dict:
         """Extended dict for the plugin management UI."""
         return {
@@ -151,6 +244,8 @@ class Plugin:
             "enabled": self.enabled,
             "error": self.error,
             "path": self.path,
+            "has_config": bool(self.config_schema),
+            "config_schema": self.config_schema if self.config_schema else None,
         }
 
 
@@ -221,7 +316,7 @@ class PluginManager:
                     param_count = len(sig.parameters)
                     if param_count == 1:
                         # New-style: register(ctx)
-                        mod.register(PluginContext(self._app, self._db))
+                        mod.register(PluginContext(self._app, self._db, plugin_id))
                     else:
                         # Legacy: register(app, db)
                         mod.register(self._app, self._db)
@@ -340,6 +435,75 @@ class PluginManager:
         self.discover(app=self._app, db=self._db)
         self.start()
         logger.info("Plugins reloaded")
+
+    def get_plugin_config(self, plugin_id: str) -> tuple[dict, dict]:
+        """Return (config_values, config_schema) for a plugin."""
+        with self._lock:
+            for p in self._plugins:
+                if p.id == plugin_id:
+                    return p.get_config(), p.config_schema
+        return {}, {}
+
+    def set_plugin_config(self, plugin_id: str, values: dict) -> list[str]:
+        """Validate and save config for a plugin. Returns list of errors."""
+        with self._lock:
+            for p in self._plugins:
+                if p.id == plugin_id:
+                    if not p.config_schema:
+                        return ["Plugin has no configurable settings"]
+                    validated, errors = _validate_config(p.config_schema, values)
+                    if errors:
+                        return errors
+                    _write_plugin_config(plugin_id, validated)
+                    return []
+        return ["Plugin not found"]
+
+    def get_bundled_catalog(self) -> list[dict]:
+        """Return metadata for bundled catalog plugins."""
+        if not BUNDLED_PLUGIN_DIR.is_dir():
+            return []
+        catalog = []
+        for f in sorted(BUNDLED_PLUGIN_DIR.glob("*.py")):
+            if f.name.startswith("_"):
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f"noba_catalog_{f.stem}", str(f),
+                )
+                if not spec or not spec.loader:
+                    continue
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                catalog.append({
+                    "id": getattr(mod, "PLUGIN_ID", f.stem),
+                    "name": getattr(mod, "PLUGIN_NAME", f.stem),
+                    "version": getattr(mod, "PLUGIN_VERSION", "0.0.0"),
+                    "icon": getattr(mod, "PLUGIN_ICON", "fa-puzzle-piece"),
+                    "description": getattr(mod, "PLUGIN_DESCRIPTION", ""),
+                    "filename": f.name,
+                    "bundled": True,
+                })
+            except Exception as e:
+                logger.error("Failed to read bundled plugin %s: %s", f.name, e)
+        return catalog
+
+    def install_bundled(self, filename: str) -> bool:
+        """Copy a bundled plugin to the user's plugin directory."""
+        import re as _re  # noqa: PLC0415
+        if not _re.match(r'^[a-zA-Z0-9_-]+\.py$', filename):
+            return False
+        src = BUNDLED_PLUGIN_DIR / filename
+        if not src.is_file():
+            return False
+        try:
+            PLUGIN_DIR.mkdir(parents=True, exist_ok=True)
+            dest = PLUGIN_DIR / filename
+            dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            logger.info("Installed bundled plugin: %s", filename)
+            return True
+        except Exception as e:
+            logger.error("Failed to install bundled plugin %s: %s", filename, e)
+            return False
 
     def get_available(self, catalog_url: str = "") -> list[dict]:
         """Fetch available plugins from a remote catalog."""

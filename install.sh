@@ -607,6 +607,20 @@ if [[ -d "$_static_src" ]]; then
     [[ "$DRY_RUN" != true ]] && say_ok "Web static assets ($_static_count files total)"
 fi
 
+# Deploy bundled plugin catalog
+_plugins_src="$SCRIPT_DIR/share/noba-web/plugins/catalog"
+_plugins_dst="$LIBEXEC_DIR/web/plugins/catalog"
+if [[ -d "$_plugins_src" ]]; then
+    if [[ "$DRY_RUN" == true ]]; then
+        dry "install $_plugins_src/ → $_plugins_dst/"
+    else
+        mkdir -p "$_plugins_dst"
+        cp -r "$_plugins_src/"*.py "$_plugins_dst/" 2>/dev/null || true
+        _plug_count=$(find "$_plugins_dst" -name '*.py' -type f | wc -l)
+        say_ok "Bundled plugin catalog ($_plug_count plugins)"
+    fi
+fi
+
 # Deploy agent script (served via /api/agent/update for remote agent self-update)
 _agent_src="$SCRIPT_DIR/share/noba-agent/agent.py"
 _agent_dst="$LIBEXEC_DIR/noba-agent/agent.py"

@@ -126,7 +126,7 @@ watch(activeTab, (tab) => {
 </script>
 
 <template>
-  <AppModal :show="show" :title="hostname" width="700px" @close="emit('close')">
+  <AppModal :show="show" :title="hostname" width="860px" @close="emit('close')">
     <div v-if="!agent && detailLoading" style="text-align:center;padding:2rem;color:var(--text-muted)">
       <i class="fas fa-spinner fa-spin"></i> Loading...
     </div>
@@ -283,7 +283,7 @@ watch(activeTab, (tab) => {
             <i class="fas fa-spinner fa-spin"></i>
           </span>
         </div>
-        <div v-if="historyChartConfig" style="height:200px;position:relative">
+        <div v-if="historyChartConfig" style="height:280px;position:relative">
           <ChartWrapper :config="historyChartConfig" />
         </div>
         <div v-else-if="!historyLoading" class="empty-msg">No history data for last 24h.</div>
