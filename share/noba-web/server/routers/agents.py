@@ -29,7 +29,7 @@ from ..agent_store import (
 )
 from ..deps import (
     _client_ip, _get_auth, _read_body,
-    _require_admin, _safe_int, db,
+    _require_admin, _require_operator, _safe_int, db,
 )
 from ..yaml_config import read_yaml_settings
 
@@ -280,7 +280,7 @@ async def agent_websocket(ws: WebSocket):
 
 
 @router.get("/api/agents/{hostname}/stream/{cmd_id}")
-def api_agent_stream(hostname: str, cmd_id: str, request: Request, auth=Depends(_get_auth)):
+def api_agent_stream(hostname: str, cmd_id: str, request: Request, auth=Depends(_require_operator)):
     """Poll for new log stream lines (or WebSocket stream output).
 
     Supports cursor-based polling via ``?after=N`` query parameter.
@@ -354,7 +354,7 @@ def api_agent_detail(hostname: str, auth=Depends(_get_auth)):
 
 
 @router.post("/api/agents/bulk-command")
-async def api_bulk_command(request: Request, auth=Depends(_get_auth)):
+async def api_bulk_command(request: Request, auth=Depends(_require_operator)):
     """Send a command to multiple agents at once."""
     username, role = auth
     ip = _client_ip(request)
@@ -390,7 +390,7 @@ async def api_bulk_command(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/agents/{hostname}/command")
-async def api_agent_command(hostname: str, request: Request, auth=Depends(_get_auth)):
+async def api_agent_command(hostname: str, request: Request, auth=Depends(_require_operator)):
     """Queue a command for an agent. Risk-tiered authorization."""
     username, role = auth
     ip = _client_ip(request)
@@ -492,8 +492,8 @@ def api_agent_history(hostname: str, request: Request, auth=Depends(_get_auth)):
 
 # ── Network traffic analysis endpoint ─────────────────────────────────────────
 
-@router.get("/api/agents/{hostname}/network-stats")
-async def api_agent_network_stats(hostname: str, request: Request, auth=Depends(_get_auth)):
+@router.post("/api/agents/{hostname}/network-stats")
+async def api_agent_network_stats(hostname: str, request: Request, auth=Depends(_require_operator)):
     """Trigger network_stats command on an agent and return the results.
 
     Sends the command via WebSocket if the agent is connected, otherwise

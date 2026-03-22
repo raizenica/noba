@@ -341,7 +341,7 @@ def api_processes_current(auth=Depends(_get_auth)):
 # ── IaC Export endpoints ─────────────────────────────────────────────────────
 
 @router.get("/api/export/ansible")
-async def api_export_ansible(request: Request, auth=Depends(_require_operator)):
+async def api_export_ansible(request: Request, auth=Depends(_require_admin)):
     """Generate an Ansible playbook from live agent data."""
     from ..iac_export import generate_ansible
 
@@ -353,7 +353,7 @@ async def api_export_ansible(request: Request, auth=Depends(_require_operator)):
 
 
 @router.get("/api/export/docker-compose")
-async def api_export_docker_compose(request: Request, auth=Depends(_require_operator)):
+async def api_export_docker_compose(request: Request, auth=Depends(_require_admin)):
     """Generate a docker-compose.yml from live agent container data."""
     from ..iac_export import generate_docker_compose
 
@@ -367,7 +367,7 @@ async def api_export_docker_compose(request: Request, auth=Depends(_require_oper
 
 
 @router.get("/api/export/shell")
-async def api_export_shell(request: Request, auth=Depends(_require_operator)):
+async def api_export_shell(request: Request, auth=Depends(_require_admin)):
     """Generate a bash setup script from live agent data."""
     from ..iac_export import generate_shell_script
 

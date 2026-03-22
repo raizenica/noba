@@ -332,9 +332,15 @@ def _pmx_headers(cfg: dict) -> dict:
     return {"Authorization": f"PVEAPIToken={user_full}!{tname}={tval}", "Accept": "application/json"}
 
 
+def _validate_pmx_node(node: str) -> None:
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', node):
+        raise HTTPException(400, "Invalid Proxmox node name")
+
+
 @router.get("/api/proxmox/nodes/{node}/vms")
 def api_pmx_node_vms(node: str, auth=Depends(_get_auth)):
     """List VMs and containers on a Proxmox node."""
+    _validate_pmx_node(node)
     cfg = read_yaml_settings()
     url = cfg.get("proxmoxUrl", "")
     if not url:
@@ -365,11 +371,14 @@ def api_pmx_node_vms(node: str, auth=Depends(_get_auth)):
 @router.get("/api/proxmox/nodes/{node}/vms/{vmid}/snapshots")
 def api_pmx_snapshots(node: str, vmid: int, request: Request, auth=Depends(_get_auth)):
     """List VM snapshots."""
+    _validate_pmx_node(node)
     cfg = read_yaml_settings()
     url = cfg.get("proxmoxUrl", "")
     if not url:
         raise HTTPException(400, "Proxmox not configured")
     vtype = request.query_params.get("type", "qemu")
+    if vtype not in ("qemu", "lxc"):
+        raise HTTPException(400, "type must be 'qemu' or 'lxc'")
     hdrs = _pmx_headers(cfg)
     import httpx as _httpx
     try:
@@ -386,11 +395,14 @@ def api_pmx_snapshots(node: str, vmid: int, request: Request, auth=Depends(_get_
 @router.post("/api/proxmox/nodes/{node}/vms/{vmid}/snapshot")
 async def api_pmx_create_snapshot(node: str, vmid: int, request: Request, auth=Depends(_require_admin)):
     """Create a VM snapshot."""
+    _validate_pmx_node(node)
     username, _ = auth
     body = await _read_body(request)
     snapname = body.get("name", "").strip()
     description = body.get("description", "")
     vtype = body.get("type", "qemu")
+    if vtype not in ("qemu", "lxc"):
+        raise HTTPException(400, "type must be 'qemu' or 'lxc'")
     if not snapname or not re.match(r'^[a-zA-Z0-9_-]+$', snapname):
         raise HTTPException(400, "Invalid snapshot name")
     cfg = read_yaml_settings()

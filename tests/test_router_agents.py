@@ -750,9 +750,9 @@ class TestAgentStream:
         assert "lines" in data
         assert "cursor" in data
 
-    def test_viewer_can_access(self, client, viewer_headers):
+    def test_viewer_cannot_access(self, client, viewer_headers):
         resp = client.get("/api/agents/h/stream/cmd1", headers=viewer_headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 403
 
 
 # ===========================================================================

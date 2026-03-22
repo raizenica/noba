@@ -190,7 +190,7 @@ async function fetchNetworkStats() {
   trafficLoading.value = true
   trafficData.value    = null
   try {
-    const data = await get(`/api/agents/${encodeURIComponent(trafficAgent.value)}/network-stats`)
+    const data = await post(`/api/agents/${encodeURIComponent(trafficAgent.value)}/network-stats`)
     trafficData.value = data
   } catch (e) {
     notif.addToast('Failed: ' + e.message, 'error')

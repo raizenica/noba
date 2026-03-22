@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import httpx
 
-from .base import _client
 
 
 # ── qBittorrent ───────────────────────────────────────────────────────────
@@ -13,21 +12,16 @@ def get_qbit(url: str, user: str, password: str) -> dict | None:
     base   = url.rstrip("/")
     result = {"dl_speed": 0, "up_speed": 0, "active_torrents": 0, "status": "offline"}
     try:
-        # Use a separate client to avoid cookie jar contamination on the shared _client
+        # Use a dedicated client for both login and data to avoid cookie leakage
         with httpx.Client(timeout=4) as qclient:
             r1 = qclient.post(
                 f"{base}/api/v2/auth/login",
                 data={"username": user, "password": password},
             )
-        cookie = r1.headers.get("set-cookie")
-        if not cookie:
-            return result
-        r2 = _client.get(
-            f"{base}/api/v2/sync/maindata",
-            headers={"Cookie": cookie},
-            timeout=4,
-        )
-        d = r2.json()
+            if not r1.headers.get("set-cookie"):
+                return result
+            r2 = qclient.get(f"{base}/api/v2/sync/maindata")
+            d = r2.json()
         state = d.get("server_state", {})
         result.update({
             "dl_speed":       state.get("dl_info_speed", 0),

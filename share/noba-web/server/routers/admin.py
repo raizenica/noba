@@ -15,7 +15,7 @@ from ..alerts import dispatch_notifications
 from ..config import ACTION_LOG, HISTORY_METRICS, LOG_DIR, NOBA_YAML
 from ..deps import (
     _client_ip, _get_auth, _int_param, _read_body, _require_admin,
-    _run_cmd, _safe_int, db,
+    _require_operator, _run_cmd, _safe_int, db,
 )
 from ..metrics import _read_file, strip_ansi
 from ..plugins import plugin_manager
@@ -31,7 +31,11 @@ router = APIRouter()
 # ── /api/settings ─────────────────────────────────────────────────────────────
 @router.get("/api/settings")
 def api_settings_get(auth=Depends(_get_auth)):
-    return read_yaml_settings()
+    _, role = auth
+    settings = read_yaml_settings()
+    if role != "admin":
+        return {k: ("***" if is_secret_key(k) else v) for k, v in settings.items()}
+    return settings
 
 
 @router.post("/api/settings")
@@ -61,7 +65,7 @@ async def api_settings_post(request: Request, auth=Depends(_require_admin)):
 
 
 # ── /api/notifications/test ───────────────────────────────────────────────────
-@router.get("/api/notifications/test")
+@router.post("/api/notifications/test")
 def api_notif_test(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     cfg = read_yaml_settings()
@@ -641,7 +645,7 @@ def api_backup_health(auth=Depends(_get_auth)):
 
 # ── /api/log-viewer ───────────────────────────────────────────────────────────
 @router.get("/api/log-viewer")
-def api_log_viewer(request: Request, auth=Depends(_get_auth)):
+def api_log_viewer(request: Request, auth=Depends(_require_operator)):
     log_type = request.query_params.get("type", "syserr")
     if log_type == "syserr":
         text = _run_cmd(["journalctl", "-p", "3", "-n", "25", "--no-pager"], timeout=4)
@@ -658,7 +662,7 @@ def api_log_viewer(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/action-log ───────────────────────────────────────────────────────────
 @router.get("/api/action-log")
-def api_action_log(auth=Depends(_get_auth)):
+def api_action_log(auth=Depends(_require_operator)):
     return PlainTextResponse(strip_ansi(_read_file(ACTION_LOG, "Waiting for output\u2026")))
 
 

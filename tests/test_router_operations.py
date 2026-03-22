@@ -707,7 +707,7 @@ class TestProcessesCurrent:
 # ===========================================================================
 
 class TestExportAnsible:
-    """GET /api/export/ansible — operator or higher."""
+    """GET /api/export/ansible — admin only."""
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/ansible")
@@ -717,11 +717,9 @@ class TestExportAnsible:
         resp = client.get("/api/export/ansible", headers=viewer_headers)
         assert resp.status_code == 403
 
-    def test_operator_can_access(self, client, operator_headers):
-        with patch("server.iac_export.generate_ansible",
-                   return_value="---\n- hosts: all\n"):
-            resp = client.get("/api/export/ansible", headers=operator_headers)
-        assert resp.status_code == 200
+    def test_operator_returns_403(self, client, operator_headers):
+        resp = client.get("/api/export/ansible", headers=operator_headers)
+        assert resp.status_code == 403
 
     def test_admin_can_access(self, client, admin_headers):
         with patch("server.iac_export.generate_ansible",
@@ -729,17 +727,17 @@ class TestExportAnsible:
             resp = client.get("/api/export/ansible", headers=admin_headers)
         assert resp.status_code == 200
 
-    def test_returns_yaml_content_type(self, client, operator_headers):
+    def test_returns_yaml_content_type(self, client, admin_headers):
         with patch("server.iac_export.generate_ansible",
                    return_value="---\n"):
-            resp = client.get("/api/export/ansible", headers=operator_headers)
+            resp = client.get("/api/export/ansible", headers=admin_headers)
         assert resp.status_code == 200
         assert "yaml" in resp.headers.get("content-type", "")
 
-    def test_hostname_param_passed_through(self, client, operator_headers):
+    def test_hostname_param_passed_through(self, client, admin_headers):
         with patch("server.iac_export.generate_ansible",
                    return_value="---\n") as mock_gen:
-            resp = client.get("/api/export/ansible?hostname=myhost", headers=operator_headers)
+            resp = client.get("/api/export/ansible?hostname=myhost", headers=admin_headers)
         assert resp.status_code == 200
         call_kwargs = mock_gen.call_args
         # hostname should be passed as 5th positional arg or keyword
@@ -751,7 +749,7 @@ class TestExportAnsible:
 # ===========================================================================
 
 class TestExportDockerCompose:
-    """GET /api/export/docker-compose — operator or higher, hostname required."""
+    """GET /api/export/docker-compose — admin only, hostname required."""
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/docker-compose?hostname=h1")
@@ -761,16 +759,13 @@ class TestExportDockerCompose:
         resp = client.get("/api/export/docker-compose?hostname=h1", headers=viewer_headers)
         assert resp.status_code == 403
 
-    def test_missing_hostname_returns_400(self, client, operator_headers):
-        resp = client.get("/api/export/docker-compose", headers=operator_headers)
-        assert resp.status_code == 400
+    def test_operator_returns_403(self, client, operator_headers):
+        resp = client.get("/api/export/docker-compose?hostname=h1", headers=operator_headers)
+        assert resp.status_code == 403
 
-    def test_operator_with_hostname_succeeds(self, client, operator_headers):
-        with patch("server.iac_export.generate_docker_compose",
-                   return_value="version: '3'\n"):
-            resp = client.get("/api/export/docker-compose?hostname=myhost",
-                              headers=operator_headers)
-        assert resp.status_code == 200
+    def test_missing_hostname_returns_400(self, client, admin_headers):
+        resp = client.get("/api/export/docker-compose", headers=admin_headers)
+        assert resp.status_code == 400
 
     def test_admin_with_hostname_succeeds(self, client, admin_headers):
         with patch("server.iac_export.generate_docker_compose",
@@ -779,11 +774,11 @@ class TestExportDockerCompose:
                               headers=admin_headers)
         assert resp.status_code == 200
 
-    def test_returns_yaml_content_type(self, client, operator_headers):
+    def test_returns_yaml_content_type(self, client, admin_headers):
         with patch("server.iac_export.generate_docker_compose",
                    return_value="version: '3'\n"):
             resp = client.get("/api/export/docker-compose?hostname=myhost",
-                              headers=operator_headers)
+                              headers=admin_headers)
         assert "yaml" in resp.headers.get("content-type", "")
 
 
@@ -792,7 +787,7 @@ class TestExportDockerCompose:
 # ===========================================================================
 
 class TestExportShell:
-    """GET /api/export/shell — operator or higher, hostname required."""
+    """GET /api/export/shell — admin only, hostname required."""
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/shell?hostname=h1")
@@ -802,16 +797,13 @@ class TestExportShell:
         resp = client.get("/api/export/shell?hostname=h1", headers=viewer_headers)
         assert resp.status_code == 403
 
-    def test_missing_hostname_returns_400(self, client, operator_headers):
-        resp = client.get("/api/export/shell", headers=operator_headers)
-        assert resp.status_code == 400
+    def test_operator_returns_403(self, client, operator_headers):
+        resp = client.get("/api/export/shell?hostname=h1", headers=operator_headers)
+        assert resp.status_code == 403
 
-    def test_operator_with_hostname_succeeds(self, client, operator_headers):
-        with patch("server.iac_export.generate_shell_script",
-                   return_value="#!/bin/bash\n"):
-            resp = client.get("/api/export/shell?hostname=myhost",
-                              headers=operator_headers)
-        assert resp.status_code == 200
+    def test_missing_hostname_returns_400(self, client, admin_headers):
+        resp = client.get("/api/export/shell", headers=admin_headers)
+        assert resp.status_code == 400
 
     def test_admin_with_hostname_succeeds(self, client, admin_headers):
         with patch("server.iac_export.generate_shell_script",
@@ -820,11 +812,11 @@ class TestExportShell:
                               headers=admin_headers)
         assert resp.status_code == 200
 
-    def test_returns_shell_content_type(self, client, operator_headers):
+    def test_returns_shell_content_type(self, client, admin_headers):
         with patch("server.iac_export.generate_shell_script",
                    return_value="#!/bin/bash\n"):
             resp = client.get("/api/export/shell?hostname=myhost",
-                              headers=operator_headers)
+                              headers=admin_headers)
         ct = resp.headers.get("content-type", "")
         assert "shell" in ct or "text" in ct
 

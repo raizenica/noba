@@ -18,6 +18,10 @@ from ..yaml_config import read_yaml_settings
 
 logger = logging.getLogger("noba")
 
+# One-time OIDC exchange codes: {code: (noba_token, expiry_time)}
+_oidc_codes: dict[str, tuple[str, float]] = {}
+_oidc_codes_lock = __import__("threading").Lock()
+
 router = APIRouter()
 
 
@@ -181,16 +185,41 @@ async def api_oidc_callback(request: Request):
             raise HTTPException(400, "Could not determine user identity from OIDC")
         # Create or find user, issue NOBA token
         if not users.exists(email):
-            users.add(email, "oidc:external", "viewer")
+            users.add(email, "!oidc:disabled", "viewer")
         noba_token = token_store.generate(email, "viewer")
         db.audit_log("oidc_login", email, "OIDC login", _client_ip(request))
-        # Redirect to frontend with token in fragment (not logged by servers)
-        return RedirectResponse(f"/#token={noba_token}")
+        # Issue a short-lived one-time code instead of putting token in URL
+        oidc_code = secrets.token_urlsafe(32)
+        with _oidc_codes_lock:
+            # Purge expired codes
+            now = time.time()
+            expired = [k for k, (_, exp) in _oidc_codes.items() if now > exp]
+            for k in expired:
+                del _oidc_codes[k]
+            _oidc_codes[oidc_code] = (noba_token, now + 60)
+        return RedirectResponse(f"/#oidc_code={oidc_code}")
     except HTTPException:
         raise
     except Exception as e:
         logger.error("OIDC callback error: %s", e)
         raise HTTPException(502, "OIDC authentication failed")
+
+
+@router.post("/api/auth/oidc/exchange")
+async def api_oidc_exchange(request: Request):
+    """Exchange a one-time OIDC code for a NOBA auth token."""
+    body = await _read_body(request)
+    code = body.get("code", "")
+    if not code:
+        raise HTTPException(400, "Missing code")
+    with _oidc_codes_lock:
+        entry = _oidc_codes.pop(code, None)
+    if not entry:
+        raise HTTPException(401, "Invalid or expired code")
+    noba_token, expiry = entry
+    if time.time() > expiry:
+        raise HTTPException(401, "Code expired")
+    return {"token": noba_token}
 
 
 # ── /api/profile ──────────────────────────────────────────────────────────────

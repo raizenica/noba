@@ -112,13 +112,13 @@ class TestCreateDashboard:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
-    def test_viewer_can_create(self, client, viewer_headers):
+    def test_viewer_cannot_create(self, client, viewer_headers):
         resp = client.post(
             "/api/dashboards",
             json={"name": "Viewer Dash", "config_json": "{}"},
             headers=viewer_headers,
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 403
 
 
 # ===========================================================================

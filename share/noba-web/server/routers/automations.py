@@ -369,7 +369,7 @@ def api_automation_stats(auth=Depends(_get_auth)):
 
 # ── /api/automations/export ───────────────────────────────────────────────────
 @router.get("/api/automations/export")
-def api_automations_export(auth=Depends(_require_operator)):
+def api_automations_export(auth=Depends(_require_admin)):
     import yaml
     autos = db.list_automations()
     body = yaml.dump({"automations": autos}, default_flow_style=False, sort_keys=False)
