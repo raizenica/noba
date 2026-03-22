@@ -22,12 +22,70 @@ Overhaul NOBA's self-healing capabilities from a reactive, inline alert handler 
 server/healing/
 ├── __init__.py          # exports handle_heal_event pipeline entry point
 ├── models.py            # shared dataclasses
+├── condition_eval.py    # extracted _safe_eval + metric flattening (shared utility)
 ├── correlation.py       # HealEvent → HealRequest grouping
 ├── planner.py           # HealRequest → HealPlan (escalation + adaptive)
 ├── executor.py          # HealPlan → HealOutcome (action + verification)
 ├── ledger.py            # outcome recording, effectiveness queries, suggestions
 ├── governor.py          # trust state, promotion/demotion
 └── agent_runtime.py     # policy builder, agent report ingestion
+
+db/healing.py            # DB functions following (conn, lock, ...) pattern
+routers/healing.py       # API endpoints
+```
+
+## Cross-Cutting Concerns
+
+### Threading and Locking
+
+All modules that hold mutable state must use locks per CLAUDE.md ("always use locks when mutating module-level state"):
+
+- `correlation.py`: `_lock = threading.Lock()` guarding the correlation dict
+- `governor.py`: `_lock = threading.Lock()` guarding any cached trust state
+- `healing/__init__.py`: the pipeline entry point `handle_heal_event` may be called from multiple threads (alert evaluator, prediction engine, agent report processing) — all mutable state access within the pipeline is lock-protected at the layer level
+
+Follows the existing `AlertState` pattern from `alerts.py`.
+
+### Condition Evaluation (extracted utility)
+
+**Module:** `server/healing/condition_eval.py`
+
+Extract `_safe_eval`, `_safe_eval_single`, and the metric flattening logic from `alerts.py` into a standalone module with no dependencies on `alerts.py` or any healing module. This prevents circular imports since both `alerts.py` and `healing/executor.py` need condition evaluation.
+
+```python
+# condition_eval.py — no imports from alerts.py or healing/
+
+def flatten_metrics(stats: dict) -> dict:
+    """Flatten nested collector stats into a flat dict for condition evaluation.
+
+    Handles: scalar values directly, list-of-dict structures like disks[0].percent,
+    services[1].status, etc. Same logic currently inline in alerts.evaluate_alert_rules.
+    """
+
+def safe_eval(condition_str: str, flat: dict) -> bool:
+    """Evaluate a condition string supporting AND/OR composites."""
+
+def safe_eval_single(condition_str: str, flat: dict) -> bool:
+    """Evaluate a single metric comparison (e.g. 'cpu_percent > 90')."""
+```
+
+After extraction, `alerts.py` and `workflow_engine.py` import from `condition_eval` instead of using the private `_safe_eval`.
+
+### DB Pattern
+
+All new DB operations follow the existing `(conn, lock, ...)` pattern in a new `db/healing.py` module, with delegation wrappers added to the `Database` class in `db/core.py`. This matches `db/automations.py`, `db/alerts.py`, etc.
+
+```python
+# db/healing.py
+def insert_heal_outcome(conn, lock, ...) -> int: ...
+def get_heal_outcomes(conn, lock, ...) -> list[dict]: ...
+def get_success_rate(conn, lock, ...) -> float: ...
+def insert_trust_state(conn, lock, ...) -> None: ...
+# etc.
+
+# db/core.py — Database class additions
+def insert_heal_outcome(self, **kwargs) -> int:
+    return _insert_heal_outcome(self._get_conn(), self._lock, **kwargs)
 ```
 
 ## Data Models
@@ -66,12 +124,13 @@ class HealPlan:
 @dataclass
 class HealOutcome:
     plan: HealPlan
-    action_success: bool     # did the action itself complete without error?
-    verified: bool           # did the original condition resolve?
-    verification_detail: str # "cpu_percent dropped from 94 to 62"
+    action_success: bool | None  # None for notify/approve paths where no action ran
+    verified: bool | None        # None for notify/approve paths
+    verification_detail: str     # "cpu_percent dropped from 94 to 62" or "queued for approval"
     duration_s: float
-    metrics_before: dict     # snapshot at trigger time (from HealEvent)
-    metrics_after: dict      # snapshot after settle time
+    metrics_before: dict         # snapshot at trigger time (from HealEvent)
+    metrics_after: dict | None   # snapshot after settle time (None if no action ran)
+    approval_id: int | None      # set for approve path, links to approval_queue
 
 @dataclass
 class HealSuggestion:
@@ -86,7 +145,7 @@ class HealSuggestion:
 class AgentHealPolicy:
     rules: list[AgentHealRule]
     version: int              # bumped on change, agent skips re-parse if same
-    fallback_mode: str        # "execute_local", "queue_for_server", "notify_only"
+    fallback_mode: str        # default policy-level fallback
 
 @dataclass
 class AgentHealRule:
@@ -97,6 +156,7 @@ class AgentHealRule:
     max_retries: int
     cooldown_s: int
     trust_level: str
+    fallback_mode: str | None # per-rule override; None = use policy default
 ```
 
 ## Layer 1: Heal Correlation
@@ -105,11 +165,18 @@ class AgentHealRule:
 
 **Purpose:** Prevent the same root issue from triggering multiple independent heal actions. If a container is dying, a CPU alert, a service-down alert, and an endpoint-down alert should not each try to heal independently.
 
-**Mechanism:**
+**Mechanism: immediate-on-first with duplicate absorption.**
 
-- Each alert/prediction event is tagged with a correlation key derived from the target (container name, service name, hostname) and a configurable time window (default 60s).
-- Events within the same correlation group are merged into a single `HealRequest`.
-- Correlation state is held in-memory with a dict of `{correlation_key: HealRequest}`.
+- The first event for a given correlation key immediately emits a `HealRequest` and starts the heal pipeline.
+- Subsequent events with the same correlation key within the absorption window (default 60s) are absorbed — `correlate()` returns `None`. These events are recorded in the ledger as "correlated/absorbed" for auditing but do not trigger new heal actions.
+- The correlation key is derived from the target: `f"{target}:{action_context}"` where `action_context` groups related conditions (e.g., all memory-related alerts for the same container share a key).
+- After the absorption window expires, the key is removed and the next event starts a new group.
+
+This is simpler and more predictable than a debounce (which would delay healing by the full window). The trade-off is that the first event's condition drives action selection, but since the planner considers the full escalation chain, this is acceptable.
+
+**State is in-memory only.** Correlation windows are short (60s) and the consequence of losing state on restart is merely that one duplicate heal might fire — acceptable for a homelab. No DB persistence needed.
+
+**Threading:** All access to the correlation dict is guarded by `_lock = threading.Lock()`.
 
 **Interface:**
 
@@ -117,7 +184,7 @@ class AgentHealRule:
 def correlate(event: HealEvent) -> HealRequest | None:
 ```
 
-Returns `None` if the event was absorbed into an existing group (already being handled). Returns a `HealRequest` when the group is ready to be planned.
+Returns `None` if the event was absorbed into an existing group. Returns a `HealRequest` when this is the first event for this target within the window.
 
 ## Layer 2: Heal Planner
 
@@ -171,58 +238,96 @@ The `reason` field carries a human-readable explanation: "Skipped restart_contai
 
 **Purpose:** Run the planned action and verify it actually fixed the problem by re-evaluating the original alert condition, not just checking process state.
 
+### Asynchronous Execution Model
+
+The executor runs each action in a daemon thread to avoid blocking the caller. The pipeline entry point (`handle_heal_event`) returns immediately after dispatching to the executor. This is critical because `handle_heal_event` is called from the alert evaluator thread (via `evaluate_alert_rules`), and blocking it would cause metric collection gaps and missed alerts.
+
+```python
+def execute(plan: HealPlan, on_complete: Callable[[HealOutcome], None]) -> None:
+    """Run action in a background thread. Calls on_complete with the outcome."""
+    threading.Thread(
+        target=_execute_and_verify,
+        args=(plan, on_complete),
+        daemon=True,
+        name=f"heal-{plan.request.correlation_key}",
+    ).start()
+```
+
+The `on_complete` callback is how the executor feeds results back to the ledger and triggers escalation. This matches the pattern used by `workflow_engine._run_workflow` with `job_runner.submit(on_complete=...)`.
+
 ### Execution Flow
 
 ```
-execute(plan) → run action → wait settle_time → re-evaluate original conditions → report outcome
+execute(plan, on_complete) → spawn thread → run action → wait settle_time →
+    flatten metrics → re-evaluate conditions → build outcome → on_complete(outcome)
 ```
 
-### Verification Strategy
+### Settle Time vs Execution Timeout
 
-- `action_success=True, verified=True`: the heal resolved the root issue.
-- `action_success=True, verified=False`: the action ran but the problem persists — triggers escalation back to the planner.
-- `action_success=False`: the action itself failed.
+These are distinct concepts:
+- **Execution timeout** (`remediation.ACTION_TYPES[...]["timeout_s"]`): max time the action itself can run (e.g., 30s for restart, 600s for playbook). Enforced by `remediation.execute_action()`.
+- **Settle time**: delay *after* the action completes before re-evaluating conditions. Gives the system time to stabilize.
 
-Settle time is configurable per action type:
+Total worst-case time per escalation step = execution timeout + settle time. For `run_playbook`: 600s + 120s = 720s. The escalation chain is bounded by step count (typically 2-4 steps).
+
+Settle times per action type:
 - `restart_container`, `restart_service`: 15s
 - `scale_container`, `clear_cache`, `flush_dns`: 15s
 - `run_playbook`: 120s
 - `trigger_backup`: 60s
+- `run`, `webhook`, `automation`: 15s
+- `agent_command`: 30s
 
 ### Verification Mechanism
 
 After the settle time, the executor:
 1. Fetches a fresh metrics snapshot from `bg_collector.get()`
-2. Re-evaluates each original condition from the `HealRequest.events` using `_safe_eval`
-3. If all conditions are now `False` (no longer firing), the heal is verified
-4. Records `metrics_before` (from the HealEvent) and `metrics_after` (fresh snapshot) for ledger analysis
+2. **Flattens the metrics** using `condition_eval.flatten_metrics()` — converts nested structures like `disks[0].percent` into flat keys, matching what `evaluate_alert_rules` does
+3. Re-evaluates each original condition from the `HealRequest.events` using `condition_eval.safe_eval()`
+4. If all conditions are now `False` (no longer firing), the heal is verified
+5. Records `metrics_before` (from the HealEvent) and `metrics_after` (fresh snapshot) for ledger analysis
 
-### Integration
+### Verification Outcomes
 
-The executor delegates the actual action to `remediation.execute_action()` — no duplication of action handlers. It wraps the call with before/after metrics capture and condition re-evaluation.
+- `action_success=True, verified=True`: the heal resolved the root issue.
+- `action_success=True, verified=False`: the action ran but the problem persists — triggers escalation.
+- `action_success=False`: the action itself failed — also triggers escalation.
 
-### Escalation Callback
+### Action Type Coverage
 
-When `verified=False` and the escalation chain has remaining steps:
+The executor delegates to `remediation.execute_action()` for the 8 types it handles. However, the current `alerts._execute_heal` also handles 4 additional types that are NOT in `remediation.py`:
+
+- `run` — arbitrary shell command
+- `webhook` — fire a webhook automation
+- `automation` — trigger a stored automation
+- `agent_command` — send command to remote agent
+
+**Migration requirement:** As part of this work, migrate these 4 action types from `alerts._execute_heal` into `remediation.py` (adding them to `ACTION_TYPES` and `_HANDLERS`). This consolidates all heal actions into one registry and ensures nothing is lost when `_execute_heal` is replaced.
+
+### Escalation via Callback
+
+When `on_complete` fires with `verified=False`, the pipeline advances the escalation:
 
 ```python
-if not outcome.verified and plan.escalation_step < chain_length - 1:
-    next_plan = planner.advance(plan, outcome)
-    if next_plan:
-        executor.execute(next_plan)
+def _on_heal_complete(outcome: HealOutcome) -> None:
+    ledger.record(outcome)
+    if not outcome.verified and outcome.plan.escalation_step < chain_length - 1:
+        next_plan = planner.advance(outcome.plan, outcome)
+        if next_plan:
+            executor.execute(next_plan, on_complete=_on_heal_complete)
 ```
 
-Bounded by chain length and circuit breaker via the Trust Governor.
+Each escalation step runs in its own daemon thread — no recursive blocking. Bounded by chain length and circuit breaker via the Trust Governor.
 
 ## Layer 4: Heal Ledger
 
-**Module:** `ledger.py`
+**Module:** `ledger.py` (business logic) + `db/healing.py` (DB operations)
 
 **Purpose:** Record every healing outcome and compute effectiveness scores. Powers the adaptive planner and the suggestion engine.
 
 ### Storage
 
-New SQLite table:
+New SQLite tables (created in `db/core.py` migration):
 
 ```sql
 CREATE TABLE heal_ledger (
@@ -234,18 +339,31 @@ CREATE TABLE heal_ledger (
     action_type TEXT,
     action_params TEXT,       -- JSON
     escalation_step INTEGER,
-    action_success INTEGER,
-    verified INTEGER,
+    action_success INTEGER,   -- 1/0/NULL (NULL for notify/approve with no execution)
+    verified INTEGER,         -- 1/0/NULL
     duration_s REAL,
     metrics_before TEXT,      -- JSON snapshot
     metrics_after TEXT,       -- JSON snapshot
     trust_level TEXT,
     source TEXT,              -- "alert", "prediction", "agent"
+    approval_id INTEGER,      -- links to approval_queue for approve path
     created_at INTEGER
 );
+CREATE INDEX idx_heal_ledger_lookup
+    ON heal_ledger(rule_id, condition, target, created_at);
 ```
 
 The existing `action_audit` table stays for general audit logging.
+
+### Recording All Trust Levels
+
+The ledger records outcomes for ALL trust levels, not just `execute`:
+
+- **`execute`**: full outcome with `action_success`, `verified`, metrics snapshots
+- **`approve`**: records with `action_success=NULL, verified=NULL, approval_id=<id>`. Updated when the approval is decided and executed (see Approval Integration below).
+- **`notify`**: records with `action_success=NULL, verified=NULL`. Tracks trigger frequency for governor promotion decisions.
+
+This ensures the governor has complete data for promotion criteria at every trust level.
 
 ### Effectiveness Queries
 
@@ -284,9 +402,13 @@ CREATE TABLE heal_suggestions (
     suggested_action TEXT,    -- JSON
     evidence TEXT,            -- JSON
     dismissed INTEGER DEFAULT 0,
-    created_at INTEGER
+    created_at INTEGER,
+    updated_at INTEGER,
+    UNIQUE(category, rule_id) ON CONFLICT REPLACE
 );
 ```
+
+The `UNIQUE(category, rule_id)` constraint with `ON CONFLICT REPLACE` prevents duplicate active suggestions. When the same suggestion is regenerated hourly, it updates rather than duplicates.
 
 ## Layer 5: Agent Heal Runtime
 
@@ -298,14 +420,14 @@ CREATE TABLE heal_suggestions (
 
 The server pushes a lightweight heal policy to each agent during the regular heartbeat/poll cycle. The policy is a subset of full heal rules, filtered to what is relevant for that host.
 
-Policy is delivered as part of the existing agent command/heartbeat flow — no new transport.
+Policy is delivered as part of the existing agent command/heartbeat flow — included in the `api_agent_report` response alongside `commands`. No new transport needed.
 
 ### Safety Constraints
 
 - Only **low-risk** action types are eligible for agent-side execution: `restart_container`, `restart_service`, `clear_cache`, `flush_dns`.
 - High-risk actions (`failover_dns`, `run_playbook`, `scale_container`) always go through the server.
 - Agents report every local heal outcome back to the server on next successful connection — the ledger stays complete.
-- `fallback_mode` controls behavior when server is unreachable:
+- `fallback_mode` controls behavior when server is unreachable. Configurable per-policy (default) and per-rule (override):
   - `execute_local`: evaluate and act on the pushed policy
   - `queue_for_server`: record the event, submit when reconnected
   - `notify_only`: send notification only
@@ -335,6 +457,8 @@ notify → approve → execute
 ```
 
 Every heal rule has an effective trust level that the governor can override. The rule's configured autonomy is the ceiling — the governor can only downgrade or promote up to that ceiling.
+
+**Note on YAML-defined rules:** Alert rules are defined in the YAML settings file with `rule.get("id")`. If a rule is removed from YAML and re-added, its trust state persists in the DB. This is intentional — trust is earned and should survive config edits.
 
 ### Promotion Criteria
 
@@ -389,20 +513,61 @@ Evaluation runs during the ledger's hourly suggestion cycle — same schedule, n
 
 ```python
 def handle_heal_event(event: HealEvent) -> None:
+    """Non-blocking pipeline entry point. Safe to call from any thread."""
     request = correlation.correlate(event)
     if request is None:
         return  # absorbed into existing group
+
     plan = planner.select_action(request, ledger, governor)
+
     if plan.trust_level == "notify":
-        notify_only(plan)
+        # Record in ledger for governor promotion tracking, send notification
+        ledger.record(HealOutcome(
+            plan=plan, action_success=None, verified=None,
+            verification_detail="notify only", duration_s=0,
+            metrics_before=event.metrics, metrics_after=None, approval_id=None,
+        ))
+        dispatch_notifications(plan.request.severity, plan.reason, ...)
+
     elif plan.trust_level == "approve":
-        queue_approval(plan)
-    else:
-        outcome = executor.execute(plan)
-        ledger.record(outcome)
-        if not outcome.verified:
-            planner.advance(plan, outcome)  # escalation
+        # Insert into existing approval_queue, record ledger entry with approval_id
+        approval_id = db.insert_approval(
+            automation_id=plan.request.events[0].rule_id,
+            trigger=f"heal:{plan.request.correlation_key}",
+            trigger_source="healing_pipeline",
+            action_type=plan.action_type,
+            action_params=plan.action_params,
+            target=plan.request.primary_target,
+            requested_by=f"heal:{plan.request.events[0].source}",
+        )
+        ledger.record(HealOutcome(
+            plan=plan, action_success=None, verified=None,
+            verification_detail="queued for approval", duration_s=0,
+            metrics_before=event.metrics, metrics_after=None,
+            approval_id=approval_id,
+        ))
+
+    else:  # execute
+        def on_complete(outcome: HealOutcome) -> None:
+            ledger.record(outcome)
+            if not outcome.verified:
+                next_plan = planner.advance(outcome.plan, outcome)
+                if next_plan:
+                    executor.execute(next_plan, on_complete=on_complete)
+
+        executor.execute(plan, on_complete=on_complete)
 ```
+
+### Approval Integration
+
+When an approval is decided (via existing `api_decide_approval` in the automations router), the approval execution path must re-enter the healing pipeline so verification and ledger recording happen:
+
+1. The approval router checks if `trigger_source == "healing_pipeline"`
+2. If so, instead of calling `remediation.execute_action()` directly, it calls `executor.execute()` with the original `HealPlan` (reconstructed from the approval's `action_type`, `action_params`, and the linked `heal_ledger` row via `approval_id`)
+3. The executor runs the action, verifies, and records the outcome — updating the existing ledger row with `action_success` and `verified` values
+4. If denied, the ledger row is updated with `verification_detail="denied by <username>"`
+
+This ensures the ledger has complete data even for the approve path.
 
 ## Changes to Existing Code
 
@@ -410,29 +575,45 @@ def handle_heal_event(event: HealEvent) -> None:
 
 Replace the inline `_execute_heal` block in `evaluate_alert_rules()` with a call to `handle_heal_event(HealEvent(...))`. Alert evaluation, condition parsing, and notification dispatch stay in `alerts.py`. The `AlertState` heal tracking (retries, circuit breaker) is superseded by the governor and ledger — can be removed once the pipeline is fully wired.
 
+Update `_safe_eval` imports to use `healing.condition_eval.safe_eval`.
+
+### remediation.py
+
+Migrate 4 action types currently only in `alerts._execute_heal` into `remediation.py`:
+- `run` — arbitrary shell command execution
+- `webhook` — fire a webhook via URL
+- `automation` — trigger a stored automation by ID
+- `agent_command` — send command to remote agent
+
+This consolidates all heal actions into one registry. The handlers already exist in `_execute_heal` — they just need to be moved into `_HANDLERS` and `ACTION_TYPES`.
+
 ### prediction.py / check_anomalies()
 
 Add a call to `handle_heal_event` with `source="prediction"` when anomalies or trending thresholds are detected.
 
-### remediation.py
+### workflow_engine.py
 
-Stays as-is. The executor calls `remediation.execute_action()` for the actual action execution.
+Update `_safe_eval` imports to use `healing.condition_eval.safe_eval`.
 
 ### scheduler.py
 
 Add the hourly `ledger.generate_suggestions()` + `governor.evaluate_promotions()` call to the scheduler tick or as a separate periodic task.
 
-### agent_store.py
+### routers/agents.py
 
-Include policy delivery in the agent heartbeat response and report ingestion when agents reconnect.
+In `api_agent_report` response: include `heal_policy` alongside existing `commands` key. In the request body processing: handle `_heal_reports` field via `agent_runtime.ingest_agent_heal_reports()`.
+
+### routers/automations.py
+
+In `api_decide_approval`: add check for `trigger_source == "healing_pipeline"` to route approved actions through the heal executor instead of directly calling `remediation.execute_action()`.
 
 ### db/core.py
 
-Add `heal_ledger`, `trust_state`, and `heal_suggestions` table creation to the migration path.
+Add `heal_ledger`, `trust_state`, and `heal_suggestions` table creation to the migration path. Add delegation wrappers for `db/healing.py` functions.
 
 ## New API Endpoints
 
-Added to existing router pattern (new router or extension of operations/intelligence):
+New router: `routers/healing.py`
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
@@ -442,6 +623,11 @@ Added to existing router pattern (new router or extension of operations/intellig
 | POST | `/api/healing/suggestions/{id}/dismiss` | operator | Dismiss a suggestion |
 | GET | `/api/healing/trust` | read | Trust state per rule |
 | POST | `/api/healing/trust/{rule_id}/promote` | admin | Manual trust promotion |
+
+## Future Integration Points
+
+- **Health score:** Add a "healing effectiveness" category to `health_score.py` based on ledger data (success rates, escalation frequency). Not in initial scope.
+- **Dry-run endpoint:** `POST /api/healing/test` to run a synthetic HealEvent through the pipeline without executing actions. Useful for debugging.
 
 ## Success Criteria
 
@@ -453,3 +639,6 @@ Added to existing router pattern (new router or extension of operations/intellig
 6. Agents can execute low-risk heal actions locally when the server is unreachable.
 7. New rules start at `notify`, earn promotion to `approve` then `execute` based on track record.
 8. The existing `remediation.py` action handlers are reused, not duplicated.
+9. All 12 action types (8 existing + 4 migrated) are supported through the unified executor.
+10. The pipeline never blocks the alert evaluator thread — all execution is asynchronous.
+11. Ledger records outcomes for all trust levels (notify, approve, execute) to support governor decisions.
