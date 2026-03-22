@@ -81,16 +81,11 @@ function connect() {
 
         // If we already got streamed output, skip stdout (it's a duplicate)
         if (!gotStreamData) {
-          let output = ''
-          if (msg.stdout) output = msg.stdout
-          else if (msg.message) output = msg.message
-          else if (msg.error) output = msg.error
-          else output = JSON.stringify(msg, null, 2)
-
-          const cleaned = output.replace(/\r\n/g, '\n').split('\n').filter(l => l.trim()).join('\n')
-          if (cleaned) pushLine(cleaned, isError ? 'error' : 'output')
+          let output = msg.stdout || msg.message || msg.error || ''
+          output = output.replace(/\r\n/g, '\n').split('\n').filter(l => l.trim()).join('\n')
+          if (output) pushLine(output, isError ? 'error' : 'output')
+          else if (msg.status === 'ok') pushLine('(completed)', 'system')
         } else if (msg.error && isError) {
-          // Still show errors even if we streamed
           pushLine(msg.error, 'error')
         }
 
