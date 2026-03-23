@@ -1,4 +1,4 @@
-name: Build RPM Packages
+name: Build RPM Package
 
 on:
   push:
@@ -9,45 +9,38 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - distro: el8
-            arch: x86_64
-            container: centos7
-          - distro: el9
-            arch: x86_64
-            container: centos8
-
+    container: fedora:latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: dnf install -y rpm-build rpmdevtools
+
+      - name: Setup RPM build tree
+        run: rpmdev-setuptree
 
       - name: Create source tarball
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          tar -czf noba-${VERSION}.tar.gz \
-            --exclude=.git \
-            --exclude=.github \
-            --exclude=tests \
-            --exclude=__pycache__ \
-            bin/ libexec/ lib/ share/ systemd/ docs/ data/
+          # Default to spec version for workflow_dispatch
+          [ -z "$VERSION" ] && VERSION=$(grep '^Version:' noba.spec | awk '{print $2}')
+          mkdir -p noba-${VERSION}
+          cp -r bin libexec share scripts install.sh noba.spec \
+                README.md LICENSE CHANGELOG.md CONTRIBUTING.md \
+                noba-${VERSION}/
+          tar -czf ~/rpmbuild/SOURCES/noba-${VERSION}.tar.gz noba-${VERSION}
 
-      - name: Build RPM package
-        id: rpm_build
-        uses: naveenrajm7/rpmbuild@${{ matrix.container }}
-        with:
-          spec_file: "noba.spec"
+      - name: Build RPM
+        run: rpmbuild -ba noba.spec
 
-      - name: Upload RPM as artifact
+      - name: Upload RPM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: noba-${{ matrix.distro }}-${{ matrix.arch }}
-          path: ${{ steps.rpm_build.outputs.rpm_dir_path }}/
+          name: noba-rpm
+          path: ~/rpmbuild/RPMS/
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ steps.rpm_build.outputs.rpm_dir_path }}/*.rpm
-            ${{ steps.rpm_build.outputs.source_rpm_path }}
+          files: ~/rpmbuild/RPMS/noarch/*.rpm
