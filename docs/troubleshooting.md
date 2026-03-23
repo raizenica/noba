@@ -12,6 +12,8 @@
 8. [Systemd timers not firing](#8-systemd-timers-not-firing)
 9. [Temperature not showing](#9-temperature-not-showing)
 10. [Docker-specific issues](#10-docker-specific-issues)
+    - [Docker on Proxmox VE](#docker-on-proxmox-ve--containers-fail-to-start-or-crash-immediately)
+    - [Self-update shows "Git repository not found"](#self-update-shows-git-repository-not-found)
 11. [Agent commands stuck in "queued"](#11-agent-commands-stuck-in-queued)
 12. [Dashboard layout corruption after navigation](#12-dashboard-layout-corruption-after-navigation)
 13. [Browser shows stale UI after update](#13-browser-shows-stale-ui-after-update)
@@ -383,6 +385,98 @@ web:
       name: "Restart nginx"
       icon: "fa-sync"
       command: "docker restart nginx"
+```
+
+### Docker on Proxmox VE — containers fail to start or crash immediately
+
+**Symptom:** Containers start but internal processes fail with `Permission denied`. For example, nginx logs:
+```
+socketpair() failed while spawning "worker process" (13: Permission denied)
+```
+
+**Cause:** Proxmox ships with AppArmor enforcing ~120 profiles by default (primarily for LXC isolation). These profiles restrict syscalls like `socketpair()` inside Docker containers, even when seccomp is disabled.
+
+**Fix (quick — test/dev environments):**
+
+Run containers with `--privileged` to bypass both AppArmor and seccomp:
+```bash
+docker run -d --privileged --name my-container -p 8080:80 nginx:alpine
+```
+
+Or in `docker-compose.yml`:
+```yaml
+services:
+  my-service:
+    image: nginx:alpine
+    privileged: true
+```
+
+**Fix (production — custom AppArmor profile):**
+
+Create a permissive profile for Docker:
+```bash
+cat > /etc/apparmor.d/docker-default-relaxed <<'EOF'
+#include <tunables/global>
+profile docker-default-relaxed flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  network,
+  capability,
+  file,
+  umount,
+  signal,
+  ptrace,
+  mount,
+  unix,
+}
+EOF
+
+apparmor_parser -r /etc/apparmor.d/docker-default-relaxed
+```
+
+Then run containers with the custom profile:
+```bash
+docker run -d --security-opt apparmor=docker-default-relaxed --name my-container nginx:alpine
+```
+
+**Verification:**
+```bash
+# Check if AppArmor is the issue
+docker logs <container-name> 2>&1 | grep -i "permission denied"
+
+# Check AppArmor status
+aa-status | head -5
+
+# Confirm Docker's security driver
+docker info --format '{{.SecurityOptions}}'
+```
+
+> **Note:** `--security-opt seccomp=unconfined` alone is NOT sufficient on Proxmox — AppArmor is the blocker, not seccomp.
+
+### Self-update shows "Git repository not found"
+
+**Symptom:** The **Settings → Updates** panel shows `update_available: false` with error `Git repository not found. Set NOBA_REPO_DIR environment variable.`
+
+**Cause:** The update checker needs to know where the NOBA git repository lives. On bare-metal installs this is usually auto-detected, but when the install path (`/opt/noba`) differs from the development checkout, or when deployed via `install.sh`, the server can't find the `.git` directory.
+
+**Fix:** Set `NOBA_REPO_DIR` in your systemd service environment:
+```bash
+# Edit the service override
+systemctl --user edit noba-web
+
+# Add:
+[Service]
+Environment=NOBA_REPO_DIR=/opt/noba
+```
+
+Then restart:
+```bash
+systemctl --user restart noba-web
+```
+
+For Docker deployments, add the environment variable:
+```yaml
+environment:
+  NOBA_REPO_DIR: /app
 ```
 
 ### Config changes don't persist
