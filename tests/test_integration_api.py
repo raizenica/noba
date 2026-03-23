@@ -75,7 +75,7 @@ class TestIntegrationInstanceAPI:
         r2 = client.get("/api/integrations/instances/upd-test", headers=admin_headers)
         assert r2.json()["url"] == "http://new-url"
 
-    def test_create_requires_operator(self, client):
+    def test_create_requires_auth(self, client):
         r = client.post("/api/integrations/instances", json={
             "id": "test", "category": "nas", "platform": "truenas",
             "url": "http://test", "auth_config": {},
