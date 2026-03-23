@@ -4,7 +4,7 @@
 
 **Your homelab deserves a mission control.**
 
-Real-time monitoring · Remote agents · Predictive intelligence · 40+ integrations
+Real-time monitoring · Self-healing infrastructure · Remote agents · Predictive intelligence · 40+ integrations
 All from a single dashboard.
 
 `FastAPI` · `Vue 3 + Vite` · `Chart.js` · `SQLite WAL` · `Pinia`
@@ -122,9 +122,9 @@ SLA dashboards, incident tracking, endpoint checks, custom charts, InfluxDB pane
 
 - 📊 **SLA dashboard** — 7d/30d/90d uptime percentages per agent/service
 - 🚨 **Composite alert rules** — AND/OR conditions with escalation policies
-- 🩹 **Self-healing actions** — alerts trigger agent commands automatically
+- 🩹 **Self-healing pipeline** — 6-layer architecture: correlation, dependency analysis, planning, execution, verification, learning
 - 🔔 **Notifications** — Pushover, Gotify, Slack, email, voice, browser push (PWA)
-- 🕐 **Maintenance windows** — suppress alerts during planned downtime
+- 🕐 **Maintenance windows** — suppress or queue healing during planned downtime
 
 ### 🏗️ Infrastructure & Ops
 
@@ -175,10 +175,29 @@ Service topology, config drift detection, network maps, predictive disk intellig
 - ⏰ **Triggers** — cron, file system changes, RSS feeds, webhooks (HMAC validated), HA events
 - ✅ **Approval gates** — queue actions for manual approval with auto-approve timeout
 - 🛡️ **Per-rule autonomy** — execute / approve / notify / disabled per alert rule
-- 🔧 **8 remediation actions** — restart container/service, flush DNS, trigger backup, failover DNS, scale container, run playbook
+- 🔧 **55 remediation actions** — cross-platform with capability-based dispatch (Linux, Windows, Alpine, macOS)
 - 🕐 **Maintenance windows** — named schedules with alert suppression and autonomy override
 - 📋 **Action audit trail** — full context for every automated action (trigger, outcome, approval, duration)
 - 📖 **Playbook templates** — 4 pre-built maintenance playbooks, customizable
+
+### 🏥 Self-Healing Pipeline
+
+Fully autonomous infrastructure repair with safety controls and graduated trust.
+
+- 🔄 **55 heal actions** — restart, reload, kill, cleanup, renew, scrub, patch, reboot, migrate — with fallback chains for cross-platform dispatch
+- 🧠 **Dependency graph** — root cause analysis suppresses downstream noise (NAS down? don't restart Plex 50 times)
+- 🌐 **Site isolation** — ISP outage at one site doesn't trigger false restarts at that site
+- 🛡️ **Tiered approvals** — low-risk auto-heals, medium notifies, high-risk requires human approval with escalation chains
+- 📊 **Effectiveness tracking** — success rates, MTTR, per-rule analytics in a dedicated healing dashboard
+- 🔮 **Predictive healing** — capacity forecasts and anomaly detection trigger proactive cleanup before thresholds breach
+- 📸 **State snapshots + rollback** — captures pre-heal state, auto-rollback for reversible actions that fail verification
+- 🔬 **Chaos testing** — 12 built-in scenarios for controlled fault injection (dry-run or live)
+- 🐣 **Canary rollout** — new rules progress: observation → dry-run → notify → approve → execute
+- 🏗️ **139 integration operations** — abstract heal ops across 29 categories (NAS, hypervisor, media, DNS, and 25 more)
+- 🔌 **Multi-instance** — 3 TrueNAS boxes, quad Pi-hole, 2 Proxmox nodes — each with independent config and health tracking
+- 📱 **Setup wizard** — 4-step guided flow to add any integration (pick category → platform → configure → test → save)
+- 🤖 **Agent autonomy** — agents probe 22+ tools, heal locally when server is unreachable, report back on reconnect
+- ⚡ **11 default escalation chains** — CPU, disk, memory, service, container, DNS, VPN, backup — work out of the box
 
 ---
 
@@ -220,7 +239,7 @@ share/noba-web/static/dist/  → Built Vue app (committed, no Node.js needed at 
 share/noba-agent/            → Remote agent + installers (Linux, Windows)
 libexec/                     → Shell scripts (backup, disk check, cloud sync)
 dev/                         → Developer toolkit (8 tools)
-tests/                       → pytest test suite (1806 tests)
+tests/                       → pytest test suite (2187 tests)
 ```
 
 ## 🧪 Developer Toolkit
