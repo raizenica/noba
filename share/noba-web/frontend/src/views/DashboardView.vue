@@ -48,10 +48,29 @@ import EnergyCard       from '../components/cards/EnergyCard.vue'
 import CameraFeedsCard  from '../components/cards/CameraFeedsCard.vue'
 import RecoveryCard     from '../components/cards/RecoveryCard.vue'
 import PredictionCard  from '../components/cards/PredictionCard.vue'
+import IntegrationCard from '../components/cards/IntegrationCard.vue'
+import { getTemplate } from '../data/cardTemplates'
 
 const dashboardStore = useDashboardStore()
 const settingsStore  = useSettingsStore()
 const { get, post, del } = useApi()
+
+// ── Managed integration instances ────────────────────────────────────────────
+const managedInstances = ref([])
+
+async function fetchManagedInstances() {
+  try {
+    managedInstances.value = await get('/api/integrations/instances')
+  } catch { /* silent */ }
+}
+
+function getCardTemplate(platform) {
+  return getTemplate(platform)
+}
+
+function getIntegrationData(instanceId) {
+  return dashboardStore.live[instanceId] || {}
+}
 
 // ── Glance mode ──────────────────────────────────────────────────────────────
 const glanceMode = ref(false)
@@ -196,6 +215,7 @@ async function deleteDashboard(id) {
 onMounted(() => {
   fetchHealthScore()
   fetchDashboards()
+  fetchManagedInstances()
   // Initialize drag-to-reorder on card grid
   function initSortable() {
     if (!gridRef.value) return
@@ -504,6 +524,16 @@ onUnmounted(() => {
 
       <!-- Admin-only -->
       <RecoveryCard    v-if="showCard('recovery')"                                        />
+
+      <!-- Managed Integration Cards -->
+      <IntegrationCard
+        v-for="inst in managedInstances"
+        :key="'int-'+inst.id"
+        :instance="inst"
+        :template="getCardTemplate(inst.platform)"
+        :data="getIntegrationData(inst.id)"
+        class="card"
+      />
     </div>
 
     <!-- Glance-mode toggle — floats over the header area via slot or direct button -->

@@ -1,14 +1,47 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { useApi } from '../../composables/useApi'
+import { useNotificationsStore } from '../../stores/notifications'
+import IntegrationSetup from './IntegrationSetup.vue'
 
 const settingsStore = useSettingsStore()
+const { get, del: apiDel } = useApi()
+const notifications = useNotificationsStore()
+
 const intCat = ref('infra')
 const saving = ref(false)
 const saveMsg = ref('')
 
+// Managed integrations
+const instances = ref([])
+const showSetup = ref(false)
+
+async function fetchInstances() {
+  try {
+    instances.value = await get('/api/integrations/instances')
+  } catch { /* silent */ }
+}
+
+async function deleteInstance(id) {
+  if (!confirm(`Delete integration "${id}"?`)) return
+  try {
+    await apiDel('/api/integrations/instances/' + id)
+    notifications.addToast('Integration deleted', 'success')
+    await fetchInstances()
+  } catch {
+    notifications.addToast('Failed to delete integration', 'danger')
+  }
+}
+
+function onInstanceSaved() {
+  showSetup.value = false
+  fetchInstances()
+}
+
 onMounted(async () => {
   if (!settingsStore.loaded) await settingsStore.fetchSettings()
+  fetchInstances()
 })
 
 async function save() {
@@ -44,6 +77,40 @@ const cats = [
 
 <template>
   <div>
+    <!-- New: Managed Integration Instances -->
+    <div class="s-section" style="margin-bottom: 2rem;">
+      <div class="s-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Managed Integrations</span>
+        <button v-if="!showSetup" class="btn btn-xs btn-primary" @click="showSetup = true">
+          <i class="fas fa-plus" style="margin-right:.3rem"></i> Add Integration
+        </button>
+      </div>
+
+      <!-- Setup wizard -->
+      <IntegrationSetup v-if="showSetup" @saved="onInstanceSaved" @cancel="showSetup = false" />
+
+      <!-- Instance list -->
+      <div v-if="!showSetup && instances.length" class="instance-list">
+        <div v-for="inst in instances" :key="inst.id" class="instance-row">
+          <span class="badge ba">{{ inst.platform }}</span>
+          <span class="instance-id">{{ inst.id }}</span>
+          <span class="text-muted">{{ inst.url }}</span>
+          <span v-if="inst.site" class="badge bs">{{ inst.site }}</span>
+          <span :class="['badge', inst.health_status === 'online' ? 'bs' : inst.health_status === 'offline' ? 'bd' : 'bw']">
+            {{ inst.health_status || 'unknown' }}
+          </span>
+          <button class="btn btn-xs btn-danger" @click="deleteInstance(inst.id)">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </div>
+      <div v-if="!showSetup && !instances.length" class="empty-msg">
+        No managed integrations yet. Click "Add Integration" to set one up.
+      </div>
+    </div>
+
+    <hr style="border-color: var(--border); margin: 1.5rem 0;" />
+
     <!-- Category bar -->
     <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:1rem;border-bottom:1px solid var(--border);padding-bottom:.6rem">
       <button
@@ -1084,3 +1151,10 @@ const cats = [
     </div>
   </div>
 </template>
+
+<style scoped>
+.instance-list { display: flex; flex-direction: column; gap: .5rem; }
+.instance-row { display: flex; align-items: center; gap: .75rem; padding: .5rem .75rem; background: var(--surface-2); border-radius: 6px; flex-wrap: wrap; }
+.instance-id { font-weight: 600; }
+.text-muted { color: var(--text-muted); font-size: .85rem; }
+</style>
