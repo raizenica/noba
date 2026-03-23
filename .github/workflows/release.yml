@@ -1,0 +1,219 @@
+name: Build & Release Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: noba
+  APP_DESC: "NOBA Command Center — self-hosted infrastructure management platform"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ver
+        run: |
+          V=${GITHUB_REF_NAME#v}
+          [ -z "$V" ] && V=$(grep '^VERSION' share/noba-web/server/config.py | grep -oP '"\K[^"]+')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+  tarball:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create universal tarball
+        run: |
+          V=${{ needs.version.outputs.version }}
+          tar -czf noba-${V}.tar.gz \
+            --exclude=.git --exclude=.github --exclude=__pycache__ \
+            --exclude=node_modules --exclude=.pytest_cache \
+            --transform="s,^,noba-${V}/," \
+            bin/ libexec/ share/ scripts/ docs/ \
+            install.sh Dockerfile docker-compose.yml \
+            README.md LICENSE CHANGELOG.md CONTRIBUTING.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noba-tarball
+          path: noba-*.tar.gz
+
+  rpm:
+    needs: version
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: dnf install -y rpm-build rpmdevtools
+
+      - name: Build RPM
+        run: |
+          V=${{ needs.version.outputs.version }}
+          rpmdev-setuptree
+          mkdir -p noba-${V}
+          cp -r bin libexec share scripts install.sh noba.spec \
+                README.md LICENSE CHANGELOG.md CONTRIBUTING.md \
+                noba-${V}/
+          tar -czf ~/rpmbuild/SOURCES/noba-${V}.tar.gz noba-${V}
+          sed -i "s/^Version:.*/Version:        ${V}/" noba.spec
+          rpmbuild -ba noba.spec
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noba-rpm
+          path: ~/rpmbuild/RPMS/noarch/
+
+  deb:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev fakeroot
+
+      - name: Build DEB
+        run: |
+          V=${{ needs.version.outputs.version }}
+          PKG=noba_${V}_all
+          mkdir -p ${PKG}/DEBIAN
+          mkdir -p ${PKG}/usr/bin
+          mkdir -p ${PKG}/usr/libexec/noba/web
+          mkdir -p ${PKG}/usr/share/doc/noba
+
+          # Control file
+          cat > ${PKG}/DEBIAN/control <<EOF
+          Package: noba
+          Version: ${V}
+          Section: admin
+          Priority: optional
+          Architecture: all
+          Depends: python3 (>= 3.10), bash (>= 4.0)
+          Recommends: python3-pip, rsync, git
+          Maintainer: Raizen <admin@example.com>
+          Homepage: https://github.com/raizenica/noba
+          Description: ${APP_DESC}
+           Self-hosted infrastructure management with real-time monitoring,
+           self-healing automation, remote agents, and 40+ integrations.
+           Built with FastAPI and Vue 3.
+          EOF
+
+          # Strip leading whitespace from heredoc
+          sed -i 's/^          //' ${PKG}/DEBIAN/control
+
+          # Post-install: remind about pip deps
+          cat > ${PKG}/DEBIAN/postinst <<'POSTINST'
+          #!/bin/bash
+          echo ""
+          echo "NOBA installed. To complete setup:"
+          echo "  1. pip3 install fastapi 'uvicorn[standard]' psutil pyyaml httpx"
+          echo "  2. systemctl --user enable --now noba-web"
+          echo ""
+          POSTINST
+          sed -i 's/^          //' ${PKG}/DEBIAN/postinst
+          chmod 755 ${PKG}/DEBIAN/postinst
+
+          # Install files
+          cp bin/noba bin/noba-web ${PKG}/usr/bin/
+          chmod 755 ${PKG}/usr/bin/*
+          cp -r libexec/* ${PKG}/usr/libexec/noba/
+          cp -r share/noba-web/* ${PKG}/usr/libexec/noba/web/
+          cp README.md LICENSE CHANGELOG.md ${PKG}/usr/share/doc/noba/
+          cp install.sh ${PKG}/usr/share/doc/noba/
+
+          dpkg-deb --build ${PKG}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noba-deb
+          path: noba_*.deb
+
+  arch:
+    needs: version
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm base-devel git
+
+      - name: Build Arch package
+        run: |
+          V=${{ needs.version.outputs.version }}
+
+          # Create PKGBUILD
+          cat > PKGBUILD <<EOF
+          pkgname=noba
+          pkgver=${V}
+          pkgrel=1
+          pkgdesc="${APP_DESC}"
+          arch=('any')
+          url="https://github.com/raizenica/noba"
+          license=('MIT')
+          depends=('python' 'bash')
+          optdepends=('python-pip: for installing Python dependencies'
+                      'rsync: for backup scripts'
+                      'git: for self-update')
+          source=()
+
+          package() {
+            cd "\${startdir}"
+            install -d "\${pkgdir}/usr/bin"
+            install -d "\${pkgdir}/usr/lib/noba/web"
+            install -d "\${pkgdir}/usr/share/doc/noba"
+            install -d "\${pkgdir}/usr/share/licenses/noba"
+
+            install -m755 bin/noba "\${pkgdir}/usr/bin/"
+            install -m755 bin/noba-web "\${pkgdir}/usr/bin/"
+            cp -r libexec/* "\${pkgdir}/usr/lib/noba/"
+            cp -r share/noba-web/* "\${pkgdir}/usr/lib/noba/web/"
+            install -m644 README.md CHANGELOG.md "\${pkgdir}/usr/share/doc/noba/"
+            install -m644 LICENSE "\${pkgdir}/usr/share/licenses/noba/"
+          }
+          EOF
+          sed -i 's/^          //' PKGBUILD
+
+          # Build as non-root (makepkg requirement)
+          useradd -m builder
+          chown -R builder:builder .
+          su builder -c "makepkg -sf --noconfirm"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noba-arch
+          path: noba-*.pkg.tar.zst
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [version, tarball, rpm, deb, arch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find . -type f \( -name '*.tar.gz' -o -name '*.rpm' -o -name '*.deb' -o -name '*.pkg.tar.zst' \) | sort
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            *.tar.gz
+            *.rpm
+            *.deb
+            *.pkg.tar.zst
