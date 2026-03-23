@@ -210,13 +210,14 @@ async def lifespan(app: FastAPI):
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
+_dev_mode = os.environ.get("NOBA_DEV", "").strip() in ("1", "true", "yes")
 app = FastAPI(
     title="Noba Command Center",
     version=VERSION,
     lifespan=lifespan,
-    openapi_url="/api/openapi.json",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json" if _dev_mode else None,
+    docs_url="/api/docs" if _dev_mode else None,
+    redoc_url="/api/redoc" if _dev_mode else None,
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────────

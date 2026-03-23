@@ -1,47 +1,20 @@
-"""Test OpenAPI schema generation and API docs."""
+"""Test OpenAPI schema and API docs are disabled by default (NOBA_DEV=0)."""
 from __future__ import annotations
 
 
-def test_openapi_schema_loads(client):
-    """The schema should load without errors and contain routes."""
+def test_openapi_disabled_by_default(client):
+    """OpenAPI schema should not be accessible without NOBA_DEV."""
     res = client.get("/api/openapi.json")
-    assert res.status_code == 200
-    schema = res.json()
-    assert "openapi" in schema
-    assert "paths" in schema
-    assert len(schema["paths"]) > 50
+    assert res.status_code == 404
 
 
-def test_openapi_has_agent_routes(client):
-    """Verify agent routes appear in the schema."""
-    res = client.get("/api/openapi.json")
-    schema = res.json()
-    assert "/api/agents" in schema["paths"]
-    assert "/api/agent/report" in schema["paths"]
-
-
-def test_openapi_has_container_routes(client):
-    """Verify container routes appear."""
-    res = client.get("/api/openapi.json")
-    schema = res.json()
-    assert "/api/container-control" in schema["paths"]
-
-
-def test_openapi_has_monitoring_routes(client):
-    """Verify monitoring routes appear."""
-    res = client.get("/api/openapi.json")
-    schema = res.json()
-    assert "/api/endpoints" in schema["paths"]
-
-
-def test_docs_page_loads(client):
-    """Swagger UI should be accessible."""
+def test_docs_disabled_by_default(client):
+    """Swagger UI should not be accessible without NOBA_DEV."""
     res = client.get("/api/docs")
-    assert res.status_code == 200
-    assert b"swagger" in res.content.lower() or b"openapi" in res.content.lower()
+    assert res.status_code == 404
 
 
-def test_redoc_page_loads(client):
-    """ReDoc should be accessible."""
+def test_redoc_disabled_by_default(client):
+    """ReDoc should not be accessible without NOBA_DEV."""
     res = client.get("/api/redoc")
-    assert res.status_code == 200
+    assert res.status_code == 404
