@@ -15,6 +15,7 @@
     - [Docker on Proxmox VE](#docker-on-proxmox-ve--containers-fail-to-start-or-crash-immediately)
     - [Self-update shows "Git repository not found"](#self-update-shows-git-repository-not-found)
 11. [Agent commands stuck in "queued"](#11-agent-commands-stuck-in-queued)
+    - [Agent ignores environment variables](#agent-ignores-environment-variables-and-uses-old-config)
     - [Agent commands rejected with "does not support"](#agent-commands-rejected-with-does-not-support-even-though-agent-is-recent)
     - [Endpoint monitor times out for local NOBA URL](#11a-endpoint-monitor-shows-down-or-times-out-for-local-noba-url)
     - [IaC exports show "no data collected"](#11b-iac-exports-show-no-data-collected-even-with-agent-connected)
@@ -525,6 +526,24 @@ sudo systemctl restart noba-agent
 | All commands stuck | Agent version mismatch with WebSocket result format | Update agent from dashboard or manually |
 | Some commands work (via HTTP) but not WebSocket ones | Server doesn't recognize old-format results | Update both server and agent |
 | "Sending..." button never clears | Frontend JS error (stale cached files) | Hard refresh: Ctrl+Shift+R |
+
+### Agent ignores environment variables and uses old config
+
+**Symptom:** You set `NOBA_SERVER`, `NOBA_AGENT_KEY`, etc. via a systemd `EnvironmentFile`, but the agent still connects to the old server or uses the old API key.
+
+**Cause:** The agent loads environment variables as **defaults**, then the YAML config file at `/etc/noba-agent.yaml` (or `--config` path) **overrides** them. If an old YAML config exists, it wins.
+
+**Fix:** Either update the YAML file directly, or rename/remove it so env vars take effect:
+```bash
+# Option 1: Update the YAML file
+sudo nano /etc/noba-agent.yaml
+
+# Option 2: Remove YAML so env vars take effect
+sudo mv /etc/noba-agent.yaml /etc/noba-agent.yaml.bak
+sudo systemctl restart noba-agent
+```
+
+The config load order is: env vars (defaults) → YAML file (overrides) → CLI flags (highest priority).
 
 ### Agent commands rejected with "does not support" even though agent is recent
 
