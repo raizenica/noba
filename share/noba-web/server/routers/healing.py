@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 import time
 
@@ -12,6 +13,20 @@ from ..agent_store import _agent_cmd_lock, _agent_commands, _agent_data, _agent_
 from ..deps import _get_auth, _require_admin, _require_operator, db
 
 logger = logging.getLogger("noba")
+
+
+def _parse_duration(s: str) -> int:
+    """Parse '30m', '1h', '2h30m' into seconds."""
+    total = 0
+    for amount, unit in re.findall(r'(\d+)(h|m|s)', s):
+        amount = int(amount)
+        if unit == 'h':
+            total += amount * 3600
+        elif unit == 'm':
+            total += amount * 60
+        elif unit == 's':
+            total += amount
+    return total or 1800  # default 30 min
 
 router = APIRouter()
 
@@ -191,3 +206,88 @@ def api_refresh_capabilities(hostname: str, auth=Depends(_require_operator)):
     with _agent_cmd_lock:
         _agent_commands.setdefault(hostname, []).append(cmd)
     return {"status": "refresh_queued", "hostname": hostname}
+
+
+# ── Maintenance Windows ───────────────────────────────────────────────────────
+
+@router.get("/api/healing/maintenance")
+def api_list_maintenance(auth=Depends(_get_auth)):
+    """Return all active maintenance windows."""
+    return db.get_active_heal_maintenance_windows()
+
+
+@router.post("/api/healing/maintenance")
+async def api_create_maintenance(request: Request, auth=Depends(_require_operator)):
+    """Create a maintenance window.
+
+    Body: {"target": str, "duration": str, "reason": str, "action": str}
+    """
+    from ..deps import _read_body
+    body = await _read_body(request)
+    target = body.get("target")
+    duration_raw = body.get("duration")
+    reason = body.get("reason")
+    action = body.get("action", "suppress")
+
+    if not target or not duration_raw:
+        raise HTTPException(400, "target and duration are required")
+
+    duration_s = _parse_duration(str(duration_raw))
+    username, _ = auth
+    window_id = db.insert_heal_maintenance_window(
+        target=target,
+        duration_s=duration_s,
+        reason=reason,
+        action=action,
+        created_by=username,
+    )
+    db.audit_log("maintenance_create", username,
+                 f"target={target} duration={duration_s}s action={action}")
+    return {"id": window_id, "status": "created"}
+
+
+@router.delete("/api/healing/maintenance/{window_id}")
+def api_delete_maintenance(window_id: int, auth=Depends(_require_operator)):
+    """End a maintenance window early."""
+    found = db.end_heal_maintenance_window(window_id)
+    if not found:
+        raise HTTPException(404, f"No active maintenance window with id {window_id}")
+    username, _ = auth
+    db.audit_log("maintenance_end", username, f"window_id={window_id}")
+    return {"status": "ended"}
+
+
+# ── Rollback ──────────────────────────────────────────────────────────────────
+
+@router.post("/api/healing/rollback/{ledger_id}")
+def api_rollback(ledger_id: int, auth=Depends(_require_admin)):
+    """Execute a rollback for a heal ledger entry using its pre-heal snapshot."""
+    from ..healing.snapshots import execute_rollback, get_snapshot_by_ledger, is_reversible
+    from ..db import db as _db
+
+    conn = _db._get_conn()
+    lock = _db._lock
+
+    snapshot = get_snapshot_by_ledger(conn, lock, ledger_id)
+    if snapshot is None:
+        raise HTTPException(404, f"No snapshot found for ledger entry {ledger_id}")
+
+    action_type = snapshot.get("action_type", "")
+    if not is_reversible(action_type):
+        raise HTTPException(400, f"Action '{action_type}' is not reversible")
+
+    import json as _json
+    try:
+        snapshot_state = _json.loads(snapshot.get("state") or "{}")
+    except (ValueError, TypeError):
+        snapshot_state = {}
+
+    result = execute_rollback(
+        action_type=action_type,
+        target=snapshot.get("target", ""),
+        snapshot_state=snapshot_state,
+    )
+    username, _ = auth
+    db.audit_log("rollback", username,
+                 f"ledger_id={ledger_id} action_type={action_type} success={result.get('success')}")
+    return result
