@@ -62,6 +62,6 @@ async function togglePihole() {
         </div>
       </div>
     </template>
-    <div v-else class="empty-msg">Pi-hole unreachable — configure API in Settings.</div>
+    <div v-else class="empty-msg">Pi-hole unreachable — <router-link to="/settings?tab=integrations" class="empty-link">configure in Settings</router-link>.</div>
   </DashboardCard>
 </template>

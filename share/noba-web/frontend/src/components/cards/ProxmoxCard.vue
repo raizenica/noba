@@ -99,6 +99,6 @@ async function openPmxConsole(node, vmid, type) {
         No VMs or containers found.
       </div>
     </template>
-    <div v-else class="empty-msg">Proxmox unreachable — configure API token in Settings.</div>
+    <div v-else class="empty-msg">Proxmox unreachable — <router-link to="/settings?tab=integrations" class="empty-link">configure in Settings</router-link>.</div>
   </DashboardCard>
 </template>

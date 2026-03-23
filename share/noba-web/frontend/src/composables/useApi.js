@@ -1,5 +1,10 @@
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { useAuthStore } from '../stores/auth'
+
+// Module-level failure tracker — shared across all useApi() instances.
+// Header reads this to show a banner when background fetches are silently failing.
+const _apiHealth = reactive({ failures: 0, lastError: '', lastFailedAt: 0 })
+export function useApiHealth() { return _apiHealth }
 
 const _STATUS_MESSAGES = {
   400: 'Invalid request',
@@ -44,9 +49,13 @@ export function useApi() {
         throw new Error(_friendlyError(res.status, data.detail))
       }
       const ct = res.headers.get('content-type') || ''
+      _apiHealth.failures = Math.max(0, _apiHealth.failures - 1)
       if (ct.includes('application/json')) return await res.json()
       return await res.text()
     } catch (e) {
+      _apiHealth.failures++
+      _apiHealth.lastError = e.message || String(e)
+      _apiHealth.lastFailedAt = Date.now()
       if (e instanceof TypeError && e.message === 'Failed to fetch') {
         e.message = 'Connection lost — check your network'
         error.value = e.message

@@ -82,6 +82,6 @@ async function vmAction(id, name, action) {
         </div>
       </div>
     </template>
-    <div v-else class="empty-msg">TrueNAS API unreachable or not configured.</div>
+    <div v-else class="empty-msg">TrueNAS unreachable — <router-link to="/settings?tab=integrations" class="empty-link">configure in Settings</router-link>.</div>
   </DashboardCard>
 </template>

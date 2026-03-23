@@ -7,7 +7,7 @@ import { useNotificationsStore } from '../../stores/notifications'
 import { useAuthStore } from '../../stores/auth'
 import { useModalsStore } from '../../stores/modals'
 import { useApprovalsStore } from '../../stores/approvals'
-import { useApi } from '../../composables/useApi'
+import { useApi, useApiHealth } from '../../composables/useApi'
 
 const toggleSidebar = inject('toggleSidebar')
 const router = useRouter()
@@ -19,6 +19,7 @@ const auth = useAuthStore()
 const modals = useModalsStore()
 const approvalsStore = useApprovalsStore()
 const { get } = useApi()
+const apiHealth = useApiHealth()
 
 // ── Active maintenance windows ──────────────────────────────────────────────
 const activeMaintenanceWindows = ref([])
@@ -164,12 +165,24 @@ function openProfile() {
       class="offline-badge"
     ><i class="fas fa-wifi-slash" style="font-size:.6rem"></i> Offline</span>
 
+    <!-- API failure banner — visible when background fetches are silently failing -->
+    <span
+      v-if="apiHealth.failures >= 3"
+      class="live-pill"
+      style="background:color-mix(in srgb, var(--danger, #e53935) 15%, transparent);border:1px solid var(--danger, #e53935);color:var(--danger, #e53935);cursor:default"
+      :title="`${apiHealth.failures} API requests failing — ${apiHealth.lastError}`"
+    >
+      <i class="fas fa-exclamation-triangle" style="font-size:.6rem"></i>
+      {{ apiHealth.failures }} requests failing
+    </span>
+
     <!-- Active maintenance window indicator -->
     <span
       v-if="activeMaintenanceWindows.length > 0"
       class="live-pill"
-      style="background:color-mix(in srgb, var(--warning, #f0a500) 15%, transparent);border:1px solid var(--warning, #f0a500);color:var(--warning, #f0a500);cursor:default"
+      style="background:color-mix(in srgb, var(--warning, #f0a500) 15%, transparent);border:1px solid var(--warning, #f0a500);color:var(--warning, #f0a500);cursor:pointer"
       :title="maintenanceTooltip()"
+      @click="router.push('/settings?tab=maintenance')"
     >
       <i class="fas fa-wrench" style="font-size:.6rem"></i>
       Maintenance

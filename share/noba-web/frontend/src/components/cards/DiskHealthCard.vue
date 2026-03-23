@@ -69,6 +69,6 @@ const health = computed(() => {
         </div>
       </div>
     </template>
-    <div v-else class="empty-msg">Scrutiny not configured or unreachable.</div>
+    <div v-else class="empty-msg">Scrutiny unreachable — <router-link to="/settings?tab=integrations" class="empty-link">configure in Settings</router-link>.</div>
   </DashboardCard>
 </template>

@@ -99,8 +99,8 @@ defineExpose({ startRun })
       <pre
         id="run-console-out"
         style="
-          background: #0e0e10;
-          color: #e0e0e0;
+          background: var(--bg-darker, var(--bg));
+          color: var(--text);
           font-family: monospace;
           font-size: .75rem;
           line-height: 1.5;

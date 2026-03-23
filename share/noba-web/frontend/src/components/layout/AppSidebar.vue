@@ -33,8 +33,10 @@ function onSettingsClick() {
   settingsExpanded.value = !settingsExpanded.value
 }
 
-function onlineAgentCount() {
-  return (dashboardStore.live.agents || []).filter(a => a.online).length
+function agentCounts() {
+  const all = dashboardStore.live.agents || []
+  const online = all.filter(a => a.online).length
+  return { total: all.length, online }
 }
 </script>
 
@@ -57,7 +59,10 @@ function onlineAgentCount() {
       <router-link class="sidebar-nav-item" :class="{ active: route.name === 'agents' }" to="/agents">
         <i class="fas fa-robot nav-icon"></i>
         <span class="nav-label">Agents</span>
-        <span v-if="onlineAgentCount() > 0" class="nav-badge">{{ onlineAgentCount() }}</span>
+        <span v-if="agentCounts().total > 0"
+              class="nav-badge" :class="{ 'nav-badge--warn': agentCounts().online < agentCounts().total }">
+          {{ agentCounts().online }}/{{ agentCounts().total }}
+        </span>
       </router-link>
 
       <router-link class="sidebar-nav-item" :class="{ active: route.name === 'monitoring' }" to="/monitoring">

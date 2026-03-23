@@ -43,6 +43,6 @@ const plex = computed(() => dashboard.live.plex)
         </div>
       </div>
     </template>
-    <div v-else class="empty-msg">Media stack unreachable — configure API in Settings.</div>
+    <div v-else class="empty-msg">Media stack unreachable — <router-link to="/settings?tab=integrations" class="empty-link">configure in Settings</router-link>.</div>
   </DashboardCard>
 </template>

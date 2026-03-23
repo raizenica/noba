@@ -9,6 +9,14 @@ All notable changes to NOBA Command Center are documented in this file.
 - **Linked providers persisted to DB** — Social login account links (Google, GitHub, etc.) are now stored in a `linked_providers` table instead of an in-memory dict. Links survive service restarts.
 - **Credential encryption at rest** — Integration secrets in `config.yaml` (passwords, tokens, API keys) are now encrypted using Fernet symmetric encryption. Master key stored separately at `~/.config/noba/.master.key` (mode 0600). Existing plaintext configs are transparently encrypted on next save. `cryptography` added as a required dependency.
 
+### Improved
+- **Agent sidebar badge** — Now shows `online/total` count instead of hiding when all agents are offline. Warning color when some are down.
+- **API failure visibility** — Header shows a banner when background API requests are silently failing, with failure count and last error. Prevents the "everything looks fine but nothing is updating" trap.
+- **Setup wizard reset** — "Re-run Setup Wizard" button in Settings → General clears the welcome dismissal so onboarding can be re-triggered.
+- **Integration card empty states** — "configure in Settings" messages are now clickable links that navigate directly to the Integrations settings tab.
+- **Maintenance badge clickable** — Header maintenance window indicator now navigates to Settings → Maintenance on click.
+- **Theme-safe colors** — WorkflowBuilder node type colors and RunOutput console now use CSS theme variables instead of hardcoded hex values.
+
 ### Added
 - **First-run onboarding** — New users see a guided setup checklist instead of an unconfigured dashboard. Steps: Core Monitoring (auto-complete), Connect Services (integration wizard modal), Set Up Notifications (channel picker modal), Deploy Agents (deploy modal), Add Users (user creation modal). Progress tracked with checkmarks. Dismissible with "Continue to Dashboard".
 - **Docker update flow** — Update check detects Docker containers and shows pull/recreate instructions instead of the bare-metal apply button. GHCR workflow publishes images on push to main and tags.

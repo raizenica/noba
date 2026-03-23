@@ -102,6 +102,11 @@ async function uploadConfigRestore(evt) {
   }
 }
 
+function resetWelcome() {
+  localStorage.removeItem('noba:welcome_dismissed')
+  notify.addToast('Setup wizard will show on your next dashboard visit.', 'success')
+}
+
 async function resetLayout() {
   if (!await modals.confirm('Reset your dashboard layout to the factory defaults?')) return
   try {
@@ -275,6 +280,17 @@ async function resetLayout() {
           <i class="fas fa-undo"></i> Reset to Default Layout
         </button>
       </div>
+    </div>
+
+    <!-- Re-run onboarding -->
+    <div class="s-section">
+      <span class="s-label">Setup Wizard</span>
+      <p class="help-text" style="margin-bottom:.6rem">
+        Re-run the first-time onboarding checklist on the dashboard.
+      </p>
+      <button class="btn btn-sm" @click="resetWelcome">
+        <i class="fas fa-magic"></i> Re-run Setup Wizard
+      </button>
     </div>
 
     <!-- Save -->

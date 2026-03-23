@@ -540,12 +540,12 @@ onBeforeUnmount(() => { document.removeEventListener('contextmenu', onGlobalCtx)
 }
 .wb-add-btn:hover { background: var(--surface); border-color: var(--border-hi); color: var(--text); }
 
-.wb-action       { border-color: #3b82f6; color: #3b82f6; }
-.wb-condition    { border-color: #f59e0b; color: #f59e0b; }
-.wb-approval     { border-color: #f97316; color: #f97316; }
-.wb-parallel     { border-color: #a855f7; color: #a855f7; }
-.wb-delay        { border-color: #6b7280; color: #9ca3af; }
-.wb-notify       { border-color: #22c55e; color: #22c55e; }
+.wb-action       { border-color: var(--accent); color: var(--accent); }
+.wb-condition    { border-color: var(--warning); color: var(--warning); }
+.wb-approval     { border-color: color-mix(in srgb, var(--warning) 80%, var(--danger)); color: color-mix(in srgb, var(--warning) 80%, var(--danger)); }
+.wb-parallel     { border-color: var(--info, #a855f7); color: var(--info, #a855f7); }
+.wb-delay        { border-color: var(--text-muted); color: var(--text-muted); }
+.wb-notify       { border-color: var(--success); color: var(--success); }
 .wb-rotated { display: inline-block; transform: rotate(90deg); }
 
 .wb-toggle-btn {

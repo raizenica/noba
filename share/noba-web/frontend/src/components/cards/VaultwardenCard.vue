@@ -23,6 +23,6 @@ const vaultwarden = computed(() => dashboard.live.vaultwarden)
         <span class="row-val">{{ vaultwarden.orgs }}</span>
       </div>
     </template>
-    <div v-else class="empty-msg">Vaultwarden unreachable — configure in Settings.</div>
+    <div v-else class="empty-msg">Vaultwarden unreachable — <router-link to="/settings?tab=integrations" class="empty-link">configure in Settings</router-link>.</div>
   </DashboardCard>
 </template>
