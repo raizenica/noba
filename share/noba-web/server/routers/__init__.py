@@ -10,6 +10,7 @@ from .automations import router as automations_router
 from .containers import router as containers_router
 from .dashboards import router as dashboards_router
 from .infrastructure import router as infrastructure_router
+from .integration_instances import router as integration_instances_router
 from .integrations import router as integrations_router
 from .intelligence import router as intelligence_router
 from .monitoring import router as monitoring_router
@@ -23,6 +24,7 @@ api_router.include_router(stats_router)
 api_router.include_router(auth_router)
 api_router.include_router(admin_router)
 api_router.include_router(automations_router)
+api_router.include_router(integration_instances_router)
 api_router.include_router(integrations_router)
 api_router.include_router(agents_router)
 api_router.include_router(containers_router)
