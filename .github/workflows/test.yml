@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install fastapi 'uvicorn[standard]' psutil pyyaml httpx ruff
-          pip install pytest starlette httpx
+          pip install pytest pytest-asyncio starlette httpx
 
       - name: Lint
         run: ruff check share/noba-web/server/
