@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 
 from .connectivity_monitor import ConnectivityMonitor
@@ -9,6 +10,7 @@ from .correlation import HealCorrelator
 from .dependency_graph import DependencyGraph
 from .executor import HealExecutor
 from .governor import check_circuit_breaker, effective_trust
+from .maintenance import MaintenanceManager
 from .models import HealEvent, HealOutcome, HealPlan
 from .planner import HealPlanner
 
@@ -41,9 +43,40 @@ class HealPipeline:
         self._executor = HealExecutor(settle_times=settle_times)
         self._dep_graph: DependencyGraph | None = None
         self._connectivity = ConnectivityMonitor()
+        self._maintenance = self._init_maintenance(db)
         self._active_alerts: set[str] = set()  # currently-failing targets
         self._active_alerts_lock = threading.Lock()
         self.on_outcome = None  # optional callback for testing
+
+    @staticmethod
+    def _init_maintenance(db) -> MaintenanceManager:
+        """Create a MaintenanceManager backed by the DB or an in-memory fallback."""
+        try:
+            conn = db._get_conn()
+            lock = db._lock
+            if not isinstance(conn, sqlite3.Connection):
+                raise TypeError("not a real connection")
+        except (AttributeError, TypeError):
+            # Tests / mock DB — use a private in-memory SQLite
+            conn = sqlite3.connect(":memory:", check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS heal_maintenance_windows ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  target TEXT NOT NULL,"
+                "  cron_expr TEXT,"
+                "  duration_s INTEGER NOT NULL,"
+                "  reason TEXT,"
+                "  action TEXT NOT NULL DEFAULT 'suppress',"
+                "  active INTEGER NOT NULL DEFAULT 1,"
+                "  created_by TEXT,"
+                "  created_at INTEGER NOT NULL,"
+                "  expires_at INTEGER"
+                ")",
+            )
+            conn.commit()
+            lock = threading.Lock()
+        return MaintenanceManager(conn, lock)
 
     def update_rule_config(self, rule_id: str, config: dict) -> None:
         """Update or add a rule's config (thread-safe)."""
@@ -101,12 +134,26 @@ class HealPipeline:
                     )
                     return
 
+        # Maintenance window check
+        maint_action = self._maintenance.get_maintenance_action(event.target)
+        if maint_action:
+            if maint_action in ("suppress", "suppress_all"):
+                logger.info("Healing suppressed for %s — in maintenance window", event.target)
+                return
+            if maint_action == "notify_only":
+                # Will be forced to notify path below
+                pass
+
         rule_cfg = self._rules_cfg.get(event.rule_id, {})
         chain = rule_cfg.get("escalation_chain", [
             {"action": "restart_container", "params": {}, "verify_timeout": 30},
         ])
 
         trust = effective_trust(event.rule_id, event.source, self._db)
+
+        # Maintenance notify_only override
+        if maint_action == "notify_only":
+            trust = "notify"
 
         # Check circuit breaker
         if check_circuit_breaker(event.rule_id, self._db):
