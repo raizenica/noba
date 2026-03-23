@@ -5,6 +5,7 @@ import { useDashboardStore } from '../stores/dashboard'
 import { useSettingsStore } from '../stores/settings'
 import { useApi } from '../composables/useApi'
 import { useModalsStore } from '../stores/modals'
+import WelcomeSetup from '../components/welcome/WelcomeSetup.vue'
 
 // ── Card imports ──────────────────────────────────────────────────────────────
 import CoreSystemCard     from '../components/cards/CoreSystemCard.vue'
@@ -56,6 +57,40 @@ const dashboardStore = useDashboardStore()
 const settingsStore  = useSettingsStore()
 const { get, post, del } = useApi()
 const modals             = useModalsStore()
+
+// ── First-run detection ──────────────────────────────────────────────────────
+const welcomeDismissed = ref(localStorage.getItem('noba:welcome_dismissed') === '1')
+const _INTEGRATION_KEYS = [
+  'piholeUrl', 'hassUrl', 'unifiUrl', 'proxmoxUrl', 'truenasUrl',
+  'plexUrl', 'jellyfinUrl', 'qbitUrl', 'adguardUrl', 'sonarrUrl',
+  'radarrUrl', 'speedtestUrl', 'kumaUrl', 'monitoredServices',
+]
+const isFirstRun = computed(() => {
+  if (welcomeDismissed.value) return false
+  if (!settingsStore.loaded) return false
+  const d = settingsStore.data
+  return !_INTEGRATION_KEYS.some(k => d[k] && String(d[k]).trim())
+    && managedInstances.value.length === 0
+})
+function dismissWelcome() {
+  welcomeDismissed.value = true
+  localStorage.setItem('noba:welcome_dismissed', '1')
+  // Re-init masonry after dashboard cards render
+  setTimeout(() => {
+    if (gridRef.value) {
+      const observer = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const card = entry.target
+          if (card.offsetParent === null) continue
+          const height = card.getBoundingClientRect().height
+          const rowSpan = Math.ceil((height + 18) / 10)
+          card.style.gridRowEnd = `span ${rowSpan}`
+        }
+      })
+      gridRef.value.querySelectorAll('.card').forEach(c => observer.observe(c))
+    }
+  }, 300)
+}
 
 // ── Managed integration instances ────────────────────────────────────────────
 const managedInstances = ref([])
@@ -276,6 +311,11 @@ onUnmounted(() => {
 
 <template>
   <div>
+    <!-- ── First-run welcome ───────────────────────────────────────────────── -->
+    <WelcomeSetup v-if="isFirstRun" @dismiss="dismissWelcome" />
+
+    <!-- ── Dashboard ───────────────────────────────────────────────────────── -->
+    <template v-else>
     <!-- ── Health bar ──────────────────────────────────────────────────────── -->
     <div class="health-bar" title="Infrastructure health overview">
       <div
@@ -540,5 +580,6 @@ onUnmounted(() => {
 
     <!-- Glance-mode toggle — floats over the header area via slot or direct button -->
     <!-- Exposed as a ref so AppHeader or a parent can bind to it if needed -->
+    </template>
   </div>
 </template>

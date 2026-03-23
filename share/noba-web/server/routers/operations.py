@@ -512,9 +512,42 @@ def _git(repo_dir: str, *args: str, timeout: int = 30) -> subprocess.CompletedPr
     )
 
 
+def _is_docker() -> bool:
+    """Detect if running inside a Docker/Podman container."""
+    return os.path.isfile("/.dockerenv") or os.path.isfile("/run/.containerenv")
+
+
 @router.get("/api/system/update/check")
 async def api_update_check(auth=Depends(_require_operator)):
     """Check if a newer version is available on the remote."""
+    # Docker containers can't self-update via git — return instructions instead
+    if _is_docker():
+        latest = None
+        try:
+            import httpx as _httpx
+            r = await asyncio.to_thread(
+                _httpx.get,
+                "https://api.github.com/repos/raizenica/noba/releases/latest",
+                timeout=10,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                latest = data.get("tag_name", "").lstrip("v")
+        except Exception:
+            pass
+        return {
+            "update_available": bool(latest and latest != VERSION),
+            "current_version": VERSION,
+            "remote_version": latest or VERSION,
+            "docker": True,
+            "docker_image": "ghcr.io/raizenica/noba",
+            "docker_instructions": [
+                "docker pull ghcr.io/raizenica/noba:latest",
+                "docker stop noba && docker rm noba",
+                "docker run -d --name noba -p 8080:8080 -v noba-data:/app/config ghcr.io/raizenica/noba:latest",
+            ],
+        }
+
     repo_dir = _find_repo_dir()
     if not repo_dir:
         return {

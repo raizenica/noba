@@ -9,7 +9,14 @@ All notable changes to NOBA Command Center are documented in this file.
 - **Linked providers persisted to DB** — Social login account links (Google, GitHub, etc.) are now stored in a `linked_providers` table instead of an in-memory dict. Links survive service restarts.
 - **Credential encryption at rest** — Integration secrets in `config.yaml` (passwords, tokens, API keys) are now encrypted using Fernet symmetric encryption. Master key stored separately at `~/.config/noba/.master.key` (mode 0600). Existing plaintext configs are transparently encrypted on next save. `cryptography` added as a required dependency.
 
+### Added
+- **First-run onboarding** — New users see a guided setup checklist instead of an unconfigured dashboard. Steps: Core Monitoring (auto-complete), Connect Services (integration wizard modal), Set Up Notifications (channel picker modal), Deploy Agents (deploy modal), Add Users (user creation modal). Progress tracked with checkmarks. Dismissible with "Continue to Dashboard".
+- **Docker update flow** — Update check detects Docker containers and shows pull/recreate instructions instead of the bare-metal apply button. GHCR workflow publishes images on push to main and tags.
+- **Zero CDN dependencies** — Font Awesome, Chakra Petch, and JetBrains Mono are now bundled locally via npm. No external requests needed — works fully offline and fixes font/icon rendering issues in Docker.
+
 ### Fixed
+- **Health score trigger** — Scheduler was passing Database object instead of health score categories to `evaluate_health_thresholds`. Now uses cached results from the last health score computation.
+- **Masonry grid after welcome dismiss** — Re-initializes ResizeObserver after the welcome screen is dismissed so cards lay out correctly.
 - **Self-update install step** — Added `--skip-deps` and `--no-restart` to install.sh invocation during self-update, preventing failure under `NoNewPrivileges=true` systemd environments and double-restart race condition.
 
 ### Added

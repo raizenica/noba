@@ -130,7 +130,7 @@ async function resetLayout() {
           >
             <i class="fas fa-arrow-right" style="font-size:.6rem"></i>
             v{{ updateInfo.remote_version }} available
-            <span style="opacity:.6;font-weight:400">({{ updateInfo.commits_behind }} commit{{ updateInfo.commits_behind === 1 ? '' : 's' }})</span>
+            <span v-if="updateInfo.commits_behind" style="opacity:.6;font-weight:400">({{ updateInfo.commits_behind }} commit{{ updateInfo.commits_behind === 1 ? '' : 's' }})</span>
           </span>
           <span v-else-if="updateInfo && !updateInfo.error" style="font-size:.8rem;color:var(--success)">
             <i class="fas fa-check"></i> Up to date
@@ -145,13 +145,25 @@ async function resetLayout() {
           <div v-for="(line, i) in updateInfo.changelog" :key="i" style="padding:1px 0;opacity:.8">{{ line }}</div>
         </div>
 
+        <!-- Docker update instructions -->
+        <div v-if="updateInfo?.docker && updateInfo?.update_available" style="font-size:.8rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:.75rem 1rem">
+          <div style="font-weight:600;margin-bottom:.5rem;color:var(--accent)">
+            <i class="fas fa-docker"></i> Docker Update Instructions
+          </div>
+          <div style="font-family:var(--font-data);line-height:1.8">
+            <div v-for="(cmd, i) in updateInfo.docker_instructions" :key="i" style="padding:2px 0;opacity:.9">
+              <code style="background:var(--surface-2);padding:2px 6px;border-radius:3px">{{ cmd }}</code>
+            </div>
+          </div>
+        </div>
+
         <div style="display:flex;gap:.5rem;flex-wrap:wrap">
           <button class="btn" @click="checkForUpdates" :disabled="updateChecking">
             <i class="fas" :class="updateChecking ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>
             {{ updateChecking ? 'Checking...' : 'Check for Updates' }}
           </button>
           <button
-            v-if="updateInfo?.update_available"
+            v-if="updateInfo?.update_available && !updateInfo?.docker"
             class="btn btn-primary"
             @click="applyUpdate"
             :disabled="updateApplying"
