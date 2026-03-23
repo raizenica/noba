@@ -22,6 +22,7 @@
 12. [Dashboard layout corruption after navigation](#12-dashboard-layout-corruption-after-navigation)
 13. [Browser shows stale UI after update](#13-browser-shows-stale-ui-after-update)
     - [Security edge-case reference](#13a-security-edge-case-reference)
+    - [Fresh PVE install deployment notes](#13b-fresh-proxmox-ve-install--noba-deployment-notes)
 14. [Log analysis tips](#14-log-analysis-tips)
 15. [Resetting to defaults](#15-resetting-to-defaults)
 
@@ -682,6 +683,33 @@ The following edge cases have been tested against a live NOBA deployment and ver
 | Negative/giant range params | Clamp | Clamped by `_int_param` validators |
 
 > **Note:** NOBA uses parameterized SQL queries throughout (no string interpolation), FastAPI's Pydantic validation on path parameters, and Vue 3's auto-escaping for template rendering. The main security boundary is the JWT authentication layer + role-based access control.
+
+---
+
+## 13b. Fresh Proxmox VE install — NOBA deployment notes
+
+When deploying NOBA on a fresh PVE 9.x install, these steps are needed beyond the standard install:
+
+**1. Disable enterprise repos (deb822 format):**
+PVE 9 uses `.sources` files, not just `.list` files. Simply commenting lines with `sed` doesn't work — move them instead:
+```bash
+mv /etc/apt/sources.list.d/pve-enterprise.sources /etc/apt/sources.list.d/pve-enterprise.sources.disabled
+mv /etc/apt/sources.list.d/ceph.sources /etc/apt/sources.list.d/ceph.sources.disabled
+echo "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" > /etc/apt/sources.list.d/pve-no-subscription.list
+```
+
+**2. Install sudo** (not present on fresh PVE):
+```bash
+apt-get install -y sudo
+```
+
+**3. Fix Python typing_extensions conflict:**
+PVE ships `typing_extensions` as a system package that pip can't uninstall:
+```bash
+pip3 install --break-system-packages --ignore-installed typing_extensions fastapi 'uvicorn[standard]' psutil pyyaml httpx cryptography
+```
+
+**4. Docker containers need `--privileged`** — see [section 10](#docker-on-proxmox-ve--containers-fail-to-start-or-crash-immediately).
 
 ---
 
