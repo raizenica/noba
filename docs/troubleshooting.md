@@ -17,6 +17,7 @@
 11. [Agent commands stuck in "queued"](#11-agent-commands-stuck-in-queued)
     - [Agent commands rejected with "does not support"](#agent-commands-rejected-with-does-not-support-even-though-agent-is-recent)
     - [Endpoint monitor times out for local NOBA URL](#11a-endpoint-monitor-shows-down-or-times-out-for-local-noba-url)
+    - [IaC exports show "no data collected"](#11b-iac-exports-show-no-data-collected-even-with-agent-connected)
 12. [Dashboard layout corruption after navigation](#12-dashboard-layout-corruption-after-navigation)
 13. [Browser shows stale UI after update](#13-browser-shows-stale-ui-after-update)
 14. [Log analysis tips](#14-log-analysis-tips)
@@ -566,6 +567,33 @@ To monitor NOBA itself, use one of these approaches:
 - **Assign an agent**: Set the `agent_hostname` field on the monitor so the check is performed by the agent, not the server
 - **External monitoring**: Use a second NOBA instance, Uptime Kuma, or any external tool to check the endpoint
 - **Status page**: Use NOBA's built-in status page components instead, which don't rely on HTTP checks
+
+---
+
+## 11b. IaC exports show "no data collected" even with agent connected
+
+### Symptom
+The Ansible, Docker Compose, and Shell export endpoints (`/api/export/*`) return valid structure but show "No services/packages/containers discovered" even though the agent is connected and reporting metrics.
+
+### Cause
+The IaC exports read from the agent's **periodic telemetry blob** (CPU, memory, disks, load), which does not include detailed container, service, or package inventories. Those details only exist in the **command results** (`container_list`, `list_services`, `package_updates`), which are stored separately and not consumed by the export generator.
+
+### Workaround
+Before generating exports, send discovery commands to the agent to populate the data:
+```bash
+# From the dashboard command palette or via API:
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"container_list","params":{}}' \
+  http://localhost:8080/api/agents/<hostname>/command
+
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"list_services","params":{}}' \
+  http://localhost:8080/api/agents/<hostname>/command
+```
+
+> **Note:** This is a known design gap — the exports need the discovery command results merged into the agent data before they can generate meaningful output.
 
 ---
 
