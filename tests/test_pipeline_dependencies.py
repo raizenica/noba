@@ -108,15 +108,15 @@ class TestPipelineExternalRoot:
     def test_external_root_suppresses_all_downstream(self):
         """External node (ISP) failure should suppress all downstream healing."""
         pipeline = _make_pipeline_with_deps([
-            {"target": "isp:site-a", "type": "external", "site": "site-a"},
+            {"target": "upstream-wan", "type": "external", "site": "site-a"},
             {"target": "truenas", "type": "service", "site": "site-a",
-             "depends_on": ["isp:site-a"]},
+             "depends_on": ["upstream-wan"]},
             {"target": "plex", "type": "service", "site": "site-a",
              "depends_on": ["truenas"]},
         ])
 
         future = _alert_expiry()
-        pipeline._active_alerts = {"isp:site-a": future, "truenas": future}
+        pipeline._active_alerts = {"upstream-wan": future, "truenas": future}
 
         outcomes = []
         pipeline.on_outcome = lambda o: outcomes.append(o)
