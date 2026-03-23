@@ -195,6 +195,12 @@ from .integrations import (  # noqa: E402
     get_dependency as _dep_graph_get,
     delete_dependency as _dep_graph_delete,
     upsert_dependency as _dep_graph_upsert,
+    insert_heal_maintenance_window as _insert_heal_maint_window,
+    get_active_heal_maintenance_windows as _get_active_heal_maint_windows,
+    end_heal_maintenance_window as _end_heal_maint_window,
+    insert_snapshot as _insert_snapshot,
+    get_snapshot_row as _get_snapshot_row,
+    get_snapshot_by_ledger_id as _get_snapshot_by_ledger_id,
 )
 
 logger = logging.getLogger("noba")
@@ -726,6 +732,32 @@ class Database:
                     confirmed INTEGER DEFAULT 0,
                     created_at INTEGER NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS heal_maintenance_windows (
+                    id         INTEGER PRIMARY KEY,
+                    target     TEXT NOT NULL,
+                    cron_expr  TEXT,
+                    duration_s INTEGER NOT NULL,
+                    reason     TEXT,
+                    action     TEXT NOT NULL DEFAULT 'suppress',
+                    active     INTEGER NOT NULL DEFAULT 1,
+                    created_by TEXT,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS idx_heal_maint_active
+                    ON heal_maintenance_windows(active, expires_at);
+
+                CREATE TABLE IF NOT EXISTS heal_snapshots (
+                    id INTEGER PRIMARY KEY,
+                    ledger_id INTEGER,
+                    target TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_heal_snapshots_ledger
+                    ON heal_snapshots(ledger_id);
             """)
             # Migrate existing databases: add assigned_to column if missing
             try:
@@ -1448,6 +1480,16 @@ class Database:
     def dismiss_heal_suggestion(self, suggestion_id: int) -> None:
         _dismiss_heal_suggestion(self._get_conn(), self._lock, suggestion_id)
 
+    # ── Heal Snapshots ────────────────────────────────────────────────────────
+    def insert_snapshot(self, **kw) -> int:
+        return _insert_snapshot(self._get_conn(), self._lock, **kw)
+
+    def get_snapshot_row(self, snap_id: int) -> dict | None:
+        return _get_snapshot_row(self._get_conn(), self._lock, snap_id)
+
+    def get_snapshot_by_ledger_id(self, ledger_id: int) -> dict | None:
+        return _get_snapshot_by_ledger_id(self._get_conn(), self._lock, ledger_id)
+
     # ── Integration Instances ─────────────────────────────────────────────────
     def insert_integration_instance(self, **kw) -> None:
         _insert_instance(self._get_conn(), self._lock, **kw)
@@ -1504,3 +1546,13 @@ class Database:
 
     def upsert_dep_graph_node(self, **kw) -> None:
         _dep_graph_upsert(self._get_conn(), self._lock, **kw)
+
+    # ── Heal Maintenance Windows ───────────────────────────────────────────────
+    def insert_heal_maintenance_window(self, **kw) -> int:
+        return _insert_heal_maint_window(self._get_conn(), self._lock, **kw)
+
+    def get_active_heal_maintenance_windows(self) -> list[dict]:
+        return _get_active_heal_maint_windows(self._get_conn(), self._lock)
+
+    def end_heal_maintenance_window(self, window_id: int) -> bool:
+        return _end_heal_maint_window(self._get_conn(), self._lock, window_id)

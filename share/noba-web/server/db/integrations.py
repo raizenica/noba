@@ -376,3 +376,129 @@ def upsert_dependency(
              int(auto_discovered), int(confirmed), now),
         )
         conn.commit()
+
+
+# ── Heal Maintenance Windows ───────────────────────────────────────────────────
+
+def insert_heal_maintenance_window(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    *,
+    target: str,
+    duration_s: int,
+    reason: str | None = None,
+    action: str = "suppress",
+    cron_expr: str | None = None,
+    created_by: str | None = None,
+) -> int:
+    """Insert a heal maintenance window and return its id."""
+    now = int(time.time())
+    expires_at = now + duration_s if cron_expr is None else None
+    with lock:
+        cur = conn.execute(
+            """
+            INSERT INTO heal_maintenance_windows
+                (target, cron_expr, duration_s, reason, action, active, created_by,
+                 created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+            """,
+            (target, cron_expr, duration_s, reason, action, created_by, now, expires_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_active_heal_maintenance_windows(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+) -> list[dict]:
+    """Return all active, non-expired heal maintenance windows."""
+    now = int(time.time())
+    with lock:
+        cur = conn.execute(
+            """
+            SELECT * FROM heal_maintenance_windows
+            WHERE active = 1
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY created_at DESC
+            """,
+            (now,),
+        )
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+    return [dict(zip(cols, row)) for row in rows]
+
+
+def end_heal_maintenance_window(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    window_id: int,
+) -> bool:
+    """Deactivate a heal maintenance window early. Return True if found."""
+    with lock:
+        cur = conn.execute(
+            "UPDATE heal_maintenance_windows SET active = 0 WHERE id = ?",
+            (window_id,),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
+# ── Heal Snapshots ─────────────────────────────────────────────────────────────
+
+def insert_snapshot(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    *,
+    ledger_id: int | None,
+    target: str,
+    action_type: str,
+    state: str,
+) -> int:
+    """Store a pre-heal state snapshot and return its id."""
+    now = int(time.time())
+    with lock:
+        cur = conn.execute(
+            """
+            INSERT INTO heal_snapshots (ledger_id, target, action_type, state, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (ledger_id, target, action_type, state, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_snapshot_row(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    snap_id: int,
+) -> dict | None:
+    """Return a snapshot by its primary key, or None if not found."""
+    with lock:
+        cur = conn.execute(
+            "SELECT * FROM heal_snapshots WHERE id = ?", (snap_id,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row))
+
+
+def get_snapshot_by_ledger_id(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    ledger_id: int,
+) -> dict | None:
+    """Return the most recent snapshot for a given ledger row id, or None."""
+    with lock:
+        cur = conn.execute(
+            "SELECT * FROM heal_snapshots WHERE ledger_id = ? ORDER BY id DESC LIMIT 1",
+            (ledger_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row))
