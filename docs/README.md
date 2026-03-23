@@ -15,8 +15,8 @@ Built with FastAPI and Vue 3 for real-time monitoring, self-healing automation, 
 
 ## Quick Links
 
-- **Main README:** [../README.md](../README.md)
-- **Contributing:** [../CONTRIBUTING.md](../CONTRIBUTING.md)
-- **Changelog:** [../CHANGELOG.md](../CHANGELOG.md)
+- **Main README:** [GitHub](https://github.com/raizenica/noba#readme)
+- **Contributing:** [GitHub](https://github.com/raizenica/noba/blob/main/CONTRIBUTING.md)
+- **Changelog:** [GitHub](https://github.com/raizenica/noba/blob/main/CHANGELOG.md)
 - **Swagger UI:** `/api/docs` (when running)
 - **ReDoc:** `/api/redoc` (when running)

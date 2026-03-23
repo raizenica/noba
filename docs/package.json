@@ -2,7 +2,7 @@
   "name": "docs",
   "version": "1.0.0",
   "description": "NOBA Command Center — self-hosted infrastructure management platform.",
-  "main": "index.js",
+  "type": "module",
   "scripts": {
     "docs:dev": "vitepress dev",
     "docs:build": "vitepress build",
