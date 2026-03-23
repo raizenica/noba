@@ -12,7 +12,7 @@
 #          split incorrectly; a trailing separator produced an empty final element.
 #          Fixed with mapfile + grep -v '^$' to drop empties.
 #   BUG-3  PDF policy check used grep -q 'rw' on the format list, but policy-blocked
-#          PDF on Fedora/Nobara shows 'r--' or just no entry — so the check either
+#          PDF on some distros shows 'r--' or just no entry — so the check either
 #          false-negatives (passes when PDF is blocked) or false-positives (rejects
 #          when it's fine). Replaced with a live test: convert a 1×1 PNG to a temp
 #          PDF, which is the only reliable way to verify write permission.

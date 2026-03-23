@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# noba-dashboard.sh – Detailed terminal dashboard for Nobara automation
+# noba-dashboard.sh – Detailed terminal dashboard for Noba automation
 # Version: 3.1.0
 
 set -Eeuo pipefail
@@ -51,7 +51,7 @@ show_help() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 
-Display a real-time Nobara automation dashboard.
+Display a real-time Noba automation dashboard.
 
 Options:
   -w, --watch SECS   Refresh every SECS seconds

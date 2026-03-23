@@ -1,5 +1,5 @@
 #!/bin/bash
-# motd-generator.sh – Nobara Command Centre – Terminal banner
+# motd-generator.sh – Noba Command Centre – Terminal banner
 # Version: 2.0.0
 #
 # Bugs fixed vs 1.x:
@@ -143,7 +143,7 @@ print_header() {
     printf '\n'
 
     printf '  %-*s%s\n' $(( W_TOTAL - ${#ts} - 2 )) \
-        "$(c "$DIM" "Nobara Command Centre")" \
+        "$(c "$DIM" "Noba Command Centre")" \
         "$(c "$DIM" "$ts")"
     printf '\n'
     printf '%b' "$B"; hline "═"; printf '%b\n' "$NC"
@@ -372,7 +372,7 @@ while true; do
             cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Display Nobara system status as a terminal banner (MOTD).
+Display Noba system status as a terminal banner (MOTD).
 
 Options:
   --no-color    Disable colour output (for plain terminals / log capture)

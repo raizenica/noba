@@ -1,5 +1,5 @@
 #!/bin/bash
-# noba-tui.sh – Terminal UI (dialog) for launching Nobara scripts
+# noba-tui.sh – Terminal UI (dialog) for launching Noba scripts
 # Version: 2.4.0
 
 set -euo pipefail
@@ -42,7 +42,7 @@ show_help() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 
-Launch an interactive dialog-based menu to run various Nobara scripts.
+Launch an interactive dialog-based menu to run various Noba scripts.
 
 Options:
   --help        Show this help message
@@ -84,7 +84,7 @@ fi
 # Main menu
 # -------------------------------------------------------------------
 while true; do
-    if ! choice=$($DIALOG --clear --title "Nobara Automation Suite" \
+    if ! choice=$($DIALOG --clear --title "Noba Automation Suite" \
         --cancel-label "Exit" \
         --menu "Choose a script to execute:" 22 65 15 \
         "Backup"      "Run backup-to-nas.sh" \

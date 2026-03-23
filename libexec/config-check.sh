@@ -85,7 +85,7 @@ show_help() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Check configuration files and dependencies for the Nobara Automation Suite.
+Check configuration files and dependencies for the Noba Automation Suite.
 
 Options:
       --verbose        Show tool version strings and config file contents
@@ -243,7 +243,7 @@ should_check() {
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 _out "╔══════════════════════════════════════════════╗"
-_out "║  Nobara Suite — Config & Dependency Check    ║"
+_out "║  Noba Suite — Config & Dependency Check       ║"
 _out "╚══════════════════════════════════════════════╝"
 _out ""
 

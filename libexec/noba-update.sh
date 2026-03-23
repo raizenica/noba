@@ -145,7 +145,7 @@ fi
 
 cd "$REPO_DIR" || die "Cannot access '$REPO_DIR'"
 
-log_info "Starting Nobara suite update..."
+log_info "Starting Noba suite update..."
 
 # -------------------------------------------------------------------
 # Git update logic

@@ -506,7 +506,7 @@ restore_config() {
 show_help() {
     cat <<EOF
 Usage: noba-web [OPTIONS]
-Launch the Nobara Command Center web dashboard (default port: 8080).
+Launch the Noba Command Center web dashboard (default port: 8080).
 
 Options:
   --host HOST            Bind to a specific host or IP  (default: 0.0.0.0)

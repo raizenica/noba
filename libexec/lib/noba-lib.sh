@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# noba-lib.sh – Shared functions for Nobara automation scripts
+# noba-lib.sh – Shared functions for Noba automation scripts
 # Version: 3.1.0
 # Must be sourced, not executed.
 

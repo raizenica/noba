@@ -639,7 +639,7 @@ fi
 cat >> "$BODY" <<EOF
 ──────────────────────────────────────────
 Log file: $LOG_FILE
-This is an automated message from the Nobara Backup System v${VERSION}.
+This is an automated message from the Noba Backup System v${VERSION}.
 EOF
 
 send_report "$SUBJECT" "$BODY"

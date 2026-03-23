@@ -63,7 +63,7 @@ trap 'rm -f "$digest_file"' EXIT
 log_info "Generating daily digest..."
 
 {
-    echo "NOBARA AUTOMATION SUITE - DAILY DIGEST"
+    echo "NOBA AUTOMATION SUITE - DAILY DIGEST"
     echo "Host: $(hostname)"
     echo "Date: $(date)"
     echo "----------------------------------------"
