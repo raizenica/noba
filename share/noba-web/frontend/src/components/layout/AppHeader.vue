@@ -57,6 +57,7 @@ const themes = [
   { value: 'gruvbox', label: 'Gruvbox' },
   { value: 'dracula', label: 'Dracula' },
   { value: 'nord', label: 'Nord' },
+  { value: 'bloodmoon', label: 'Blood Moon' },
 ]
 
 function onThemeChange(event) {

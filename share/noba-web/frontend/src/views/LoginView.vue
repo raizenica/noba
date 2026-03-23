@@ -47,33 +47,55 @@
         {{ loading ? 'Authenticating...' : 'Login' }}
       </button>
 
-      <!-- SSO -->
-      <div style="text-align:center;margin-top:12px">
-        <div style="color:var(--text-dim);font-size:.75rem;margin-bottom:8px">— or —</div>
-        <a href="/api/auth/oidc/login" class="btn btn-sm">
-          <i class="fas fa-sign-in-alt"></i> Sign in with SSO
-        </a>
+      <!-- Social / SSO login -->
+      <div v-if="providers.length" style="text-align:center;margin-top:12px">
+        <div style="color:var(--text-dim);font-size:.75rem;margin-bottom:8px">— or sign in with —</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center">
+          <a v-for="p in providers" :key="p.id" :href="p.url" class="btn btn-sm social-btn">
+            <i :class="['fab', providerIcon(p.id)]" v-if="isFab(p.id)"></i>
+            <i :class="['fas', providerIcon(p.id)]" v-else></i>
+            {{ p.name }}
+          </a>
+        </div>
       </div>
     </form>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useDashboardStore } from '../stores/dashboard'
 import { useSettingsStore } from '../stores/settings'
+import { useApi } from '../composables/useApi'
 
 const router = useRouter()
 const auth = useAuthStore()
 const dashboard = useDashboardStore()
 const settings = useSettingsStore()
+const { get } = useApi()
 
 const username = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+const providers = ref([])
+
+onMounted(async () => {
+  try {
+    const data = await get('/api/auth/providers')
+    if (data && Array.isArray(data)) providers.value = data
+  } catch { /* no providers configured — that's fine */ }
+})
+
+function providerIcon(id) {
+  const icons = { google: 'fa-google', facebook: 'fa-facebook', github: 'fa-github', microsoft: 'fa-microsoft' }
+  return icons[id] || 'fa-sign-in-alt'
+}
+function isFab(id) {
+  return ['google', 'facebook', 'github', 'microsoft'].includes(id)
+}
 
 async function handleLogin() {
   if (loading.value) return

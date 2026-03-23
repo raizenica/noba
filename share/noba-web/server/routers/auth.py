@@ -130,68 +130,376 @@ async def api_totp_disable(request: Request, auth=Depends(_require_admin)):
     return {"status": "ok"}
 
 
-# ── OIDC routes ──────────────────────────────────────────────────────────────
+# ── Social / OIDC provider presets ────────────────────────────────────────────
+_PROVIDER_PRESETS = {
+    "google": {
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
+        "scope": "openid email profile",
+        "name": "Google",
+    },
+    "facebook": {
+        "authorize_url": "https://www.facebook.com/v19.0/dialog/oauth",
+        "token_url": "https://graph.facebook.com/v19.0/oauth/access_token",
+        "userinfo_url": "https://graph.facebook.com/me?fields=id,name,email",
+        "scope": "email public_profile",
+        "name": "Facebook",
+    },
+    "github": {
+        "authorize_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token",
+        "userinfo_url": "https://api.github.com/user",
+        "scope": "read:user user:email",
+        "name": "GitHub",
+    },
+    "microsoft": {
+        "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "userinfo_url": "https://graph.microsoft.com/v1.0/me",
+        "scope": "openid email profile User.Read",
+        "name": "Microsoft",
+    },
+}
+
+
+def _resolve_provider(cfg: dict, provider_key: str = "") -> dict | None:
+    """Resolve provider config from preset name or generic OIDC settings.
+
+    Supports both:
+    - Named presets: provider_key="google" with socialProviders.google.clientId/clientSecret
+    - Generic OIDC: oidcProviderUrl + oidcClientId + oidcClientSecret
+    """
+    # Check named social provider
+    if provider_key and provider_key in _PROVIDER_PRESETS:
+        social = cfg.get("socialProviders", {}).get(provider_key, {})
+        client_id = social.get("clientId", "")
+        client_secret = social.get("clientSecret", "")
+        if client_id:
+            preset = _PROVIDER_PRESETS[provider_key]
+            return {
+                "authorize_url": preset["authorize_url"],
+                "token_url": preset["token_url"],
+                "userinfo_url": preset["userinfo_url"],
+                "scope": preset["scope"],
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "name": preset["name"],
+            }
+        return None
+
+    # Fall back to generic OIDC
+    provider_url = cfg.get("oidcProviderUrl", "")
+    client_id = cfg.get("oidcClientId", "")
+    client_secret = cfg.get("oidcClientSecret", "")
+    if provider_url and client_id:
+        return {
+            "authorize_url": f"{provider_url.rstrip('/')}/authorize",
+            "token_url": f"{provider_url.rstrip('/')}/token",
+            "userinfo_url": f"{provider_url.rstrip('/')}/userinfo",
+            "scope": "openid email profile",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "name": "OIDC",
+        }
+    return None
+
+
+@router.get("/api/auth/providers")
+def api_auth_providers():
+    """List available authentication providers (for login page buttons)."""
+    cfg = read_yaml_settings()
+    providers = []
+    # Check each social preset
+    for key in _PROVIDER_PRESETS:
+        social = cfg.get("socialProviders", {}).get(key, {})
+        if social.get("clientId"):
+            providers.append({
+                "id": key,
+                "name": _PROVIDER_PRESETS[key]["name"],
+                "url": f"/api/auth/social/{key}/login",
+            })
+    # Check generic OIDC
+    if cfg.get("oidcProviderUrl") and cfg.get("oidcClientId"):
+        providers.append({
+            "id": "oidc",
+            "name": cfg.get("oidcProviderName", "SSO"),
+            "url": "/api/auth/oidc/login",
+        })
+    return providers
+
+
+# ── Social login routes (Google, Facebook, GitHub, Microsoft) ────────────────
+@router.get("/api/auth/social/{provider}/login")
+async def api_social_login(provider: str, request: Request):
+    """Redirect to social provider for authentication."""
+    cfg = read_yaml_settings()
+    prov = _resolve_provider(cfg, provider)
+    if not prov:
+        raise HTTPException(400, f"Provider '{provider}' not configured")
+    import urllib.parse
+    redirect_uri = str(request.url_for("api_social_callback", provider=provider))
+    params = {
+        "client_id": prov["client_id"],
+        "response_type": "code",
+        "scope": prov["scope"],
+        "redirect_uri": redirect_uri,
+    }
+    # Google requires access_type for refresh tokens
+    if provider == "google":
+        params["access_type"] = "offline"
+        params["prompt"] = "select_account"
+    return RedirectResponse(f"{prov['authorize_url']}?{urllib.parse.urlencode(params)}")
+
+
+@router.get("/api/auth/social/{provider}/callback")
+async def api_social_callback(provider: str, request: Request):
+    """Handle social provider callback — exchange code, create session."""
+    cfg = read_yaml_settings()
+    prov = _resolve_provider(cfg, provider)
+    if not prov:
+        raise HTTPException(400, f"Provider '{provider}' not configured")
+    code = request.query_params.get("code", "")
+    if not code:
+        raise HTTPException(400, "Missing authorization code")
+    redirect_uri = str(request.url_for("api_social_callback", provider=provider))
+    import httpx as _httpx
+    try:
+        # Exchange code for token
+        headers = {"Accept": "application/json"}
+        r = _httpx.post(prov["token_url"], data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": prov["client_id"],
+            "client_secret": prov["client_secret"],
+        }, headers=headers, timeout=10)
+        r.raise_for_status()
+        token_data = r.json()
+        access_token = token_data.get("access_token", "")
+        # Get user info
+        userinfo = _httpx.get(
+            prov["userinfo_url"],
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=5,
+        ).json()
+        # Extract email — different providers use different fields
+        email = (
+            userinfo.get("email")
+            or userinfo.get("mail")
+            or userinfo.get("preferred_username")
+            or userinfo.get("login")  # GitHub uses 'login'
+            or ""
+        )
+        if not email:
+            # GitHub: email may be private, need separate API call
+            if provider == "github":
+                emails_resp = _httpx.get(
+                    "https://api.github.com/user/emails",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=5,
+                ).json()
+                for e in emails_resp:
+                    if e.get("primary") and e.get("verified"):
+                        email = e["email"]
+                        break
+        if not email:
+            raise HTTPException(400, "Could not determine email from provider")
+        # Create or find user
+        if not users.exists(email):
+            users.add(email, "!oidc:disabled", "viewer")
+            logger.info("Social login: created user %s via %s", email, provider)
+        user_role = users.role(email)
+        noba_token = token_store.generate(email, user_role)
+        db.audit_log("social_login", email, f"{prov['name']} login", _client_ip(request))
+        # Issue one-time code
+        oidc_code = secrets.token_urlsafe(32)
+        with _oidc_codes_lock:
+            now = time.time()
+            expired = [k for k, (_, exp) in _oidc_codes.items() if now > exp]
+            for k in expired:
+                del _oidc_codes[k]
+            _oidc_codes[oidc_code] = (noba_token, now + 60)
+        return RedirectResponse(f"/#oidc_code={oidc_code}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Social callback error (%s): %s", provider, e)
+        raise HTTPException(502, f"{prov['name']} authentication failed")
+
+
+# ── Account linking — connect social provider to existing NOBA account ───────
+# Stored as JSON in a linked_providers field on the user record.
+# {provider: {email: "...", linked_at: timestamp}}
+_linked_providers: dict[str, dict] = {}  # username -> {provider: {email, linked_at}}
+_linked_lock = __import__("threading").Lock()
+
+
+@router.get("/api/auth/social/{provider}/link")
+async def api_social_link(provider: str, request: Request):
+    """Initiate account linking — redirect to provider, come back to link callback."""
+    cfg = read_yaml_settings()
+    prov = _resolve_provider(cfg, provider)
+    if not prov:
+        raise HTTPException(400, f"Provider '{provider}' not configured")
+    import urllib.parse
+    redirect_uri = str(request.url_for("api_social_link_callback", provider=provider))
+    # Pass the NOBA token as state so we know who's linking
+    token = request.query_params.get("token", "")
+    if not token:
+        raise HTTPException(400, "Missing token — must be logged in to link accounts")
+    params = {
+        "client_id": prov["client_id"],
+        "response_type": "code",
+        "scope": prov["scope"],
+        "redirect_uri": redirect_uri,
+        "state": token,  # NOBA auth token as state
+    }
+    return RedirectResponse(f"{prov['authorize_url']}?{urllib.parse.urlencode(params)}")
+
+
+@router.get("/api/auth/social/{provider}/link/callback")
+async def api_social_link_callback(provider: str, request: Request):
+    """Handle link callback — associate provider email with existing NOBA user."""
+    cfg = read_yaml_settings()
+    prov = _resolve_provider(cfg, provider)
+    if not prov:
+        raise HTTPException(400, f"Provider '{provider}' not configured")
+    code = request.query_params.get("code", "")
+    state = request.query_params.get("state", "")  # NOBA auth token
+    if not code or not state:
+        raise HTTPException(400, "Missing code or state")
+    # Verify the NOBA token to find who's linking
+    noba_user = token_store.validate(state)
+    if not noba_user:
+        raise HTTPException(401, "Invalid or expired token — please log in again")
+    noba_username = noba_user[0]
+    redirect_uri = str(request.url_for("api_social_link_callback", provider=provider))
+    import httpx as _httpx
+    try:
+        r = _httpx.post(prov["token_url"], data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": prov["client_id"],
+            "client_secret": prov["client_secret"],
+        }, headers={"Accept": "application/json"}, timeout=10)
+        r.raise_for_status()
+        token_data = r.json()
+        access_token = token_data.get("access_token", "")
+        userinfo = _httpx.get(
+            prov["userinfo_url"],
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=5,
+        ).json()
+        provider_email = (
+            userinfo.get("email") or userinfo.get("mail")
+            or userinfo.get("login") or ""
+        )
+        if not provider_email:
+            raise HTTPException(400, "Could not get email from provider")
+        # Store the link
+        with _linked_lock:
+            if noba_username not in _linked_providers:
+                _linked_providers[noba_username] = {}
+            _linked_providers[noba_username][provider] = {
+                "email": provider_email,
+                "linked_at": time.time(),
+                "name": prov["name"],
+            }
+        db.audit_log("social_link", noba_username,
+                     f"Linked {prov['name']} ({provider_email})", _client_ip(request))
+        logger.info("User %s linked %s account (%s)", noba_username, provider, provider_email)
+        return RedirectResponse("/#/settings/auth?linked=true")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Social link error (%s): %s", provider, e)
+        raise HTTPException(502, f"Failed to link {prov['name']} account")
+
+
+@router.get("/api/auth/linked-providers")
+def api_linked_providers(auth=Depends(_get_auth)):
+    """List providers linked to the current user's account."""
+    username, _ = auth
+    with _linked_lock:
+        linked = _linked_providers.get(username, {})
+    return {
+        provider: {"email": info["email"], "name": info["name"], "linked_at": info["linked_at"]}
+        for provider, info in linked.items()
+    }
+
+
+@router.delete("/api/auth/linked-providers/{provider}")
+def api_unlink_provider(provider: str, auth=Depends(_get_auth)):
+    """Unlink a social provider from the current account."""
+    username, _ = auth
+    with _linked_lock:
+        linked = _linked_providers.get(username, {})
+        if provider not in linked:
+            raise HTTPException(404, f"Provider '{provider}' not linked")
+        del linked[provider]
+    db.audit_log("social_unlink", username, f"Unlinked {provider}", "")
+    return {"status": "unlinked", "provider": provider}
+
+
+# ── Generic OIDC routes (backward compatible) ────────────────────────────────
 @router.get("/api/auth/oidc/login")
 async def api_oidc_login(request: Request):
     """Redirect to OIDC provider for authentication."""
     cfg = read_yaml_settings()
-    provider = cfg.get("oidcProviderUrl", "")
-    client_id = cfg.get("oidcClientId", "")
-    if not provider or not client_id:
+    prov = _resolve_provider(cfg)
+    if not prov:
         raise HTTPException(400, "OIDC not configured")
     import urllib.parse
     redirect_uri = str(request.url_for("api_oidc_callback"))
     params = urllib.parse.urlencode({
-        "client_id": client_id,
+        "client_id": prov["client_id"],
         "response_type": "code",
-        "scope": "openid email profile",
+        "scope": prov["scope"],
         "redirect_uri": redirect_uri,
     })
-    return RedirectResponse(f"{provider.rstrip('/')}/authorize?{params}")
+    return RedirectResponse(f"{prov['authorize_url']}?{params}")
 
 
 @router.get("/api/auth/oidc/callback")
 async def api_oidc_callback(request: Request):
     """Handle OIDC callback -- exchange code for token, create session."""
     cfg = read_yaml_settings()
-    provider = cfg.get("oidcProviderUrl", "")
-    client_id = cfg.get("oidcClientId", "")
-    client_secret = cfg.get("oidcClientSecret", "")
+    prov = _resolve_provider(cfg)
+    if not prov:
+        raise HTTPException(400, "OIDC not configured")
     code = request.query_params.get("code", "")
     if not code:
         raise HTTPException(400, "Missing authorization code")
     redirect_uri = str(request.url_for("api_oidc_callback"))
-    # Exchange code for token
     import httpx as _httpx
     try:
-        r = _httpx.post(f"{provider.rstrip('/')}/token", data={
+        r = _httpx.post(prov["token_url"], data={
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": prov["client_id"],
+            "client_secret": prov["client_secret"],
         }, timeout=10)
         r.raise_for_status()
         token_data = r.json()
-        # Get user info
         access_token = token_data.get("access_token", "")
         userinfo = _httpx.get(
-            f"{provider.rstrip('/')}/userinfo",
+            prov["userinfo_url"],
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=5,
         ).json()
         email = userinfo.get("email", userinfo.get("preferred_username", ""))
         if not email:
             raise HTTPException(400, "Could not determine user identity from OIDC")
-        # Create or find user, issue NOBA token
         if not users.exists(email):
             users.add(email, "!oidc:disabled", "viewer")
-        noba_token = token_store.generate(email, "viewer")
+        user_role = users.role(email)
+        noba_token = token_store.generate(email, user_role)
         db.audit_log("oidc_login", email, "OIDC login", _client_ip(request))
-        # Issue a short-lived one-time code instead of putting token in URL
         oidc_code = secrets.token_urlsafe(32)
         with _oidc_codes_lock:
-            # Purge expired codes
             now = time.time()
             expired = [k for k, (_, exp) in _oidc_codes.items() if now > exp]
             for k in expired:

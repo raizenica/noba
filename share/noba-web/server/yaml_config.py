@@ -88,7 +88,13 @@ def read_yaml_settings() -> dict:
         "hassEventTriggers": [], "hassSensors": "", "cameraFeeds": [],
         "frigateUrl": "",
         # ── Round 6: Security ──────────────────────────────────────────────
-        "oidcProviderUrl": "", "oidcClientId": "", "oidcClientSecret": "",
+        "oidcProviderUrl": "", "oidcClientId": "", "oidcClientSecret": "", "oidcProviderName": "SSO",
+        "socialProviders": {
+            "google": {"clientId": "", "clientSecret": ""},
+            "facebook": {"clientId": "", "clientSecret": ""},
+            "github": {"clientId": "", "clientSecret": ""},
+            "microsoft": {"clientId": "", "clientSecret": ""},
+        },
         "ldapUrl": "", "ldapBaseDn": "", "ldapBindDn": "", "ldapBindPassword": "",
         "ipWhitelist": "", "auditRetentionDays": 90, "require2fa": False,
         # ── Round 9: DevOps & Misc ─────────────────────────────────────────

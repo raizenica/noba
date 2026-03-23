@@ -107,6 +107,12 @@
         --text: #ebdbb2; --text-muted: #a89984; --text-dim: #7c6f64;
         --accent: #83a598; --success: #b8bb26; --warning: #fabd2f; --danger: #fb4934;
     }
+    [data-theme="bloodmoon"] {
+        --bg: #0a0a0a; --surface: #141010; --surface-2: #1e1616;
+        --border: #3a1c1c; --border-hi: #5c2020;
+        --text: #e8d5d5; --text-muted: #8a6060; --text-dim: #4a2828;
+        --accent: #cc1a1a; --success: #4caf50; --warning: #e65100; --danger: #ff1744;
+    }
 }
 
 /* ── 2. Global Layout Shell ── */
