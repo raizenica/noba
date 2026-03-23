@@ -518,22 +518,16 @@ fi
 
 header "Installing Web Dashboard"
 
-for f in server.py; do
-    src="$SCRIPT_DIR/share/noba-web/$f"
-    dst="$LIBEXEC_DIR/web/$f"
-    if [[ -f "$src" ]]; then
-        if [[ "$DRY_RUN" == true ]]; then
-            dry "install $src → $dst"
-        else
-            if [[ "$f" == "server.py" ]]; then
-                install_file "$src" "$dst" 755
-            else
-                install_file "$src" "$dst" 644
-            fi
-            say_ok "Web component: $f"
-        fi
+src="$SCRIPT_DIR/share/noba-web/server.py"
+dst="$LIBEXEC_DIR/web/server.py"
+if [[ -f "$src" ]]; then
+    if [[ "$DRY_RUN" == true ]]; then
+        dry "install $src → $dst"
+    else
+        install_file "$src" "$dst" 755
+        say_ok "Web component: server.py"
     fi
-done
+fi
 
 # Install the FastAPI server package (server/ directory)
 server_pkg_src="$SCRIPT_DIR/share/noba-web/server"

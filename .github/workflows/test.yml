@@ -2,34 +2,57 @@ name: CI Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install System Dependencies & BATS
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          # Install bats and required script packages so check_deps passes
-          sudo apt-get install -y bats dialog rsync jq lsof lm-sensors
-          # Install the official Go version of yq (apt often has the wrong Python version)
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod a+x /usr/local/bin/yq
+          pip install fastapi 'uvicorn[standard]' psutil pyyaml httpx ruff
+          pip install pytest starlette httpx
 
-      - name: Make scripts executable
-        run: |
-          chmod +x *.sh 2>/dev/null || true
-          chmod +x libexec/*.sh 2>/dev/null || true
-          chmod +x libexec/lib/*.sh 2>/dev/null || true
-          chmod +x tests/*.bats 2>/dev/null || true
+      - name: Lint
+        run: ruff check share/noba-web/server/
 
-      - name: Run BATS test suite
-        run: bats tests/
+      - name: Run tests
+        run: pytest tests/ -v
+        env:
+          PYTHONPATH: share/noba-web
 
-      - name: Run Edge-Case Test Harness
-        run: ./test-all.sh
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: share/noba-web/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd share/noba-web/frontend && npm ci
+
+      - name: Run tests
+        run: cd share/noba-web/frontend && npm test
+
+      - name: Build
+        run: cd share/noba-web/frontend && npm run build
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: shellcheck -S warning install.sh scripts/*.sh
