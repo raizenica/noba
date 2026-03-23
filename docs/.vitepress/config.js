@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: 'NOBA Command Center',
-  description: 'Self-hosted homelab monitoring, automation, and predictive intelligence.',
+  description: 'Self-hosted infrastructure monitoring, automation, and predictive intelligence.',
   base: '/noba/',
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/noba/favicon.svg' }],

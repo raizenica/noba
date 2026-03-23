@@ -367,6 +367,10 @@ These override compiled-in defaults and are useful for Docker deployments.
 | `SSL_KEY` | `""` | Path to TLS private key (PEM format) |
 | `NOBA_CONFIG` | `~/.config/noba/config.yaml` | Path to config.yaml |
 | `NOBA_SCRIPT_DIR` | `~/.local/libexec/noba` | Directory containing automation scripts |
+| `NOBA_REPO_DIR` | auto-detected | Git repo path (for self-update feature) |
+| `NOBA_REDIS_URL` | `""` | Optional Redis URL for caching |
+| `NOBA_CORS_ORIGINS` | `""` | Comma-separated CORS origins |
+| `NOBA_TERMINAL_ENABLED` | `true` | Enable/disable web terminal |
 | `PID_FILE` | `/tmp/noba-web-server.pid` | PID file location |
 | `TZ` | System default | Timezone for log timestamps |
 

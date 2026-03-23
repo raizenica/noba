@@ -30,7 +30,7 @@ Browser shows "Connection refused", a blank page, or a 502 from a reverse proxy.
 **1. Check if the server process is running:**
 ```bash
 # Bare-metal
-pgrep -a python3 | grep server.py
+pgrep -a python3 | grep noba
 # or
 cat /tmp/noba-web-server.pid && kill -0 $(cat /tmp/noba-web-server.pid)
 
@@ -64,7 +64,7 @@ Expected: `{"status": "ok", ...}`
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `Address already in use` | Another process owns port 8080 | Change `PORT` env var or kill the other process |
-| `ModuleNotFoundError` | Python module missing | `pip3 install --user <module>` (usually not needed — server uses stdlib only) |
+| `ModuleNotFoundError` | Python dependency missing | `pip3 install fastapi 'uvicorn[standard]' psutil pyyaml httpx` |
 | `Permission denied` on port 80/443 | Binding to privileged port | Use port 8080/8443 and a reverse proxy, or set `CAP_NET_BIND_SERVICE` |
 | Server starts but page is blank | JS error in browser | Open DevTools (F12) → Console tab; look for CORS or CSP errors |
 
@@ -74,7 +74,7 @@ Expected: `{"status": "ok", ...}`
 
 ### "Invalid credentials" on first login
 
-The default credentials are `admin` / `admin`. If you've changed them and forgotten:
+On first run, NOBA generates a random admin password (shown in the service log). If you've lost it:
 
 **Reset admin password:**
 ```bash
@@ -190,7 +190,7 @@ chmod +x ~/.local/libexec/noba/*.sh
 
 ### "Script not found" error
 
-The `SCRIPT_MAP` in `server.py` maps UI names to filenames. If you've customised the install prefix, set `NOBA_SCRIPT_DIR`:
+The `SCRIPT_MAP` in `config.py` maps UI names to filenames. If you've customised the install prefix, set `NOBA_SCRIPT_DIR`:
 ```bash
 # In noba-web or docker-compose.yml
 NOBA_SCRIPT_DIR=/opt/noba/libexec/noba
@@ -411,7 +411,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/agents
 ```
 
 **2. Check the agent version:**
-Agents must be running v2.1.0+ for reliable WebSocket command delivery. The agent version is shown in the agent detail panel.
+Agents must be running the latest version for reliable WebSocket command delivery. The agent version is shown in the agent detail panel.
 
 **3. Update agents:**
 Send an `update_agent` command from the dashboard, or manually update:
@@ -425,8 +425,8 @@ sudo systemctl restart noba-agent
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| All commands stuck | Agent < v2.1.0 has WebSocket result type collision | Update agent to v2.1.0+ |
-| Some commands work (via HTTP) but not WebSocket ones | Server doesn't recognize old-format results | Update server (v2.1.0+ has backward compatibility shim) |
+| All commands stuck | Agent version mismatch with WebSocket result format | Update agent from dashboard or manually |
+| Some commands work (via HTTP) but not WebSocket ones | Server doesn't recognize old-format results | Update both server and agent |
 | "Sending..." button never clears | Frontend JS error (stale cached files) | Hard refresh: Ctrl+Shift+R |
 
 ---
@@ -446,11 +446,11 @@ Ctrl+Shift+R (or Cmd+Shift+R on macOS)
 This forces the browser to fetch fresh static files and resolves most layout issues caused by stale cached JavaScript.
 
 **2. Check browser console for errors:**
-Open DevTools (F12) → Console tab. Look for ResizeObserver or Alpine.js errors.
+Open DevTools (F12) → Console tab. Look for ResizeObserver or Vue errors.
 
 ### Common causes
 
-This was caused by a masonry layout bug where the ResizeObserver leaked across page navigations. Fixed in v2.1.0 — the observer now disconnects before recreating and is scoped to dashboard cards only.
+This was caused by a layout bug where the ResizeObserver leaked across page navigations. Fixed — the observer now disconnects before recreating and is scoped to dashboard cards only.
 
 ---
 
@@ -527,7 +527,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/audit?limit=50
 
 ```bash
 rm ~/.config/noba-web/users.conf
-# Restart server — default admin/admin is recreated
+# Restart server — a new random admin password is generated (check service log)
 ```
 
 ### Reset config.yaml

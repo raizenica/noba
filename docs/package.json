@@ -1,7 +1,7 @@
 {
   "name": "docs",
   "version": "1.0.0",
-  "description": "A lightning-fast, highly secure, and monolithic homelab dashboard.",
+  "description": "NOBA Command Center — self-hosted infrastructure management platform.",
   "main": "index.js",
   "scripts": {
     "docs:dev": "vitepress dev",

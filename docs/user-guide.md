@@ -5,19 +5,18 @@
 1. [Overview](#1-overview)
 2. [Requirements](#2-requirements)
 3. [Installation](#3-installation)
-   - [Docker (Recommended)](#31-docker-recommended)
-   - [Bare-Metal / Native Install](#32-bare-metal--native-install)
-4. [First Run & Default Credentials](#4-first-run--default-credentials)
+4. [First Run](#4-first-run)
 5. [Navigating the Dashboard](#5-navigating-the-dashboard)
-6. [Configuring Integrations](#6-configuring-integrations)
-7. [Custom Actions & Automations](#7-custom-actions--automations)
-8. [User Management](#8-user-management)
-9. [Alert Rules](#9-alert-rules)
-10. [Running Automation Scripts](#10-running-automation-scripts)
-11. [Themes](#11-themes)
-12. [Keyboard Shortcuts](#12-keyboard-shortcuts)
-13. [Updating](#13-updating)
-14. [Uninstalling](#14-uninstalling)
+6. [Remote Agents](#6-remote-agents)
+7. [Integrations](#7-integrations)
+8. [Automations & Workflows](#8-automations--workflows)
+9. [Self-Healing Pipeline](#9-self-healing-pipeline)
+10. [Monitoring & SLA](#10-monitoring--sla)
+11. [User Management](#11-user-management)
+12. [Themes & Customization](#12-themes--customization)
+13. [Keyboard Shortcuts](#13-keyboard-shortcuts)
+14. [Updating](#14-updating)
+15. [Uninstalling](#15-uninstalling)
 
 ---
 
@@ -28,348 +27,295 @@ NOBA // Command Center is a self-hosted infrastructure management platform built
 - **Real-time system metrics** — CPU, memory, disk, temperature, network I/O, containers, ZFS
 - **Remote agent management** — deploy agents to any host, manage from one dashboard
 - **40+ integration cards** — Pi-hole, TrueNAS, Proxmox, Plex, Home Assistant, UniFi, and more
-- **Self-healing pipeline** — automatic detection, remediation, and graduated trust
-- **Automation engine** — workflows, webhooks, cron scheduling, approval gates
-- **Automation triggers** — run backup scripts, webhooks, and custom shell commands
-- **Historical charts** — time-series graphs for all key metrics
-- **Audit logging** — full audit trail of all user actions
-- **Multi-user access** — admin and viewer roles with PBKDF2-hashed passwords
+- **Self-healing pipeline** — automatic detection, correlation, remediation, and graduated trust
+- **Automation engine** — 10 automation types, visual workflow builder, approval gates, cron scheduling
+- **Endpoint monitoring** — HTTP/HTTPS checks, SLA tracking, cert expiry alerts
+- **Security posture** — per-agent scoring, config drift detection, findings dashboard
+- **Multi-user RBAC** — admin, operator, viewer roles with PBKDF2 hashing, TOTP 2FA, social login
 
 ---
 
 ## 2. Requirements
 
 ### Docker deployment
-- Docker ≥ 20.10 or Podman ≥ 4.0
-- Docker Compose ≥ 2.0
+- Docker >= 20.10 or Podman >= 4.0
+- Docker Compose >= 2.0
 
 ### Bare-metal deployment
-| Tool | Required | Purpose |
-|------|----------|---------|
-| Python 3.9+ | **Yes** | Backend server |
-| bash ≥ 4.0 | **Yes** | Automation scripts |
-| rsync | **Yes** | Backup operations |
-| yq (mikefarah) | Recommended | YAML config parsing |
-| jq | Recommended | JSON processing |
-| rclone | Optional | Cloud backup |
-| msmtp / mail | Optional | Email notifications |
-| sensors / lm_sensors | Optional | Temperature monitoring |
-| nvidia-smi | Optional | GPU temperature |
-| dialog | Optional | TUI interface |
+- Python 3.10+
+- pip packages: `fastapi`, `uvicorn[standard]`, `psutil`, `pyyaml`, `httpx`
+- Node.js 18+ (only if rebuilding the frontend)
+- bash >= 4.0 (for automation scripts)
+- git (for self-update feature)
 
 ---
 
 ## 3. Installation
 
-### 3.1 Docker (Recommended)
-
-**Step 1.** Create a working directory and `docker-compose.yml`:
-
-```yaml
-services:
-  noba-dashboard:
-    image: ghcr.io/raizenica/noba-web:latest
-    container_name: noba-dashboard
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      - TZ=Europe/London        # your timezone
-    volumes:
-      - ./data/config:/app/config
-      - ./data/logs:/root/.local/share
-      - /var/run/docker.sock:/var/run/docker.sock:ro  # optional: container stats
-```
-
-**Step 2.** Start the container:
-
-```bash
-docker compose up -d
-```
-
-**Step 3.** Open `http://<your-host-ip>:8080` in your browser.
-
-> **HTTPS:** Mount your certificates and set `SSL_CERT=/certs/fullchain.pem` and `SSL_KEY=/certs/privkey.pem` in the environment section. See [Configuration Reference](configuration.md) for full TLS options.
-
----
-
-### 3.2 Bare-Metal / Native Install
-
-**Step 1.** Clone the repository:
+### Docker
 
 ```bash
 git clone https://github.com/raizenica/noba.git
 cd noba
+docker compose up -d
 ```
 
-**Step 2.** Run the installer:
+Grab your generated admin password:
+```bash
+docker logs noba 2>&1 | grep password
+```
+
+Open `http://localhost:8080`.
+
+### Bare-Metal
 
 ```bash
-# Interactive install (prompts before each dependency step)
+git clone https://github.com/raizenica/noba.git
+cd noba
 bash install.sh
-
-# Unattended install — auto-approves all prompts and package installs
-bash install.sh --auto-approve
-
-# Dry-run to preview what would be installed
-bash install.sh --dry-run
-
-# Install to a custom prefix
-bash install.sh --prefix /opt/noba
-
-# Skip dependency installation (if you manage packages yourself)
-bash install.sh --skip-deps
 ```
 
-The installer:
-- Detects your Linux distribution and installs dependencies via the appropriate package manager (`dnf`, `apt`, `pacman`, `zypper`, `apk`)
-- Copies scripts to `~/.local/libexec/noba/`
-- Places the `noba` wrapper in `~/.local/bin/noba`
-- Generates a default config at `~/.config/noba/config.yaml`
-- Installs systemd user timers (optional — skippable with `--no-systemd`)
-- Sets up shell completions for bash, zsh, or fish
-
-**Step 3.** Ensure `~/.local/bin` is on your `PATH`:
+The installer detects your Linux distribution and handles dependencies. Options:
 
 ```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+bash install.sh --auto-approve   # Unattended install
+bash install.sh --dry-run        # Preview only
+bash install.sh --skip-deps      # Skip package installation
+bash install.sh --no-systemd     # Skip systemd unit setup
 ```
 
-**Step 4.** Launch the web dashboard:
-
+Grab your generated admin password:
 ```bash
-noba web --port 8080
-```
-
-Or with systemd:
-
-```bash
-systemctl --user enable --now noba-web.service
+journalctl --user -u noba-web.service | grep password
 ```
 
 ---
 
-## 4. First Run & Default Credentials
+## 4. First Run
 
-On first start, NOBA creates a default admin account:
+On first start, NOBA generates a random admin password (shown in the service log). Use it to log in, then change it in **Settings → Users**.
 
-| Field | Value |
-|-------|-------|
-| Username | `admin` |
-| Password | `admin` |
+### Roles
 
-> **Change this immediately.** Go to **Settings → Users** and click **Change Password** for the admin account.
-
-Password requirements:
-- Minimum **8 characters**
-- At least **one uppercase** letter
-- At least **one digit or symbol**
+| Role | Access |
+|------|--------|
+| **admin** | Full access: settings, user management, system update, agent deploy |
+| **operator** | Service control, automations, agent commands, approvals |
+| **viewer** | Read-only: dashboards, metrics, logs |
 
 ---
 
 ## 5. Navigating the Dashboard
 
+### Sidebar
+Persistent left sidebar with navigation to all views: Dashboard, Agents, Automations, Monitoring, Healing, Infrastructure, Security, Logs, Settings. Collapses to icon-only on small screens or via the hamburger button.
+
 ### Header Bar
 
 | Element | Description |
 |---------|-------------|
-| **NOBA // COMMAND CENTER** | Logo / home link |
-| Network health chips | WAN and LAN reachability (green = up, red = down) |
-| Username + role badge | Shows your username and role (admin / viewer) |
-| Theme selector | Choose from 6 colour themes |
-| **r** / Refresh button | Force-fetch latest stats |
-| **s** / Settings button | Open the settings panel |
-| Live pill | Green "Live" = SSE connected; "Xs" = polling fallback; "Offline" = no connection |
-| Logout | End your session |
+| Search bar | `Ctrl+K` command palette for quick navigation |
+| Refresh button | Force-fetch latest stats |
+| Theme selector | Choose from 7 colour themes |
+| Notification bell | Unread count + notification center |
+| Approval badge | Pending approvals count (operators/admins) |
+| Update pill | Appears when a new version is available (admins) |
+| Connection pill | Live (SSE) / Polling / Offline |
+| User avatar | Opens profile modal (API keys, sessions, password) |
 
-### Cards
+### Dashboard Cards
+All cards are **draggable** — grab any card header to reorder. Layout saves per-user. Cards can be shown/hidden via **Settings → Visibility**. Press `g` to collapse all cards to headers for a quick overview.
 
-All cards are **draggable** — grab any card header and drop it to reorder. Layout persists to `localStorage`. Each card has a **collapse toggle** (chevron icon) in the top-right corner to minimise it.
-
-Cards that depend on integrations (e.g. TrueNAS, Pi-hole) are hidden until the corresponding URL is configured in **Settings → Integrations**.
-
-### Alerts
-
-Red/yellow alert banners appear at the top of the dashboard when thresholds are breached. Click the **×** button to dismiss an alert for the current session.
+Integration cards auto-appear when you configure their service in **Settings → Integrations**.
 
 ---
 
-## 6. Configuring Integrations
+## 6. Remote Agents
 
-Open **Settings** (gear icon or press `s`) → **Integrations** tab.
+Deploy lightweight agents to any Linux or Windows host to monitor and manage them remotely.
 
-| Integration | Required Fields | Notes |
-|-------------|-----------------|-------|
-| **Pi-hole** | URL, API Token | Works with Pi-hole v5 (legacy API) and v6 (new API) |
-| **Plex** | URL, Token | Token found in Plex Web → Account → XML API |
-| **Uptime Kuma** | URL | Must have Prometheus metrics endpoint enabled in Kuma settings |
-| **TrueNAS SCALE** | URL, API Key | Create a key in TrueNAS → Settings → API Keys |
-| **Radarr** | URL, API Key | Found in Radarr → Settings → General |
-| **Sonarr** | URL, API Key | Found in Sonarr → Settings → General |
-| **qBittorrent** | URL, Username, Password | Web UI must be enabled in qBittorrent |
-| **Backup** | Destination path | Used by backup-to-nas.sh |
-| **Cloud** | rclone remote name | Run `rclone config` to set up a remote first |
+### Deploying
 
-Click **Apply & Save** after making changes. Settings are stored in `config.yaml` on the server.
+From the dashboard: **Agents → Deploy Agent**
 
-### Radar Targets (Ping Monitor)
-
-In the **Radar IPs** field, enter a comma-separated list of hosts to ping:
-
-```
-192.168.1.1, google.com, my-nas.local
+**Linux (one-liner):**
+```bash
+curl -sf "http://noba-server:8080/api/agent/install-script?key=YOUR_KEY" | sudo bash
 ```
 
-### Monitored Services
-
-In the **Monitored Services** field, enter a comma-separated list of systemd service names:
-
+**Windows (PowerShell):**
+```powershell
+.\install-agent.ps1 -Server "http://noba-server:8080" -Key "YOUR_KEY"
 ```
-nginx, docker, postgresql, sshd
-```
+
+### Capabilities
+
+- 32+ command types (service control, file transfer, log streaming, security scan, etc.)
+- WebSocket real-time communication with HTTP polling fallback
+- Browser-based remote terminal (PTY via xterm.js, admin-only)
+- File transfer up to 50 MB with SHA256 verification
+- Risk-tiered permissions (viewer/operator/admin)
+- Agents self-update from the NOBA server automatically
 
 ---
 
-## 7. Custom Actions & Automations
+## 7. Integrations
 
-### Custom Action Buttons
+### Setup Wizard
 
-Custom actions appear in the **Actions** card. Each action runs a shell command on the server.
+Go to **Settings → Integrations** and use the 4-step wizard:
+1. Pick a category (Media, Infrastructure, Network, IoT, etc.)
+2. Pick a platform (Plex, TrueNAS, Pi-hole, etc.)
+3. Configure URL, auth credentials, site, and tags
+4. Test connection → Save
 
-Edit `config.yaml` directly or use **Settings → Automations**:
+Configured integrations appear as dashboard cards automatically.
 
-```yaml
-web:
-  customActions:
-    - id: "reboot-dns"
-      name: "Reboot DNS Stack"
-      icon: "fa-sync-alt"
-      command: "ssh admin@192.168.100.111 sudo systemctl restart pihole-FTL"
+### Supported Categories (29)
 
-    - id: "clear-cache"
-      name: "Clear Cache"
-      icon: "fa-broom"
-      command: "find /tmp -name 'noba-*' -delete"
-```
+Media, Infrastructure, Network, IoT & Home, DevOps, Auth, Monitoring — covering 40+ platforms including Pi-hole, AdGuard, UniFi, TrueNAS, Proxmox, Plex, Jellyfin, Home Assistant, Frigate, qBittorrent, Vaultwarden, Uptime Kuma, Tailscale, and more.
 
-> **Security note:** Commands run as the user that owns the NOBA process. Avoid granting unnecessary privileges.
-
-### Webhook Automations
-
-Automations trigger an outbound HTTP request when clicked:
-
-```yaml
-web:
-  automations:
-    - id: "sync-n8n"
-      name: "Trigger n8n Sync"
-      url: "http://n8n.local:5678/webhook/sync"
-      method: "POST"
-```
+See the [main README](../README.md) for the full integration table.
 
 ---
 
-## 8. User Management
+## 8. Automations & Workflows
 
-Access **Settings → Users** (admin only).
+### Automation Types
 
-| Action | Description |
-|--------|-------------|
-| **Add User** | Create a new user with viewer or admin role |
-| **Change Password** | Reset any user's password |
-| **Remove User** | Delete a user account (cannot remove yourself) |
-
-Roles:
-- **admin** — full access including settings, user management, and service control
-- **viewer** — read-only dashboard access; cannot run scripts or change settings
-
-Password strength requirements are enforced server-side:
-- ≥ 8 characters
-- At least 1 uppercase letter (A–Z)
-- At least 1 digit or special character
-
----
-
-## 9. Alert Rules
-
-Alert rules evaluate metric conditions and send notifications. Configure in **Settings → Automations → Alert Rules**, or directly in `config.yaml`:
-
-```yaml
-web:
-  alertRules:
-    - id: "high-cpu"
-      name: "High CPU Usage"
-      condition: "cpu_percent > 90"
-      channel: "telegram"
-      message: "CPU usage is critically high!"
-
-    - id: "disk-warn"
-      name: "Disk Space Warning"
-      condition: "disk_percent > 85"
-      channel: "email"
-      message: "Disk usage has exceeded 85%"
-```
-
-Supported channels: `email`, `telegram`, `discord`, `slack`
-
-Condition syntax: `<metric> <operator> <value>` — for example:
-- `cpu_percent > 90`
-- `mem_percent >= 95`
-- `disk_percent > 80`
-- `cpu_temp > 85`
-
-A 5-minute cooldown prevents notification spam for the same rule.
-
----
-
-## 10. Running Automation Scripts
-
-The **Actions** card (and `noba` CLI) lets you trigger automation scripts:
-
-| Script | UI Button | CLI Command |
-|--------|-----------|-------------|
-| NAS Backup | Backup | `noba backup` |
-| Cloud Sync | Cloud Backup | `noba cloud` |
-| Backup Verify | Verify | `noba verify` |
-| Disk Check | Disk Sentinel | `noba disk` |
-| Downloads Organiser | Organise | `noba organize` |
-| System Update | Check Updates | `noba update` |
-
-Scripts run asynchronously; their output streams into the **Action Log** panel in real time.
-
-Only one script can run at a time. If you start a second script while one is running, you'll see an error message.
-
----
-
-## 11. Themes
-
-Select a theme in the header dropdown. Available themes:
-
-| Name | Description |
+| Type | Description |
 |------|-------------|
+| Script | Run a shell command or registered script |
+| Webhook | Send an outbound HTTP request |
+| Service | Start/stop/restart a systemd service |
+| HTTP | Generic HTTP request with auth options |
+| Condition | Evaluate a metric expression (gates workflow flow) |
+| Delay | Wait N seconds (in workflows) |
+| Notify | Send a notification via configured channels |
+| Agent Command | Execute a command on a remote agent |
+| Remediation | Run a healing action from the 55-action registry |
+| Workflow | Chain multiple automations with branching and approval gates |
+
+### Triggers
+
+- **Cron schedule** — standard 5-field cron expressions
+- **File system** — trigger on file/directory changes
+- **RSS feed** — trigger on new feed items
+- **Webhook** — inbound HMAC-validated webhooks
+- **Manual** — one-click from the dashboard
+
+### Workflow Builder
+
+Create multi-step workflows with:
+- Sequential and parallel execution
+- Conditional branching (metric-based)
+- Approval gates (pause until approved)
+- Delay nodes
+- Retry policies
+
+---
+
+## 9. Self-Healing Pipeline
+
+A 6-layer architecture for autonomous infrastructure repair:
+
+1. **Correlation** — deduplicate and absorb related events
+2. **Dependency analysis** — identify root cause, suppress downstream noise
+3. **Planning** — select escalation chain, score effectiveness
+4. **Execution** — run action with pre-flight checks and capability validation
+5. **Verification** — confirm target recovered
+6. **Learning** — record outcome, adjust trust levels
+
+### Trust Levels
+
+New rules start at `notify` and earn autonomy over time:
+
+`observation` → `dry_run` → `notify` → `approve` → `execute`
+
+Admins can promote/demote manually. Circuit breaker demotes on repeated failures.
+
+### Safety Controls
+
+- **Maintenance windows** — suppress or queue healing during planned downtime
+- **Tiered approvals** — low-risk auto-heals, high-risk requires human approval
+- **State snapshots** — pre-heal state captured for rollback
+- **Site isolation** — ISP outage detection prevents false restarts
+- **Chaos testing** — 12 scenarios for controlled fault injection
+
+---
+
+## 10. Monitoring & SLA
+
+### Endpoint Monitoring
+
+Create HTTP/HTTPS monitors in **Monitoring → Endpoints**:
+- Custom check intervals, expected status codes, timeout
+- Agent-dispatched checks for internal endpoints
+- TLS certificate expiry tracking and alerts
+- Response time metrics and trending
+
+### SLA Dashboard
+
+- 7-day, 30-day, 90-day uptime percentages per agent/service
+- Incident tracking with severity, assignment, and resolution
+- Public status page (no auth required) at `/#/status`
+
+---
+
+## 11. User Management
+
+**Settings → Users** (admin only)
+
+- Create users with admin, operator, or viewer role
+- Change passwords (enforced: 8+ chars, uppercase, digit/symbol)
+- TOTP 2FA enrollment
+- Social login (Google, GitHub, Facebook, Microsoft) via OIDC
+- API key management (per-user, with expiry)
+- Session management (view/revoke active sessions)
+
+---
+
+## 12. Themes & Customization
+
+Select a theme from the header dropdown:
+
+| Theme | Description |
+|-------|-------------|
 | Default | Dark terminal aesthetic |
 | Catppuccin | Soft pastel Mocha palette |
-| Tokyo Night | Deep blue Tokyo Night |
-| Gruvbox | Warm retro Gruvbox |
-| Dracula | Classic Dracula purple |
-| Nord | Cool arctic Nord palette |
+| Tokyo Night | Deep blue with neon accents |
+| Gruvbox | Warm retro palette |
+| Dracula | Classic purple/pink |
+| Nord | Cool arctic blues |
+| Blood Moon | Deep red/crimson |
 
-Theme selection is stored in `localStorage` and persists between sessions.
+Theme selection persists per-user across sessions.
+
+### Card Visibility & Layout
+
+- **Settings → Visibility** — toggle individual cards on/off
+- **Drag and drop** — reorder cards on the dashboard
+- **Settings → General → Reset Layout** — restore defaults
 
 ---
 
-## 12. Keyboard Shortcuts
+## 13. Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `s` | Toggle settings panel |
-| `r` | Refresh stats |
-| `Esc` | Close any open modal |
+| `Ctrl+K` | Open command palette / search |
+| `g` | Toggle quick-glance mode (collapse all cards) |
+| `Escape` | Close any open modal |
+
+Customize shortcuts in **Settings → Shortcuts**.
 
 ---
 
-## 13. Updating
+## 14. Updating
+
+### From the UI (recommended)
+
+Admins see an update notification in the header when a new version is available. Go to **Settings → General → System Update** to view the changelog and apply the update with one click.
 
 ### Docker
 
@@ -378,29 +324,23 @@ docker compose pull
 docker compose up -d
 ```
 
-### Bare-Metal
+### Bare-Metal (manual)
 
 ```bash
-noba update
-```
-
-Or manually:
-
-```bash
-cd ~/noba   # or wherever you cloned the repo
+cd ~/noba
 git pull origin main
-bash install.sh --skip-deps
+bash install.sh --auto-approve
 ```
 
 ---
 
-## 14. Uninstalling
+## 15. Uninstalling
 
 ### Docker
 
 ```bash
 docker compose down
-rm -rf ./data   # removes config and logs
+rm -rf ./data   # removes config and database
 ```
 
 ### Bare-Metal
@@ -409,9 +349,9 @@ rm -rf ./data   # removes config and logs
 bash install.sh --uninstall
 ```
 
-This removes all installed files listed in `~/.local/share/noba-install.manifest`. Your config (`~/.config/noba/`) and logs (`~/.local/share/noba-*.log`) are left intact. To remove them:
+This removes all installed files. Config (`~/.config/noba/`) and database (`~/.local/share/noba-history.db`) are preserved. To remove everything:
 
 ```bash
 rm -rf ~/.config/noba ~/.config/noba-web
-rm -f ~/.local/share/noba-*.log ~/.local/share/noba-*.db
+rm -f ~/.local/share/noba-history.db
 ```

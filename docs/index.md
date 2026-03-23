@@ -3,7 +3,7 @@ layout: home
 hero:
   name: NOBA
   text: Command Center
-  tagline: Self-hosted homelab monitoring, automation, and predictive intelligence.
+  tagline: Self-hosted infrastructure monitoring, automation, and predictive intelligence.
   actions:
     - theme: brand
       text: Get Started

@@ -12,6 +12,8 @@ Pass the token in either:
 
 Tokens are valid for 24 hours and expire automatically. A cleanup job runs every 5 minutes to purge expired tokens.
 
+> **Full interactive API docs** are available at `/api/docs` (Swagger UI) and `/api/redoc` (ReDoc) when the server is running. This document covers the core endpoints — for the complete reference (235+ routes across 13 routers), use the interactive docs.
+
 ### Roles
 
 | Role | Access |
@@ -530,6 +532,25 @@ Password must meet strength requirements (≥8 chars, ≥1 uppercase, ≥1 digit
 
 **Response `200`:** `{ "status": "ok" }`
 **Response `404`:** `{ "error": "User not found" }`
+
+---
+
+### Additional API Groups
+
+The following endpoint groups are fully documented in the interactive Swagger UI (`/api/docs`):
+
+| Prefix | Router | Description |
+|--------|--------|-------------|
+| `/api/agents/*` | agents | Agent management, commands, file transfer, WebSocket |
+| `/api/automations/*` | automations | CRUD, job runs, workflows, approval queue |
+| `/api/healing/*` | healing | Ledger, trust, suggestions, dependencies, dry-run, chaos |
+| `/api/monitoring/*` | monitoring | Endpoint monitors, SLA, incidents, dashboards |
+| `/api/integrations/*` | integrations | Instance CRUD, groups, catalog, connection test |
+| `/api/infrastructure/*` | infrastructure | Services, network devices, dependencies, baselines |
+| `/api/security/*` | security | Scores, findings, scan-all |
+| `/api/intelligence/*` | intelligence | AI chat, alert analysis (optional LLM) |
+| `/api/system/*` | operations | System info, health, update check/apply, backup/restore |
+| `/api/status/*` | stats | Public status page, components, uptime history |
 
 ---
 
