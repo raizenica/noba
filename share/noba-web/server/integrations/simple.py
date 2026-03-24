@@ -966,17 +966,24 @@ def get_scrutiny_intelligence(url: str) -> list[dict] | None:
 
 # ── Graylog ──────────────────────────────────────────────────────────────────
 def get_graylog(url: str, token: str, query: str = "*", hours: int = 1) -> dict | None:
-    """Query Graylog for recent log messages."""
+    """Query Graylog for recent log messages.
+
+    *token* can be a Graylog API token (used as ``token:token`` Basic auth)
+    or a ``user:password`` string for direct Basic auth.
+    """
     if not url or not token:
         return None
     base = url.rstrip("/")
     try:
         import base64 as b64
-        auth = b64.b64encode(f"{token}:token".encode()).decode()
+        # If token contains ':', treat as user:password; otherwise as API token
+        creds = token if ":" in token else f"{token}:token"
+        auth = b64.b64encode(creds.encode()).decode()
         r = _client.get(
             f"{base}/api/search/universal/relative",
             params={"query": query, "range": hours * 3600, "limit": 50, "sort": "timestamp:desc"},
-            headers={"Authorization": f"Basic {auth}", "Accept": "application/json"},
+            headers={"Authorization": f"Basic {auth}", "Accept": "application/json",
+                     "X-Requested-By": "noba"},
             timeout=10,
         )
         r.raise_for_status()

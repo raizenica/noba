@@ -99,7 +99,7 @@ WEB_KEYS = frozenset([
     "influxdbUrl", "influxdbToken", "influxdbOrg",
     # Round 11 – Ops Center expansion
     "agentKeys", "statusPageServices",
-    "graylogUrl", "graylogToken",
+    "graylogUrl", "graylogToken", "graylogUser", "graylogPassword",
     "runbooks",
     # AI / LLM
     "llmProvider", "llmModel", "llmApiKey", "llmBaseUrl",

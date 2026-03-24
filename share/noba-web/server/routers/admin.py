@@ -913,6 +913,12 @@ def api_graylog_search(request: Request, auth=Depends(_require_operator)):
     cfg = read_yaml_settings()
     url = cfg.get("graylogUrl", "")
     token = cfg.get("graylogToken", "")
+    # Support user:password auth as fallback when no API token is configured
+    if not token:
+        user = cfg.get("graylogUser", "")
+        password = cfg.get("graylogPassword", "")
+        if user and password:
+            token = f"{user}:{password}"
     query = request.query_params.get("q", "*")
     hours = min(_safe_int(request.query_params.get("hours", "1"), 1), 168)
     if not url:

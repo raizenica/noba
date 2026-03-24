@@ -7,6 +7,7 @@ All notable changes to NOBA Command Center are documented in this file.
 ### Fixed
 - **Alert condition validation** — Malformed conditions (bare operators, missing thresholds, garbage strings) are now rejected at creation time with clear error messages. Validation applied to create, update, and batch save endpoints.
 - **Heal action params double-nesting** — Legacy single-action alert rules were wrapping params inside an extra `params` key, causing heal execution to fail after approval. Fixed chain wrapper to extract params correctly.
+- **Graylog user/password auth** — Graylog search integration now supports both API token (`token:token`) and user/password (`user:password`) Basic auth. Added `X-Requested-By: noba` header required by Graylog v7+. New settings: `graylogUser`, `graylogPassword`.
 
 ### Added
 - **Trust state initialization** — `PUT /api/healing/trust/{rule_id}` endpoint to seed trust states directly. Previously only promote/demote existed, requiring a pre-existing state.
