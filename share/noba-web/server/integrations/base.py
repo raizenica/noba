@@ -14,9 +14,10 @@ _POOL_KEEPALIVE = int(os.environ.get("NOBA_POOL_KEEPALIVE", 10))
 logger = logging.getLogger("noba")
 
 # Shared client with connection pooling and sensible defaults.
+# follow_redirects disabled to prevent SSRF via redirect to internal IPs.
 _client = httpx.Client(
     timeout=4,
-    follow_redirects=True,
+    follow_redirects=False,
     limits=httpx.Limits(
         max_connections=_POOL_CONNECTIONS,
         max_keepalive_connections=_POOL_KEEPALIVE,

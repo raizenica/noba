@@ -21,7 +21,9 @@ _RUN_ALLOWED_PREFIXES = (
 
 
 def _is_safe_webhook_url(url: str) -> bool:
-    """Block requests to private/internal networks."""
+    """Block requests to private/internal networks (with DNS resolution)."""
+    import socket
+
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname or ""
@@ -30,16 +32,15 @@ def _is_safe_webhook_url(url: str) -> bool:
         # Block common internal hostnames
         if hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
             return False
-        # Try to parse as IP and check for private ranges
+        # Resolve hostname and check ALL resulting IPs
         try:
-            ip = ipaddress.ip_address(hostname)
+            addrs = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror:
+            return False  # unresolvable hostname
+        for family, _, _, _, sockaddr in addrs:
+            ip = ipaddress.ip_address(sockaddr[0])
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return False
-        except ValueError:
-            pass  # hostname, not IP — allow (DNS resolution check would need async)
-        # Block cloud metadata endpoints
-        if hostname == "169.254.169.254":
-            return False
         return True
     except Exception:
         return False
@@ -823,7 +824,15 @@ def _handle_run(params):
         return {"success": False, "error": "No command specified"}
     if not any(command.strip().startswith(prefix) for prefix in _RUN_ALLOWED_PREFIXES):
         return {"success": False, "error": f"Command not in allowlist: {command.split()[0]}"}
-    r = subprocess.run(shlex.split(command), timeout=60, capture_output=True, text=True)
+    # Validate all arguments after the allowed prefix to prevent abuse
+    parts = shlex.split(command)
+    for arg in parts[1:]:
+        if arg.startswith("-"):
+            continue  # flags are ok
+        # Validate service/container/path names — block shell metacharacters
+        if not re.match(r'^[a-zA-Z0-9@._/:\-]+$', arg):
+            return {"success": False, "error": f"Invalid argument: {arg!r}"}
+    r = subprocess.run(parts, timeout=60, capture_output=True, text=True)
     return {"success": r.returncode == 0, "output": (r.stdout + r.stderr)[:500]}
 
 

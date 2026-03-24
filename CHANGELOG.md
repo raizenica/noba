@@ -4,6 +4,11 @@ All notable changes to NOBA Command Center are documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **SSRF via redirect** — Shared httpx client now uses `follow_redirects=False` to prevent integration endpoints from being redirected to internal/cloud metadata IPs.
+- **Webhook DNS rebinding** — `_is_safe_webhook_url()` now resolves hostnames via `socket.getaddrinfo()` and checks all resulting IPs against private/loopback/link-local ranges. Previously only checked string-based IP parsing.
+- **Run command argument validation** — `_handle_run` now validates all arguments after the allowed prefix against `[a-zA-Z0-9@._/:-]` to prevent abuse of the allowlisted command prefixes.
+
 ### Fixed
 - **Alert condition validation** — Malformed conditions (bare operators, missing thresholds, garbage strings) are now rejected at creation time with clear error messages. Validation applied to create, update, and batch save endpoints.
 - **Heal action params double-nesting** — Legacy single-action alert rules were wrapping params inside an extra `params` key, causing heal execution to fail after approval. Fixed chain wrapper to extract params correctly.
