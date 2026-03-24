@@ -7,16 +7,22 @@
 3. [Installation](#3-installation)
 4. [First Run](#4-first-run)
 5. [Navigating the Dashboard](#5-navigating-the-dashboard)
-6. [Remote Agents](#6-remote-agents)
-7. [Integrations](#7-integrations)
-8. [Automations & Workflows](#8-automations--workflows)
-9. [Self-Healing Pipeline](#9-self-healing-pipeline)
-10. [Monitoring & SLA](#10-monitoring--sla)
-11. [User Management](#11-user-management)
-12. [Themes & Customization](#12-themes--customization)
-13. [Keyboard Shortcuts](#13-keyboard-shortcuts)
-14. [Updating](#14-updating)
-15. [Uninstalling](#15-uninstalling)
+6. [Custom Dashboards](#6-custom-dashboards)
+7. [Remote Agents](#7-remote-agents)
+8. [Integrations](#8-integrations)
+9. [Automations & Workflows](#9-automations--workflows)
+10. [Self-Healing Pipeline](#10-self-healing-pipeline)
+11. [AI / LLM Intelligence](#11-ai--llm-intelligence)
+12. [Monitoring & SLA](#12-monitoring--sla)
+13. [Health Score](#13-health-score)
+14. [Security Posture](#14-security-posture)
+15. [Status Page](#15-status-page)
+16. [User Management](#16-user-management)
+17. [Themes & Customization](#17-themes--customization)
+18. [Keyboard Shortcuts](#18-keyboard-shortcuts)
+19. [Multi-Site Operations](#19-multi-site-operations)
+20. [Updating](#20-updating)
+21. [Uninstalling](#21-uninstalling)
 
 ---
 
@@ -116,7 +122,7 @@ Persistent left sidebar with navigation to all views: Dashboard, Agents, Automat
 |---------|-------------|
 | Search bar | `Ctrl+K` command palette for quick navigation |
 | Refresh button | Force-fetch latest stats |
-| Theme selector | Choose from 7 colour themes |
+| Theme selector | Choose from 8 colour themes (including System/auto) |
 | Notification bell | Unread count + notification center |
 | Approval badge | Pending approvals count (operators/admins) |
 | Update pill | Appears when a new version is available (admins) |
@@ -130,7 +136,50 @@ Integration cards auto-appear when you configure their service in **Settings →
 
 ---
 
-## 6. Remote Agents
+## 6. Custom Dashboards
+
+Create purpose-built dashboards beyond the default view.
+
+### Creating a Dashboard
+
+`POST /api/dashboards` with a JSON body:
+
+```json
+{
+  "name": "NOC Overview",
+  "config_json": {
+    "widgets": [
+      { "type": "metric", "source": "cpu", "agent": "gateway-01" },
+      { "type": "chart", "source": "network_io", "span": "24h" },
+      { "type": "status_grid", "source": "endpoints" }
+    ]
+  },
+  "shared": true
+}
+```
+
+### Widget Types
+
+| Type | Description |
+|------|-------------|
+| `metric` | Single-value gauge (CPU, memory, temperature, etc.) |
+| `chart` | Time-series chart (line, bar, area) |
+| `status_grid` | Grid of endpoint/agent statuses |
+| `integration` | Embedded integration card |
+| `incidents` | Active incidents list |
+| `text` | Markdown note or runbook excerpt |
+
+### Sharing
+
+- **Private** — only the creator sees it (`"shared": false`)
+- **Shared** — visible to all users with at least viewer role (`"shared": true`)
+- Admins can manage all dashboards; operators/viewers only their own
+
+Full CRUD is available: `GET /api/dashboards`, `PUT /api/dashboards/{id}`, `DELETE /api/dashboards/{id}`.
+
+---
+
+## 7. Remote Agents
 
 Deploy lightweight agents to any Linux or Windows host to monitor and manage them remotely.
 
@@ -159,7 +208,7 @@ curl -sf "http://noba-server:8080/api/agent/install-script?key=YOUR_KEY" | sudo 
 
 ---
 
-## 7. Integrations
+## 8. Integrations
 
 ### Setup Wizard
 
@@ -179,7 +228,7 @@ See the [main README](https://github.com/raizenica/noba#-40-integrations) for th
 
 ---
 
-## 8. Automations & Workflows
+## 9. Automations & Workflows
 
 ### Automation Types
 
@@ -215,7 +264,7 @@ Create multi-step workflows with:
 
 ---
 
-## 9. Self-Healing Pipeline
+## 10. Self-Healing Pipeline
 
 A 6-layer architecture for autonomous infrastructure repair:
 
@@ -244,7 +293,46 @@ Admins can promote/demote manually. Circuit breaker demotes on repeated failures
 
 ---
 
-## 10. Monitoring & SLA
+## 11. AI / LLM Intelligence
+
+NOBA includes an optional AI assistant that understands your infrastructure in real time.
+
+### Configuration
+
+Enable in **Settings → AI/LLM**:
+
+| Setting | Description |
+|---------|-------------|
+| `llmEnabled` | Toggle AI features on/off |
+| `llmProvider` | `ollama`, `openai`, `anthropic`, or `custom` |
+| `llmModel` | Model name (e.g. `llama3.2:3b`, `gpt-4o`, `claude-sonnet-4-20250514`) |
+| `llmBaseUrl` | API endpoint (e.g. `http://localhost:11434` for Ollama) |
+
+For local/zero-cost operation, Ollama with `llama3.2:3b` is recommended for CPU-only hosts.
+
+### Infrastructure Chat
+
+Send natural-language questions via `POST /api/ai/chat`:
+
+```json
+{ "message": "Which agents have high CPU right now?" }
+```
+
+The system automatically injects live context — agent statuses, endpoint health, healing history, and health scores — so the model answers with awareness of your actual infrastructure.
+
+### Log Analysis
+
+Paste a log snippet to `POST /api/ai/analyze-logs` for an AI-generated breakdown:
+
+```json
+{ "logs": "Mar 24 02:14:07 gw kernel: nf_conntrack: table full..." }
+```
+
+Returns structured findings: root cause, severity, and recommended actions.
+
+---
+
+## 12. Monitoring & SLA
 
 ### Endpoint Monitoring
 
@@ -258,11 +346,100 @@ Create HTTP/HTTPS monitors in **Monitoring → Endpoints**:
 
 - 7-day, 30-day, 90-day uptime percentages per agent/service
 - Incident tracking with severity, assignment, and resolution
-- Public status page (no auth required) at `/#/status`
+- Public status page — see [Section 15: Status Page](#15-status-page)
 
 ---
 
-## 11. User Management
+## 13. Health Score
+
+Each agent and the platform as a whole receive a composite health score from 0 to 100, mapped to a letter grade.
+
+### Grading Scale
+
+| Score | Grade | Meaning |
+|-------|-------|---------|
+| 90–100 | A | Excellent — all checks passing |
+| 80–89 | B | Good — minor issues |
+| 70–79 | C | Fair — attention needed |
+| 60–69 | D | Poor — multiple problems |
+| < 60 | F | Critical — immediate action required |
+
+### Scoring Categories
+
+| Category | What It Measures |
+|----------|-----------------|
+| Monitoring coverage | Percentage of services with active checks |
+| Certificate health | Days to expiry, chain validity |
+| Update status | OS and package update freshness |
+| Uptime / SLA | Recent uptime percentage vs target |
+| Capacity | Disk, memory, and CPU headroom |
+| Backup freshness | Age of most recent verified backup |
+
+Scores update on every metrics cycle. View per-agent scores in **Agents → Health** or the aggregated platform score on the main dashboard.
+
+---
+
+## 14. Security Posture
+
+Agent-based security scanning evaluates each host against hardening best practices.
+
+### Running a Scan
+
+Trigger a scan from the UI (**Security → Scan**) or via API:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "$NOBA_URL/api/security/scan/gateway-01"
+```
+
+### Categories Checked
+
+- **SSH configuration** — root login, password auth, key-only enforcement
+- **Firewall** — active ruleset, default deny, open ports
+- **Automatic updates** — unattended-upgrades or equivalent enabled
+- **Password policy** — complexity requirements, account lockout
+- **File integrity** — SUID/SGID binaries, world-writable paths
+
+### Findings
+
+Each finding includes severity (`critical`, `high`, `medium`, `low`, `info`) and remediation advice. Findings aggregate across all agents into a platform-wide security score.
+
+### Baseline Drift Detection
+
+Create a baseline snapshot of expected file hashes for critical paths. NOBA compares subsequent scans against the baseline and flags any changes — useful for detecting unauthorized modifications across sites.
+
+---
+
+## 15. Status Page
+
+A public-facing status page at `/#/status` (no authentication required) shows service health to users and stakeholders.
+
+### Components
+
+Organize services into groups:
+
+| Group | Example Components |
+|-------|--------------------|
+| Core | NOBA API, Database, Auth |
+| Infrastructure | Proxmox, TrueNAS, Network |
+| Services | Plex, Home Assistant, Pi-hole |
+
+Each component shows real-time status: **operational**, **degraded**, **partial outage**, or **major outage**.
+
+### Incidents
+
+Incidents follow a lifecycle:
+
+1. **Investigating** — issue detected, root cause unknown
+2. **Identified** — cause found, working on fix
+3. **Monitoring** — fix applied, watching for recurrence
+4. **Resolved** — confirmed fixed
+
+Each status transition can include a timestamped message, building a public update timeline. Incidents can be created manually or auto-generated by the healing pipeline.
+
+---
+
+## 16. User Management
 
 **Settings → Users** (admin only)
 
@@ -275,13 +452,14 @@ Create HTTP/HTTPS monitors in **Monitoring → Endpoints**:
 
 ---
 
-## 12. Themes & Customization
+## 17. Themes & Customization
 
 Select a theme from the header dropdown:
 
 | Theme | Description |
 |-------|-------------|
-| Default | Dark terminal aesthetic |
+| System | Auto-detect from OS light/dark preference |
+| Operator | Dark terminal aesthetic (default) |
 | Catppuccin | Soft pastel Mocha palette |
 | Tokyo Night | Deep blue with neon accents |
 | Gruvbox | Warm retro palette |
@@ -299,7 +477,7 @@ Theme selection persists per-user across sessions.
 
 ---
 
-## 13. Keyboard Shortcuts
+## 18. Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
@@ -311,7 +489,58 @@ Customize shortcuts in **Settings → Shortcuts**.
 
 ---
 
-## 14. Updating
+## 19. Multi-Site Operations
+
+NOBA supports distributed deployments across multiple physical sites with independent failure domains.
+
+### Architecture
+
+Deploy a NOBA instance at each site. Each instance operates autonomously — if one site loses connectivity, the other continues monitoring and healing without interruption.
+
+### Cross-Site Endpoint Monitoring
+
+Configure each site to monitor the other's critical endpoints:
+
+- Site A watches Site B's gateway, NAS, and services
+- Site B watches Site A's gateway, NAS, and services
+- Alerts fire locally when the remote site becomes unreachable
+
+### Webhook Chains
+
+Link sites via outbound webhooks for cross-site alerting. All webhook payloads are signed with HMAC-SHA256 to prevent spoofing:
+
+```json
+{
+  "type": "webhook",
+  "url": "https://site-b.example.com/api/webhooks/inbound",
+  "secret": "shared-hmac-key",
+  "events": ["healing.executed", "endpoint.down", "agent.offline"]
+}
+```
+
+### Agent Multi-Homing
+
+A single agent can report to multiple NOBA instances simultaneously. Configure additional server URLs in the agent config:
+
+```yaml
+servers:
+  - url: "https://noba-site-a.local:8080"
+    key: "SITE_A_KEY"
+  - url: "https://noba-site-b.local:8080"
+    key: "SITE_B_KEY"
+```
+
+Both instances receive metrics and can issue commands. In a split-brain scenario, the agent accepts commands from either server independently.
+
+### Design Principles
+
+- **Independent failure domains** — no shared database or single point of failure
+- **Eventual consistency** — webhook events propagate state changes between sites
+- **Local-first healing** — each site heals its own infrastructure without cross-site dependencies
+
+---
+
+## 20. Updating
 
 ### From the UI (recommended)
 
@@ -334,7 +563,7 @@ bash install.sh --auto-approve
 
 ---
 
-## 15. Uninstalling
+## 21. Uninstalling
 
 ### Docker
 
