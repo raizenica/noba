@@ -800,22 +800,30 @@ async def api_decide_approval(approval_id: int, request: Request, auth=Depends(_
             logger.info("Approval %s: no resume node for decision=%s — workflow ends",
                         approval_id, decision)
     elif decision == "approved":
-        # Legacy non-graph approval: execute remediation action
+        # Legacy non-graph approval: execute remediation action in background
+        # thread to avoid blocking the event loop (remote agent dispatch uses
+        # queue_agent_command_and_wait which blocks with threading.Condition).
         import json as _json
+        import threading
         from ..remediation import execute_action
         action_params = approval.get("action_params") or {}
         if isinstance(action_params, str):
             action_params = _json.loads(action_params)
-        result = execute_action(
-            approval["action_type"],
-            action_params,
-            triggered_by=username,
-            trigger_type="approval",
-            trigger_id=str(approval_id),
-            target=approval.get("target"),
-            approved_by=username,
-        )
-        db.update_approval_result(approval_id, _json.dumps(result))
+
+        def _run_approved_action():
+            result = execute_action(
+                approval["action_type"],
+                action_params,
+                triggered_by=username,
+                trigger_type="approval",
+                trigger_id=str(approval_id),
+                target=approval.get("target"),
+                approved_by=username,
+            )
+            db.update_approval_result(approval_id, _json.dumps(result))
+
+        threading.Thread(target=_run_approved_action, daemon=True,
+                         name=f"approval-{approval_id}").start()
 
     ip = _client_ip(request)
     db.audit_log("approval_decision", username,
