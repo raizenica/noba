@@ -109,6 +109,7 @@ class HealExecutor:
                 plan.action_type, plan.action_params,
                 triggered_by=f"heal:{plan.request.correlation_key}",
                 trigger_type="healing_pipeline",
+                target=plan.request.primary_target,
             )
         except Exception as exc:
             logger.error("Heal executor action failed: %s", exc)

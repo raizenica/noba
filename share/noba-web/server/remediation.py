@@ -570,6 +570,49 @@ def validate_action(action_type, params):
     return None
 
 
+# ── Action → agent command mapping for remote dispatch ──────────────────────
+_AGENT_COMMAND_MAP: dict[str, tuple] = {
+    # action_type → (agent_cmd_type, params_transformer)
+    "restart_container": ("container_control", lambda p: {
+        "container": p.get("container", ""),
+        "action": "restart",
+    }),
+    "restart_service": ("restart_service", lambda p: {
+        "service": p.get("service", ""),
+    }),
+}
+
+
+def _try_agent_dispatch(action_type: str, params: dict, target: str) -> dict | None:
+    """Attempt to dispatch an action to a remote agent.
+
+    Returns the result dict if dispatched, or None to fall through to local.
+    """
+    from .agent_store import get_online_agents, queue_agent_command_and_wait
+
+    mapping = _AGENT_COMMAND_MAP.get(action_type)
+    if not mapping:
+        return None  # no remote mapping — fall through to local
+
+    online = get_online_agents()
+    if target not in online:
+        logger.debug("Target %r not online, falling through to local", target)
+        return None
+
+    cmd_type, transform = mapping
+    cmd_params = transform(params)
+
+    logger.info("Dispatching heal action %s to agent %s as %s", action_type, target, cmd_type)
+    result = queue_agent_command_and_wait(
+        target, cmd_type, cmd_params, timeout=30, queued_by="healing_pipeline",
+    )
+    if result is None:
+        return {"success": False, "output": f"Agent command timed out on {target}"}
+    status = result.get("status", "error")
+    output = result.get("output", result.get("stdout", ""))
+    return {"success": status == "ok", "output": f"[{target}] {cmd_type}: {output}"[:500]}
+
+
 def execute_action(action_type, params, triggered_by="system",
                    trigger_type="manual", trigger_id=None, target=None,
                    approved_by=None):
@@ -588,6 +631,27 @@ def execute_action(action_type, params, triggered_by="system",
 
     start = time.time()
     try:
+        # ── Remote agent dispatch ────────────────────────────────────
+        # If the target is a known online agent, dispatch the action as
+        # an agent command instead of running it locally.
+        if target and target not in ("", "localhost", "self"):
+            remote_result = _try_agent_dispatch(action_type, params, target)
+            if remote_result is not None:
+                result = remote_result
+                duration = round(time.time() - start, 2)
+                outcome = "success" if result.get("success", False) else "failure"
+                logger.info(
+                    "Action executed (remote): %s on %s", action_type, target,
+                    extra={"action_type": action_type, "target": target, "outcome": outcome},
+                )
+                _db.insert_action_audit(
+                    trigger_type=trigger_type, trigger_id=trigger_id,
+                    action_type=action_type, action_params=params,
+                    target=target, outcome=outcome, duration_s=duration,
+                    output=result.get("output", ""),
+                )
+                return {**result, "duration_s": duration, "remote": True}
+
         handler = _HANDLERS.get(action_type)
         if not handler:
             error_msg = f"No handler for: {action_type}"

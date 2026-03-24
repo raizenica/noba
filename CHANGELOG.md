@@ -12,6 +12,7 @@ All notable changes to NOBA Command Center are documented in this file.
 ### Added
 - **Trust state initialization** — `PUT /api/healing/trust/{rule_id}` endpoint to seed trust states directly. Previously only promote/demote existed, requiring a pre-existing state.
 - **IaC export auto-discovery** — `?discover=true` query parameter on all 3 export endpoints (Ansible, Docker Compose, shell script). Dispatches `discover_services` + `container_list` to the target agent, waits for WebSocket results, and merges into agent data before generating output. Warnings returned via `X-Noba-Discovery-Warning` header.
+- **Remote agent healing** — Healing executor now dispatches actions to remote agents via WebSocket when the alert rule specifies a `target` hostname. Maps `restart_container` → `container_control` and `restart_service` → agent commands. Falls back to local execution if target is not an online agent. Live-tested: stopped container on remote PVE, NOBA auto-restarted it via agent WebSocket in < 25 seconds.
 
 ### Improved
 - **SQLite read/write lock separation** — Read operations now use a separate connection with its own lock, allowing concurrent reads under WAL mode without blocking writers. Write operations keep the existing exclusive lock. ~60 read-only methods switched to the read path. `PRAGMA query_only=ON` on the read connection prevents accidental writes.
