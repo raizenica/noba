@@ -844,6 +844,15 @@
 
     /* ── Mobile (<= 640 px) ── */
     @media (max-width: 640px) {
+        .app-header .header-search { flex: 0; max-width: 44px; margin-right: .5rem; }
+        .app-header .header-search input { width: 44px; padding: 0; color: transparent; border: none; background: transparent; cursor: pointer; }
+        .app-header .header-search .search-kbd { display: none; }
+        .app-header .header-search .search-icon { left: 16px; opacity: .7; font-size: 1.1rem; }
+
+        .live-pill { padding: .4rem .6rem; font-size: 0; }
+        .live-pill i { font-size: .85rem; margin: 0; }
+        .live-pill .live-dot { margin: 0; }
+
         .page   { padding: 0 .875rem .875rem .875rem; }
         .header { margin: 0 -.875rem .875rem -.875rem; padding: .875rem; }
         .grid   { grid-template-columns: 1fr; }

@@ -179,7 +179,7 @@ class TestExecuteActionRestartService:
         assert result["success"] is True
         assert result["health_check"] == "pass"
         mock_run.assert_called_once_with(
-            ["sudo", "systemctl", "restart", "nginx.service"],
+            ["sudo", "-n", "systemctl", "--no-ask-password", "restart", "nginx.service"],
             capture_output=True, text=True, timeout=30,
         )
 
@@ -214,7 +214,7 @@ class TestExecuteActionFlushDns:
         assert result["success"] is True
         assert "DNS" in result["output"]
         mock_run.assert_called_once_with(
-            ["sudo", "systemd-resolve", "--flush-caches"],
+            ["sudo", "-n", "systemd-resolve", "--flush-caches"],
             capture_output=True, text=True, timeout=10,
         )
 

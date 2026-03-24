@@ -14,7 +14,7 @@ from ..agent_store import (
 )
 from ..deps import (
     _client_ip, _get_auth, _int_param, _read_body,
-    _require_admin, _require_operator, _safe_int, db,
+    _require_admin, _require_operator, db,
 )
 from ..yaml_config import read_yaml_settings
 

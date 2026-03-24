@@ -15,6 +15,12 @@ All notable changes to NOBA Command Center are documented in this file.
 - **`.dockerignore`** — Excludes `.git`, `node_modules`, `__pycache__`, `tests/`, `.venv` from Docker build context.
 
 ### Improved
+- **Reliable metrics rollups** — Refactored `rollup_to_1m` and `rollup_to_1h` to be gap-aware. Background tasks now automatically identify and fill missing historical data points after server outages or high-load delays.
+- **Mobile header optimization** — Collapsed the search bar and status pills on mobile viewports to prevent overcrowding and ensure critical controls remain accessible.
+- **Stalled collector awareness** — Added a warning banner to the header that appears if background data collection hangs, showing the time since the last successful refresh.
+- **Unified confirmations** — Standardized all destructive actions (delete, wipe, bulk toggle) to use the global `modals.confirm()` store, replacing local dialog components and improving UI consistency.
+- **Actionable empty states** — Refactored "No data" screens in Users and Integrations tabs to include direct call-to-action buttons for creating the first record.
+- **Interactive log tailer polish** — Enhanced `LogStreamModal` with smart auto-scroll logic and a "New logs below" button that appears when scrolled up.
 - **Plugin execution watchdog** — Implemented strict timeouts for plugin `collect()` and `render()` calls using `ThreadPoolExecutor`. Prevents misbehaving plugins from hanging background threads.
 - **`_cleanup_transfers` resilience** — Added inner exception guards to the file transfer cleanup loop to prevent silent task death on transient I/O errors.
 - **Unified integration error handling** — Standardized 40+ service integrations to differentiate between `ConfigError` (auth/URL) and `TransientError` (network/5xx). Detailed failure reasons are now propagated to the collector and UI.
@@ -71,6 +77,7 @@ All notable changes to NOBA Command Center are documented in this file.
 - Agent reports now trigger persistence on every report cycle (not just on command completion)
 
 ### Security
+- **CLI command hardening** — Hardened `cmd_run` and `cmd_exec` in `noba-cli.sh` against JSON injection by switching to native Python encoding for all POST request bodies.
 - **Database foreign key enforcement** — Enabled `PRAGMA foreign_keys = ON` for all database connections. Ensures relational integrity and prevents orphaned records in the audit and healing trails.
 - **API input validation hardened** — Eliminated 18 bare `int()` casts on query parameters across the backend routers. Standardized on `_safe_int` and `_int_param` helpers to prevent unhandled 500 errors on invalid user input.
 - **Plugin read-only enforcement** — Refactored `PluginContext.query()` to use the dedicated read-only database connection and lock. Strictly prevents write operations (DELETE/DROP) via the plugin API.

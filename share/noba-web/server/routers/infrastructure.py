@@ -70,7 +70,7 @@ async def api_service_control(request: Request, auth=Depends(_require_operator))
     if not svc or not validate_service_name(svc):
         raise HTTPException(400, "Invalid service name")
     cmd = (["systemctl", "--user", action, svc] if is_user
-           else ["sudo", "-n", "systemctl", action, svc])
+           else ["sudo", "-n", "systemctl", "--no-ask-password", action, svc])
     try:
         r = await asyncio.to_thread(subprocess.run, cmd, timeout=10, capture_output=True)
         success = r.returncode == 0

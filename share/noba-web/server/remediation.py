@@ -736,7 +736,7 @@ def _handle_restart_container(params):
 
 def _handle_restart_service(params):
     svc = _safe_name(params["service"], pattern=r'^[a-zA-Z0-9@._\-]+$')
-    r = subprocess.run(["sudo", "systemctl", "restart", svc],
+    r = subprocess.run(["sudo", "-n", "systemctl", "--no-ask-password", "restart", svc],
                       capture_output=True, text=True, timeout=30)
     return {"success": r.returncode == 0, "output": r.stdout + r.stderr}
 
@@ -752,7 +752,7 @@ def _handle_flush_dns(params):
             return {"success": True, "output": "Pi-hole DNS restarted"}
         except Exception as e:
             return {"success": False, "output": str(e)}
-    r = subprocess.run(["sudo", "systemd-resolve", "--flush-caches"],
+    r = subprocess.run(["sudo", "-n", "systemd-resolve", "--flush-caches"],
                       capture_output=True, text=True, timeout=10)
     return {"success": r.returncode == 0, "output": "DNS cache flushed"}
 
@@ -760,8 +760,8 @@ def _handle_flush_dns(params):
 def _handle_clear_cache(params):
     target = params.get("target", "system")
     if target == "system":
-        subprocess.run(["sudo", "sync"], capture_output=True, text=True, timeout=10)
-        subprocess.run(["sudo", "sh", "-c", "echo 3 > /proc/sys/vm/drop_caches"],
+        subprocess.run(["sudo", "-n", "sync"], capture_output=True, text=True, timeout=10)
+        subprocess.run(["sudo", "-n", "sh", "-c", "echo 3 > /proc/sys/vm/drop_caches"],
                       capture_output=True, text=True, timeout=10)
         return {"success": True, "output": "System cache cleared"}
     return {"success": False, "output": f"Unknown cache target: {target}"}

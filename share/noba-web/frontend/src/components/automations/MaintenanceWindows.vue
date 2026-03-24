@@ -4,11 +4,13 @@ import { useApi }                from '../../composables/useApi'
 import { useAuthStore }          from '../../stores/auth'
 import { useNotificationsStore } from '../../stores/notifications'
 import AppModal                  from '../ui/AppModal.vue'
-import ConfirmDialog             from '../ui/ConfirmDialog.vue'
+
+import { useModalsStore } from '../../stores/modals'
 
 const { get, post, put, del } = useApi()
 const authStore = useAuthStore()
 const notify    = useNotificationsStore()
+const modals    = useModalsStore()
 
 // ── Data ───────────────────────────────────────────────────────────────────
 const windows         = ref([])
@@ -155,10 +157,8 @@ async function saveWindow() {
 }
 
 // ── Delete ──────────────────────────────────────────────────────────────────
-const confirmRef = ref(null)
-
 async function deleteWindow(w) {
-  const ok = await confirmRef.value.confirm(`Delete maintenance window "${w.name}"?`)
+  const ok = await modals.confirm(`Delete maintenance window "${w.name}"?`)
   if (!ok) return
   try {
     await del(`/api/maintenance-windows/${w.id}`)
@@ -458,8 +458,5 @@ onUnmounted(() => {
         </button>
       </template>
     </AppModal>
-
-    <!-- Confirm dialog -->
-    <ConfirmDialog ref="confirmRef" />
   </div>
 </template>

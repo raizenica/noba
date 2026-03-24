@@ -171,7 +171,7 @@ def _execute_heal(action_cfg: dict, rule_id: str, read_settings_fn) -> bool:
 
         if atype == "restart_service":
             svc = target if target.endswith(".service") else f"{target}.service"
-            cmd = ["systemctl", "restart", svc]
+            cmd = ["systemctl", "--no-ask-password", "restart", svc]
             if subprocess.os.geteuid() != 0:
                 cmd = ["sudo", "-n"] + cmd
             r = subprocess.run(cmd, timeout=30, capture_output=True)

@@ -164,7 +164,7 @@ def _build_auto_service_process(config: dict) -> subprocess.Popen | None:
     if config.get("is_user"):
         cmd = ["systemctl", "--user", action, svc]
     else:
-        cmd = ["sudo", "-n", "systemctl", action, svc]
+        cmd = ["sudo", "-n", "systemctl", "--no-ask-password", action, svc]
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             start_new_session=True)
 

@@ -60,7 +60,7 @@ async def api_recovery_dns(request: Request, auth=Depends(_require_operator)):
     try:
         result = await asyncio.to_thread(
             subprocess.run,
-            ["sudo", "-n", "systemctl", "restart", dns_svc],
+            ["sudo", "-n", "systemctl", "--no-ask-password", "restart", dns_svc],
             capture_output=True, text=True, timeout=15,
         )
         db.audit_log("recovery_dns_flush", username, f"exit={result.returncode}", ip)
@@ -81,7 +81,7 @@ async def api_recovery_service(request: Request, auth=Depends(_require_operator)
     try:
         result = await asyncio.to_thread(
             subprocess.run,
-            ["sudo", "-n", "systemctl", "restart", service],
+            ["sudo", "-n", "systemctl", "--no-ask-password", "restart", service],
             capture_output=True, text=True, timeout=30,
         )
         db.audit_log("recovery_service_restart", username, f"service={service} exit={result.returncode}", ip)

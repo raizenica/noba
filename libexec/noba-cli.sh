@@ -126,9 +126,9 @@ cmd_run() {
         echo "Usage: noba-cli run <script> [args...]" >&2
         return 1
     fi
-    local body="{\"script\":\"$script\""
-    [[ -n "$args" ]] && body+=",\"args\":\"$args\""
-    body+="}"
+    # Safely encode JSON body using python
+    local body
+    body=$(python3 -c "import json,sys; print(json.dumps({'script':sys.argv[1], 'args':sys.argv[2]}))" "$script" "$args")
     _api POST "/api/run" -d "$body" | python3 -m json.tool 2>/dev/null
 }
 
@@ -207,15 +207,17 @@ cmd_exec() {
         echo "        noba-cli exec dnsa01 exec '{\"command\":\"uptime\"}'" >&2
         return 1
     fi
-    local params="${3:-\{\}}"
+    local params="${3:-{}}"
+    
+    # Safely encode JSON body using python. 
+    # params is expected to be a JSON string; we parse it and re-serialize.
+    local payload
+    payload=$(python3 -c "import json,sys; p=json.loads(sys.argv[3]) if sys.argv[3] else {}; print(json.dumps({'type':sys.argv[1], 'params':p}))" "$cmd_type" "" "$params" 2>/dev/null)
+    
     if [[ "$target" == "--all" ]]; then
-        _api POST "/api/agents/bulk-command" \
-            -H "Content-Type: application/json" \
-            -d "{\"type\":\"$cmd_type\",\"params\":$params}" | python3 -m json.tool 2>/dev/null
+        _api POST "/api/agents/bulk-command" -d "$payload" | python3 -m json.tool 2>/dev/null
     else
-        _api POST "/api/agents/$target/command" \
-            -H "Content-Type: application/json" \
-            -d "{\"type\":\"$cmd_type\",\"params\":$params}" | python3 -m json.tool 2>/dev/null
+        _api POST "/api/agents/$target/command" -d "$payload" | python3 -m json.tool 2>/dev/null
     fi
 }
 

@@ -165,6 +165,17 @@ function openProfile() {
       class="offline-badge"
     ><i class="fas fa-wifi-slash" style="font-size:.6rem"></i> Offline</span>
 
+    <!-- Collector status banner — visible when background updates are stalled -->
+    <span
+      v-if="dashboardStore.live.collector_status === 'stalled'"
+      class="live-pill"
+      style="background:color-mix(in srgb, var(--warning, #f0a500) 15%, transparent);border:1px solid var(--warning, #f0a500);color:var(--warning, #f0a500);cursor:default"
+      :title="`Background collection has stalled. Last update was ${dashboardStore.live.collector_pulse}s ago.`"
+    >
+      <i class="fas fa-history" style="font-size:.6rem"></i>
+      Stale Data ({{ Math.floor(dashboardStore.live.collector_pulse) }}s)
+    </span>
+
     <!-- API failure banner — visible when background fetches are silently failing -->
     <span
       v-if="apiHealth.failures >= 3"

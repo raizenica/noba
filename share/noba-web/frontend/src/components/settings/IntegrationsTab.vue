@@ -140,8 +140,13 @@ const cats = [
           </button>
         </div>
       </div>
-      <div v-if="!showSetup && !instances.length" class="empty-msg">
-        No managed integrations yet. Click "Add Integration" to set one up.
+      <div v-if="!showSetup && !instances.length" class="empty-msg" style="padding:2rem;text-align:center;background:var(--surface);border:1px dashed var(--border);border-radius:6px">
+        <i class="fas fa-plug" style="font-size:2rem;display:block;margin-bottom:.75rem;opacity:.3"></i>
+        No managed integrations yet.
+        <br>
+        <button class="btn btn-primary" style="margin-top:1rem" @click="showSetup = true">
+          <i class="fas fa-plus"></i> Add First Integration
+        </button>
       </div>
     </div>
 

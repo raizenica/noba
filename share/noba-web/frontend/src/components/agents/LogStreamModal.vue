@@ -21,6 +21,7 @@ const loading    = ref(false)
 const lines      = ref([])
 const cursor     = ref(0)
 const autoScroll = ref(true)
+const hasNewLogs = ref(false)
 
 let _interval = null
 
@@ -40,6 +41,27 @@ function lineClass(line) {
   return ''
 }
 
+// ── UI Helpers ────────────────────────────────────────────────────────────────
+function onScroll(e) {
+  const el = e.target
+  const isAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 10
+  if (isAtBottom) {
+    autoScroll.value = true
+    hasNewLogs.value = false
+  } else {
+    autoScroll.value = false
+  }
+}
+
+function jumpToBottom() {
+  const el = document.getElementById('log-stream-output')
+  if (el) {
+    el.scrollTop = el.scrollHeight
+    autoScroll.value = true
+    hasNewLogs.value = false
+  }
+}
+
 // ── Stream controls ───────────────────────────────────────────────────────────
 async function startStream() {
   if (!props.hostname) return
@@ -57,7 +79,7 @@ async function startStream() {
       active.value   = true
       _startPoll()
     }
-  } catch { /* non-fatal — stream start failure handled by UI state */
+  } catch { /* silent */
   } finally {
     loading.value = false
   }
@@ -92,11 +114,14 @@ async function _pollLines() {
     if (data?.lines?.length > 0) {
       lines.value = lines.value.concat(data.lines).slice(-2000)
       cursor.value = data.cursor || 0
+      
       if (autoScroll.value) {
         nextTick(() => {
           const el = document.getElementById('log-stream-output')
           if (el) el.scrollTop = el.scrollHeight
         })
+      } else {
+        hasNewLogs.value = true
       }
     }
     if (!data?.active) {
@@ -106,7 +131,7 @@ async function _pollLines() {
   } catch { /* silent */ }
 }
 
-// ── Cleanup on close / unmount ────────────────────────────────────────────────
+// ── Cleanup ───────────────────────────────────────────────────────────────────
 watch(() => props.show, (val) => {
   if (!val) {
     _stopPoll()
@@ -180,19 +205,31 @@ function handleClose() {
     </div>
 
     <!-- Log output -->
-    <div
-      id="log-stream-output"
-      style="height:360px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:.4rem .6rem;font-family:monospace;font-size:.68rem;line-height:1.45"
-    >
-      <div v-if="lines.length === 0 && !active" style="color:var(--text-muted);padding:.5rem 0">
-        Press Start to begin streaming logs from <strong>{{ hostname }}</strong>.
-      </div>
+    <div style="position:relative">
       <div
-        v-for="(line, i) in lines"
-        :key="i"
-        :class="lineClass(line)"
-        style="white-space:pre-wrap;word-break:break-all"
-      >{{ line }}</div>
+        id="log-stream-output"
+        style="height:360px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:.4rem .6rem;font-family:monospace;font-size:.68rem;line-height:1.45"
+        @scroll="onScroll"
+      >
+        <div v-if="lines.length === 0 && !active" style="color:var(--text-muted);padding:.5rem 0">
+          Press Start to begin streaming logs from <strong>{{ hostname }}</strong>.
+        </div>
+        <div
+          v-for="(line, i) in lines"
+          :key="i"
+          :class="lineClass(line)"
+          style="white-space:pre-wrap;word-break:break-all"
+        >{{ line }}</div>
+      </div>
+
+      <!-- Jump to Bottom button -->
+      <button
+        v-if="hasNewLogs"
+        class="btn btn-xs jump-btn"
+        @click="jumpToBottom"
+      >
+        <i class="fas fa-arrow-down" style="margin-right:.3rem"></i> New logs below
+      </button>
     </div>
 
     <template #footer>
@@ -207,4 +244,22 @@ function handleClose() {
 .log-warn  { color: var(--warning); }
 .log-info  { color: var(--text-muted); }
 .log-debug { color: color-mix(in srgb, var(--text-muted) 60%, transparent); }
+
+.jump-btn {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  z-index: 10;
+  animation: slide-up .2s ease-out;
+}
+
+@keyframes slide-up {
+  from { transform: translate(-50%, 10px); opacity: 0; }
+  to   { transform: translate(-50%, 0); opacity: 1; }
+}
 </style>

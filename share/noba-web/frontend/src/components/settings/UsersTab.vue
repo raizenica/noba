@@ -175,8 +175,13 @@ function roleBadgeClass(role) {
               </button>
             </div>
           </div>
-          <div v-if="userList.length === 0 && !usersLoading" style="color:var(--text-muted);font-size:.82rem">
+          <div v-if="userList.length === 0 && !usersLoading" style="text-align:center;padding:2rem;background:var(--surface);border:1px dashed var(--border);border-radius:6px;color:var(--text-muted)">
+            <i class="fas fa-users" style="font-size:2rem;display:block;margin-bottom:.75rem;opacity:.3"></i>
             No users loaded yet.
+            <br v-if="authStore.isAdmin">
+            <button v-if="authStore.isAdmin" class="btn btn-primary" style="margin-top:1rem" @click="showAddForm = true">
+              <i class="fas fa-plus"></i> Create First User
+            </button>
           </div>
         </div>
 

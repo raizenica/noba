@@ -172,32 +172,46 @@ def get_trend(
 
 
 def rollup_to_1m(conn: sqlite3.Connection, lock: threading.Lock) -> None:
-    """Aggregate raw metrics into 1-minute buckets for the last complete minute."""
+    """Aggregate raw metrics into 1-minute buckets for all missing intervals."""
     now = int(time.time())
-    minute_ts = now - (now % 60) - 60  # previous complete minute
     with lock:
-        conn.execute("""
-            INSERT OR REPLACE INTO metrics_1m (ts, key, value)
-            SELECT ?, metric, AVG(value)
-            FROM metrics
-            WHERE timestamp >= ? AND timestamp < ?
-            GROUP BY metric
-        """, (minute_ts, minute_ts, minute_ts + 60))
+        # Find the last 1m rollup
+        row = conn.execute("SELECT MAX(ts) FROM metrics_1m").fetchone()
+        # If no rollups yet, start 1h ago
+        last_ts = row[0] if row and row[0] else now - 3600
+        
+        # Process every missing minute bucket up to the previous complete minute
+        for ts in range(last_ts + 60, now - (now % 60), 60):
+            conn.execute("""
+                INSERT OR REPLACE INTO metrics_1m (ts, key, value)
+                SELECT ?, metric, AVG(value)
+                FROM metrics
+                WHERE timestamp >= ? AND timestamp < ?
+                GROUP BY metric
+                HAVING COUNT(*) > 0
+            """, (ts, ts, ts + 60))
         conn.commit()
 
 
 def rollup_to_1h(conn: sqlite3.Connection, lock: threading.Lock) -> None:
-    """Aggregate 1m metrics into 1-hour buckets for the last complete hour."""
+    """Aggregate 1m metrics into 1-hour buckets for all missing intervals."""
     now = int(time.time())
-    hour_ts = now - (now % 3600) - 3600  # previous complete hour
     with lock:
-        conn.execute("""
-            INSERT OR REPLACE INTO metrics_1h (ts, key, value)
-            SELECT ?, key, AVG(value)
-            FROM metrics_1m
-            WHERE ts >= ? AND ts < ?
-            GROUP BY key
-        """, (hour_ts, hour_ts, hour_ts + 3600))
+        # Find the last 1h rollup
+        row = conn.execute("SELECT MAX(ts) FROM metrics_1h").fetchone()
+        # If no rollups yet, start 24h ago
+        last_ts = row[0] if row and row[0] else now - 86400
+        
+        # Process every missing hour bucket up to the previous complete hour
+        for ts in range(last_ts + 3600, now - (now % 3600), 3600):
+            conn.execute("""
+                INSERT OR REPLACE INTO metrics_1h (ts, key, value)
+                SELECT ?, key, AVG(value)
+                FROM metrics_1m
+                WHERE ts >= ? AND ts < ?
+                GROUP BY key
+                HAVING COUNT(*) > 0
+            """, (ts, ts, ts + 3600))
         conn.commit()
 
 

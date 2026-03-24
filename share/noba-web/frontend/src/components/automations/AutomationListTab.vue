@@ -4,12 +4,13 @@ import { useApi } from '../../composables/useApi'
 import { useAuthStore } from '../../stores/auth'
 import { useNotificationsStore } from '../../stores/notifications'
 import AppModal from '../ui/AppModal.vue'
-import ConfirmDialog from '../ui/ConfirmDialog.vue'
+import { useModalsStore } from '../../stores/modals'
 import AutomationFormModal from './AutomationFormModal.vue'
 import RunOutputModal from './RunOutputModal.vue'
 
 const authStore = useAuthStore()
 const notify    = useNotificationsStore()
+const modals    = useModalsStore()
 const { get, post, del, download } = useApi()
 
 // ── Automation list ──────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ async function bulkToggleAutomations(enabled) {
   const targets = Array.from(selectedAutos.value)
   if (!targets.length) return
   const label = enabled ? 'enable' : 'disable'
-  if (!await confirmRef.value.confirm(`Bulk ${label} ${targets.length} automations?`)) return
+  if (!await modals.confirm(`Bulk ${label} ${targets.length} automations?`)) return
 
   let success = 0
   for (const id of targets) {
@@ -71,7 +72,7 @@ async function bulkToggleAutomations(enabled) {
 async function bulkDeleteAutomations() {
   const targets = Array.from(selectedAutos.value)
   if (!targets.length) return
-  if (!await confirmRef.value.confirm(`PERMANENTLY DELETE ${targets.length} automations?`)) return
+  if (!await modals.confirm(`PERMANENTLY DELETE ${targets.length} automations?`)) return
 
   let success = 0
   for (const id of targets) {
@@ -133,10 +134,8 @@ async function onSaved() {
 }
 
 // ── Delete ───────────────────────────────────────────────────────────────────
-const confirmRef = ref(null)
-
 async function deleteAutomation(auto) {
-  const ok = await confirmRef.value.confirm(`Delete automation "${auto.name}"?`)
+  const ok = await modals.confirm(`Delete automation "${auto.name}"?`)
   if (!ok) return
   try {
     await del(`/api/automations/${auto.id}`)
@@ -322,7 +321,7 @@ async function createWebhook() {
 }
 
 async function deleteWebhook(wh) {
-  const ok = await confirmRef.value.confirm(`Delete webhook "${wh.name}"?`)
+  const ok = await modals.confirm(`Delete webhook "${wh.name}"?`)
   if (!ok) return
   try {
     await del(`/api/webhooks/${wh.id}`)
@@ -897,9 +896,6 @@ defineExpose({ fetchAutomations, fetchAutoStats, fetchWebhooks })
         </button>
       </template>
     </AppModal>
-
-    <!-- Confirm dialog -->
-    <ConfirmDialog ref="confirmRef" />
   </div>
 </template>
 
