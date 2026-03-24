@@ -781,6 +781,7 @@ async def api_decide_approval(approval_id: int, request: Request, auth=Depends(_
         raise HTTPException(500, "Failed to update approval")
 
     # Check for graph workflow context — resume workflow if present
+    import threading
     wf_ctx = db.get_workflow_context(approval_id)
     if wf_ctx:
         next_node_id = wf_ctx.get("approved_next") if decision == "approved" else wf_ctx.get("denied_next")
@@ -806,7 +807,6 @@ async def api_decide_approval(approval_id: int, request: Request, auth=Depends(_
         # Gate on `ok` to prevent double execution if two concurrent approvals
         # race — only the one that successfully transitioned status executes.
         import json as _json
-        import threading
         from ..remediation import execute_action
         action_params = approval.get("action_params") or {}
         if isinstance(action_params, str):
