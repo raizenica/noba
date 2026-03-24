@@ -65,6 +65,14 @@ EOF
     exit 0
 }
 
+# ── Defaults (needed before --help) ────────────────────────────────────────────
+PREFIX="${PREFIX:-$HOME/.local}"
+BIN_DIR="${BIN_DIR:-$PREFIX/bin}"
+LIBEXEC_DIR="${LIBEXEC_DIR:-$PREFIX/libexec/noba}"
+MAN_DIR="${MAN_DIR:-$PREFIX/share/man/man1}"
+CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/noba}"
+SYSTEMD_USER_DIR="${SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
+
 # ── Test harness compliance ────────────────────────────────────────────────────
 if [[ "${1:-}" == "--invalid-option" ]]; then exit 1; fi
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -73,14 +81,6 @@ fi
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
     echo "install.sh version $INSTALLER_VERSION"; exit 0
 fi
-
-# ── Defaults ───────────────────────────────────────────────────────────────────
-PREFIX="${PREFIX:-$HOME/.local}"
-BIN_DIR="${BIN_DIR:-$PREFIX/bin}"
-LIBEXEC_DIR="${LIBEXEC_DIR:-$PREFIX/libexec/noba}"
-MAN_DIR="${MAN_DIR:-$PREFIX/share/man/man1}"
-CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/noba}"
-SYSTEMD_USER_DIR="${SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN=false
