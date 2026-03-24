@@ -1,7 +1,16 @@
 # docker-compose.yml — NOBA Command Center
+#
+# Quick start:
+#   docker compose up -d
+#   docker logs noba 2>&1 | grep password
+#
+# Then open http://localhost:8080 and log in with the generated password.
+#
 services:
   noba:
-    build: .
+    image: ghcr.io/raizenica/noba:latest
+    # To build from source instead, comment the line above and uncomment:
+    # build: .
     container_name: noba
     restart: unless-stopped
     ports:
@@ -13,8 +22,6 @@ services:
       - ./data/config:/app/config
       # Database (persists metrics, history, agent registry)
       - ./data/db:/app/data
-      # Optional: TLS certificates for HTTPS
-      - ./data/certs:/app/certs:ro
       # Optional: Docker socket for container monitoring
       - /var/run/docker.sock:/var/run/docker.sock:ro
     healthcheck:
