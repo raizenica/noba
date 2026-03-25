@@ -14,6 +14,9 @@ All notable changes to NOBA Command Center are documented in this file.
 - **14 CSS utility classes** — Table cell, border, spacing, and typography utilities replacing 208 inline style attributes.
 - **`.dockerignore`** — Excludes `.git`, `node_modules`, `__pycache__`, `tests/`, `.venv` from Docker build context.
 ### Improved
+- **Automation form validation** — Added frontend validation to the automation modal to ensure required fields (script paths, URLs, cron) are populated before submission.
+- **Mobile horizontal tab bar** — Refactored navigation tabs to use a horizontally scrollable strip on small viewports, recovering vertical space and preventing button stacking.
+- **Accessibility hardening** — Added `aria-label` attributes to multiple icon-only buttons, including the settings search clear and audit log pagination controls.
 - **Infrastructure UI unification** — Migrated the Infrastructure view and Kubernetes browser to the `AppTabBar` component, ensuring consistent navigation and styling across all system views.
 - **Modernized scaling interaction** — Replaced native browser `prompt()` with a non-blocking `AppModal` for Kubernetes deployment scaling, providing a safer and theme-consistent user experience.
 - **Custom chart optimization** — Refactored the Custom Charts builder to use the `ChartWrapper` component, leveraging incremental update performance and reducing redundant code.
