@@ -20,30 +20,41 @@ _RUN_ALLOWED_PREFIXES = (
 )
 
 
-def _is_safe_webhook_url(url: str) -> bool:
-    """Block requests to private/internal networks (with DNS resolution)."""
+def _resolve_safe_webhook_url(url: str) -> str | None:
+    """Resolve URL and verify all IPs are public. Returns IP-pinned URL or None."""
     import socket
 
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname or ""
         if not hostname:
-            return False
-        # Block common internal hostnames
+            return None
         if hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-            return False
-        # Resolve hostname and check ALL resulting IPs
+            return None
         try:
             addrs = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         except socket.gaierror:
-            return False  # unresolvable hostname
+            return None
+        safe_ip = None
         for family, _, _, _, sockaddr in addrs:
             ip = ipaddress.ip_address(sockaddr[0])
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return False
-        return True
+                return None
+            if safe_ip is None:
+                safe_ip = str(ip)
+        if not safe_ip:
+            return None
+        # Return URL with hostname replaced by resolved IP to prevent DNS rebinding
+        port = parsed.port
+        port_str = f":{port}" if port else ""
+        return f"{parsed.scheme}://{safe_ip}{port_str}{parsed.path}{'?' + parsed.query if parsed.query else ''}"
     except Exception:
-        return False
+        return None
+
+
+def _is_safe_webhook_url(url: str) -> bool:
+    """Block requests to private/internal networks (with DNS resolution)."""
+    return _resolve_safe_webhook_url(url) is not None
 
 logger = logging.getLogger("noba")
 
@@ -849,12 +860,17 @@ def _handle_run(params):
 def _handle_webhook(params):
     import urllib.request
     url = params.get("url", "")
-    if not _is_safe_webhook_url(url):
-        return {"success": False, "error": f"URL blocked by SSRF protection: {url}"}
-    method = params.get("method", "POST").upper()
     if not url or not url.startswith(("http://", "https://")):
         return {"success": False, "output": "Invalid URL"}
-    req = urllib.request.Request(url, method=method)
+    # Resolve DNS once and pin the IP to prevent DNS rebinding (TOCTOU)
+    pinned_url = _resolve_safe_webhook_url(url)
+    if not pinned_url:
+        return {"success": False, "error": f"URL blocked by SSRF protection: {url}"}
+    method = params.get("method", "POST").upper()
+    req = urllib.request.Request(pinned_url, method=method)
+    # Set Host header to original hostname for correct virtual host routing
+    parsed = urlparse(url)
+    req.add_header("Host", parsed.hostname or "")
     for k, v in (params.get("headers") or {}).items():
         req.add_header(str(k).replace("\n", ""), str(v).replace("\n", ""))
     try:

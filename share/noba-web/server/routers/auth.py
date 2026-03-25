@@ -51,7 +51,7 @@ async def api_login(request: Request):
 
     # User DB check (preferred -- has up-to-date passwords and roles)
     user_data = users.get(username)
-    if user_data and verify_password(user_data[0], password):
+    if user_data and verify_password(user_data[0], password, username=username):
         rate_limiter.reset(ip)
         # Round 6: 2FA check
         if users.has_totp(username):

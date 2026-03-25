@@ -46,7 +46,7 @@ def check_password_strength(password: str) -> str | None:
     return None
 
 
-def verify_password(stored: str, password: str) -> bool:
+def verify_password(stored: str, password: str, *, username: str = "") -> bool:
     if not stored:
         return False
     if stored.startswith("pbkdf2:"):
@@ -56,12 +56,26 @@ def verify_password(stored: str, password: str) -> bool:
         _, salt, expected = parts
         dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _PBKDF2_ITERS)
         return secrets.compare_digest(expected, dk.hex())
-    # legacy sha256 format: salt:hexhash
+    # legacy sha256 format: salt:hexhash — auto-migrate to pbkdf2 on success
     if ":" not in stored:
         return False
     salt, expected = stored.split(":", 1)
     actual = hashlib.sha256((salt + password).encode()).hexdigest()
-    return secrets.compare_digest(expected, actual)
+    if secrets.compare_digest(expected, actual):
+        if username:
+            _migrate_legacy_hash(username, password)
+        return True
+    return False
+
+
+def _migrate_legacy_hash(username: str, password: str) -> None:
+    """Silently upgrade a legacy SHA256 hash to PBKDF2 on successful login."""
+    try:
+        new_hash = pbkdf2_hash(password)
+        users.update_password(username, new_hash)
+        logging.getLogger("noba").info("Migrated legacy hash for user %s to PBKDF2", username)
+    except Exception:
+        pass  # non-fatal — will retry on next login
 
 
 # ── TOTP helpers ──────────────────────────────────────────────────────────────
