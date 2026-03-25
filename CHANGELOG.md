@@ -8,6 +8,7 @@ All notable changes to NOBA Command Center are documented in this file.
 - **XXE vulnerability patched** — RSS feed scheduler now uses `defusedxml.ElementTree` instead of `xml.etree.ElementTree` to prevent XML External Entity attacks and XML bombs.
 
 ### Added
+- **Pi-hole version labeling** — Pi-hole DNS settings now clearly distinguish between v5 (API Token) and v6 (App Password) with version badges and helper text. Users can immediately identify which field applies to their Pi-hole version.
 - **Integration token editing** — Added edit button to managed integration instances in Settings. Users can now update API tokens, URLs, and auth config for existing integrations without deleting and recreating them. The setup wizard opens in edit mode with pre-filled fields (platform/category locked), and uses PATCH API to update only changed fields. Security: existing token values are never displayed; users must enter new values.
 - **Database migration framework** (`server/db/migrations.py`) — Schema version tracking with up/down migrations, rollback capability, and auto-migration on startup. Ready for future schema evolution.
 - **SSE stream testing** (`dev/smoke.py`) — SSE endpoints (`/api/stream/*`) now tested with timeout-based connection validation instead of being skipped.

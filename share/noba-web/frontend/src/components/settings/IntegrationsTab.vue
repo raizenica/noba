@@ -544,22 +544,35 @@ const cats = [
     <template v-if="intCat === 'network'">
       <div class="s-section">
         <span class="s-label">Pi-hole DNS</span>
+        <div class="help-text" style="margin-bottom:.5rem;font-style:italic">
+          <i class="fas fa-info-circle"></i> Pi-hole v5 uses API token. Pi-hole v6 uses App Password or auto-auth password.
+        </div>
         <div class="field-2">
           <div>
             <label class="field-label">URL / IP</label>
             <input class="field-input" type="url" v-model="settingsStore.data.piholeUrl" placeholder="http://192.168.100.111">
           </div>
           <div>
-            <label class="field-label">App Password (v6)</label>
+            <label class="field-label">
+              <span style="display:flex;align-items:center;gap:.3rem">
+                API Token (v5)
+                <span class="badge ba" style="font-size:.65rem">Pi-hole 5.x</span>
+              </span>
+            </label>
             <div class="reveal-wrap">
-              <input class="field-input" type="password" v-model="settingsStore.data.piholeToken" autocomplete="off">
+              <input class="field-input" type="password" v-model="settingsStore.data.piholeToken" autocomplete="off" placeholder="Pi-hole v5 API token">
               <button type="button" class="reveal-btn" @click="toggleReveal"><i class="fas fa-eye"></i></button>
             </div>
           </div>
           <div>
-            <label class="field-label">Password (v6 auto-auth)</label>
+            <label class="field-label">
+              <span style="display:flex;align-items:center;gap:.3rem">
+                App Password (v6)
+                <span class="badge bs" style="font-size:.65rem">Pi-hole 6.x</span>
+              </span>
+            </label>
             <div class="reveal-wrap">
-              <input class="field-input" type="password" v-model="settingsStore.data.piholePassword" placeholder="Pi-hole v6 password" autocomplete="off">
+              <input class="field-input" type="password" v-model="settingsStore.data.piholePassword" autocomplete="off" placeholder="Pi-hole v6 App Password">
               <button type="button" class="reveal-btn" @click="toggleReveal"><i class="fas fa-eye"></i></button>
             </div>
           </div>
