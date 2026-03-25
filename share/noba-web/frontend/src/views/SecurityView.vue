@@ -14,6 +14,7 @@ const securityScore      = ref(null)
 const securityAgentCount = ref(0)
 const securityAgents     = ref([])
 const securityScanning   = ref(false)
+const scanningHosts      = ref(new Set())
 
 // ── Findings ──────────────────────────────────────────────────────────────────
 const securityFindings       = ref([])
@@ -126,6 +127,7 @@ async function fetchSecurityData() {
       securityScore.value      = scoreData.score ?? null
       securityAgentCount.value = scoreData.agent_count || 0
       securityAgents.value     = scoreData.agents || []
+      scanningHosts.value.clear()
     }
   } catch (e) { notif.addToast('Failed to load security scores: ' + e.message, 'danger') }
 
@@ -157,12 +159,14 @@ async function securityScanAll() {
 }
 
 async function securityScanHost(hostname) {
+  scanningHosts.value.add(hostname)
   try {
     await post(`/api/security/scan/${encodeURIComponent(hostname)}`, {})
     notif.addToast(`Scan started for ${hostname}`, 'info')
     setTimeout(fetchSecurityData, 3000)
   } catch (e) {
     notif.addToast(`Scan failed for ${hostname}: ` + e.message, 'error')
+    scanningHosts.value.delete(hostname)
   }
 }
 
@@ -252,9 +256,14 @@ onMounted(fetchSecurityData)
           {{ agent.scanned_at ? new Date(agent.scanned_at * 1000).toLocaleString() : 'Never scanned' }}
         </div>
         <div v-if="authStore.isOperator" style="margin-top:.5rem;display:flex;gap:.5rem" @click.stop>
-          <button class="btn btn-xs" @click="securityScanHost(agent.hostname)">
-            <i class="fas fa-search"></i> Scan
+          <button
+            class="btn btn-xs"
+            :disabled="scanningHosts.has(agent.hostname)"
+            @click="securityScanHost(agent.hostname)"
+          >
+            <i class="fas" :class="scanningHosts.has(agent.hostname) ? 'fa-spinner fa-spin' : 'fa-search'"></i>
           </button>
+
         </div>
       </div>
     </div>

@@ -14,6 +14,9 @@ All notable changes to NOBA Command Center are documented in this file.
 - **14 CSS utility classes** — Table cell, border, spacing, and typography utilities replacing 208 inline style attributes.
 - **`.dockerignore`** — Excludes `.git`, `node_modules`, `__pycache__`, `tests/`, `.venv` from Docker build context.
 ### Improved
+- **Unified tab navigation** — Created a reusable `AppTabBar` component to standardize navigation across Logs, Monitoring, Healing, and Settings views.
+- **Interactive security feedback** — Added per-host scan status indicators in the Security view, providing immediate visual confirmation of dispatched scan requests.
+- **Healing consistency** — Standardized trust promotion actions using the global `modals.confirm()` store and implemented actionable empty states for the healing ledger.
 - **Workflow builder dirty guard** — Implemented an "unsaved changes" warning in the `WorkflowBuilder`. Users are now prompted before closing the modal if modifications were made to the graph, preventing accidental data loss.
 - **Automation bulk action safety** — Standardized bulk actions (Enable, Disable, Delete) in the Automations view using the new Selection Bar pattern. Physically separates destructive actions from global navigation and filters.
 - **Agent bulk action safety** — Moved bulk actions (Update, Remove) into a dedicated, visually distinct Selection Bar in the Agents view. Separates destructive actions from the "Select All" button to prevent accidental mass deletions.

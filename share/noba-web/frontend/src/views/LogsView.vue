@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useDashboardStore } from '../stores/dashboard'
+import AppTabBar from '../components/ui/AppTabBar.vue'
 
 import SystemLogTab      from '../components/logs/SystemLogTab.vue'
 import CommandHistoryTab from '../components/logs/CommandHistoryTab.vue'
@@ -15,6 +16,19 @@ const dashStore = useDashboardStore()
 const agents = computed(() => dashStore.live.agents || [])
 
 const activeTab = ref('syslog')
+
+const tabs = computed(() => {
+  const t = [
+    { key: 'syslog',  label: 'System Log',     icon: 'fa-scroll' },
+    { key: 'history', label: 'Command History', icon: 'fa-history' },
+    { key: 'audit',   label: 'Audit Log',       icon: 'fa-user-shield' },
+    { key: 'journal', label: 'Journal',         icon: 'fa-book' },
+  ]
+  if (agents.value.length > 0 && authStore.isAdmin) {
+    t.push({ key: 'stream', label: 'Live Stream', icon: 'fa-satellite-dish' })
+  }
+  return t
+})
 
 const syslogRef  = ref(null)
 const historyRef = ref(null)
@@ -34,40 +48,12 @@ function setTab(tab) {
   <div>
     <!-- Page header -->
     <h2 style="margin-bottom:1rem">
-      <i class="fas fa-scroll" style="margin-right:.5rem"></i>Logs
+      <i class="fas fa-scroll" style="margin-right:.5rem;color:var(--accent)"></i>
+      Logs
     </h2>
 
     <!-- Tab bar -->
-    <div class="tab-bar" style="margin-bottom:1rem;display:flex;flex-wrap:wrap;gap:.3rem">
-      <button
-        class="btn btn-xs"
-        :class="{ 'btn-primary': activeTab === 'syslog' }"
-        @click="setTab('syslog')"
-      >System Log</button>
-      <button
-        class="btn btn-xs"
-        :class="{ 'btn-primary': activeTab === 'history' }"
-        @click="setTab('history')"
-      >Command History</button>
-      <button
-        class="btn btn-xs"
-        :class="{ 'btn-primary': activeTab === 'audit' }"
-        @click="setTab('audit')"
-      >Audit Log</button>
-      <button
-        class="btn btn-xs"
-        :class="{ 'btn-primary': activeTab === 'journal' }"
-        @click="setTab('journal')"
-      >Journal</button>
-      <button
-        v-if="agents.length > 0 && authStore.isAdmin"
-        class="btn btn-xs"
-        :class="{ 'btn-primary': activeTab === 'stream' }"
-        @click="setTab('stream')"
-      >
-        <i class="fas fa-satellite-dish" style="margin-right:.3rem"></i>Live Stream
-      </button>
-    </div>
+    <AppTabBar :tabs="tabs" :active="activeTab" @change="setTab" />
 
     <!-- Tab contents -->
     <div v-show="activeTab === 'syslog'">

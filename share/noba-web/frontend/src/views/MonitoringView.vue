@@ -1,5 +1,6 @@
 <script setup>
 import { ref, nextTick } from 'vue'
+import AppTabBar from '../components/ui/AppTabBar.vue'
 
 import SlaTable        from '../components/monitoring/SlaTable.vue'
 import IncidentList    from '../components/monitoring/IncidentList.vue'
@@ -10,6 +11,16 @@ import InfluxDbTab     from '../components/monitoring/InfluxDbTab.vue'
 import CustomChartsTab from '../components/monitoring/CustomChartsTab.vue'
 
 const activeTab = ref('sla')
+
+const tabs = [
+  { key: 'sla',         label: 'SLA',           icon: 'fa-percentage' },
+  { key: 'incidents',   label: 'Incidents',     icon: 'fa-exclamation-triangle' },
+  { key: 'correlation', label: 'Correlation',   icon: 'fa-project-diagram' },
+  { key: 'graylog',     label: 'Graylog',       icon: 'fa-search' },
+  { key: 'influxdb',    label: 'InfluxDB',      icon: 'fa-chart-area' },
+  { key: 'charts',      label: 'Custom Charts', icon: 'fa-chart-bar' },
+  { key: 'endpoints',   label: 'Endpoints',     icon: 'fa-network-wired' },
+]
 
 const correlationRef  = ref(null)
 const influxRef       = ref(null)
@@ -40,43 +51,7 @@ function setTab(tab) {
     </h2>
 
     <!-- Tab bar -->
-    <div class="tab-bar" style="margin-bottom:1rem;display:flex;flex-wrap:wrap;gap:.3rem">
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'sla' ? 'btn-primary' : ''"
-        @click="setTab('sla')"
-      >SLA</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'incidents' ? 'btn-primary' : ''"
-        @click="setTab('incidents')"
-      >Incidents</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'correlation' ? 'btn-primary' : ''"
-        @click="setTab('correlation')"
-      >Correlation</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'graylog' ? 'btn-primary' : ''"
-        @click="setTab('graylog')"
-      >Graylog</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'influxdb' ? 'btn-primary' : ''"
-        @click="setTab('influxdb')"
-      >InfluxDB</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'charts' ? 'btn-primary' : ''"
-        @click="setTab('charts')"
-      >Custom Charts</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'endpoints' ? 'btn-primary' : ''"
-        @click="setTab('endpoints')"
-      >Endpoints</button>
-    </div>
+    <AppTabBar :tabs="tabs" :active="activeTab" @change="setTab" />
 
     <!-- Tab contents -->
     <div v-show="activeTab === 'sla'">

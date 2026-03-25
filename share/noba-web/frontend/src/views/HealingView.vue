@@ -4,16 +4,28 @@ import { useAuthStore } from '../stores/auth'
 import { useHealingStore } from '../stores/healing'
 import { useNotificationsStore } from '../stores/notifications'
 import { useIntervals } from '../composables/useIntervals'
+import { useModalsStore } from '../stores/modals'
+import AppTabBar from '../components/ui/AppTabBar.vue'
 import HealOverviewBar from '../components/healing/HealOverviewBar.vue'
 import { HEALING_FETCH_ALL_INTERVAL_MS, LEDGER_TIMELINE_LIMIT } from '../constants'
 
 const authStore = useAuthStore()
 const store = useHealingStore()
 const notify = useNotificationsStore()
+const modals = useModalsStore()
 const { addInterval, clearAll } = useIntervals()
 
 // ── Tab state ─────────────────────────────────────────────────────────────────
 const activeTab = ref('overview')
+
+const tabs = computed(() => [
+  { key: 'overview',     label: 'Overview',     icon: 'fa-chart-line', badge: store.suggestionCount },
+  { key: 'ledger',       label: 'Ledger',       icon: 'fa-list-alt' },
+  { key: 'dependencies', label: 'Dependencies', icon: 'fa-project-diagram' },
+  { key: 'trust',        label: 'Trust',        icon: 'fa-shield-alt' },
+  { key: 'approvals',    label: 'Approvals',    icon: 'fa-check-circle', badge: store.pendingApprovals.length },
+  { key: 'maintenance',  label: 'Maintenance',  icon: 'fa-wrench',       badge: store.activeMaintenance.length },
+])
 
 // ── Ledger filters (local to view) ────────────────────────────────────────────
 const ledgerFilterRule = ref('')
@@ -51,18 +63,12 @@ async function refetchLedger() {
 }
 
 // ── Trust actions ─────────────────────────────────────────────────────────────
-const promoteConfirm = ref(null)
 const promoteLoading = ref(false)
 
-function openPromote(ruleId) {
-  promoteConfirm.value = ruleId
-}
-
-function cancelPromote() {
-  promoteConfirm.value = null
-}
-
 async function confirmPromote(ruleId) {
+  const ok = await modals.confirm(`Promote trust level for rule "${ruleId}"?`)
+  if (!ok) return
+  
   promoteLoading.value = true
   try {
     const res = await store.promoteTrust(ruleId)
@@ -73,7 +79,6 @@ async function confirmPromote(ruleId) {
     notify.addToast('Failed to promote trust level', 'error')
   } finally {
     promoteLoading.value = false
-    promoteConfirm.value = null
   }
 }
 
@@ -176,58 +181,7 @@ onUnmounted(() => {
     <HealOverviewBar />
 
     <!-- Tab nav -->
-    <div class="tab-nav" style="margin-bottom:20px">
-      <button
-        class="btn"
-        :class="activeTab === 'overview' ? 'btn-primary' : ''"
-        @click="activeTab = 'overview'"
-      >
-        <i class="fas fa-chart-line mr-6"></i>Overview
-        <span v-if="store.suggestionCount" class="nav-badge" style="margin-left:6px">{{ store.suggestionCount }}</span>
-      </button>
-      <button
-        class="btn"
-        :class="activeTab === 'ledger' ? 'btn-primary' : ''"
-        @click="activeTab = 'ledger'"
-        style="margin-left:8px"
-      >
-        <i class="fas fa-list-alt mr-6"></i>Ledger
-      </button>
-      <button
-        class="btn"
-        :class="activeTab === 'dependencies' ? 'btn-primary' : ''"
-        @click="activeTab = 'dependencies'"
-        style="margin-left:8px"
-      >
-        <i class="fas fa-project-diagram mr-6"></i>Dependencies
-      </button>
-      <button
-        class="btn"
-        :class="activeTab === 'trust' ? 'btn-primary' : ''"
-        @click="activeTab = 'trust'"
-        style="margin-left:8px"
-      >
-        <i class="fas fa-shield-alt mr-6"></i>Trust
-      </button>
-      <button
-        class="btn"
-        :class="activeTab === 'approvals' ? 'btn-primary' : ''"
-        @click="activeTab = 'approvals'"
-        style="margin-left:8px"
-      >
-        <i class="fas fa-check-circle mr-6"></i>Approvals
-        <span v-if="approvalBadge" class="nav-badge" style="margin-left:6px">{{ approvalBadge }}</span>
-      </button>
-      <button
-        class="btn"
-        :class="activeTab === 'maintenance' ? 'btn-primary' : ''"
-        @click="activeTab = 'maintenance'"
-        style="margin-left:8px"
-      >
-        <i class="fas fa-wrench mr-6"></i>Maintenance
-        <span v-if="maintenanceBadge" class="nav-badge" style="margin-left:6px">{{ maintenanceBadge }}</span>
-      </button>
-    </div>
+    <AppTabBar :tabs="tabs" :active="activeTab" @change="(key) => activeTab = key" />
 
     <!-- ── Overview Tab ──────────────────────────────────────────────────── -->
     <div v-if="activeTab === 'overview'">
@@ -323,7 +277,15 @@ onUnmounted(() => {
       <!-- Table -->
       <div class="card">
         <div class="card-body" style="padding:0;overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <div v-if="store.loading && filteredLedger.length === 0" style="padding:32px;text-align:center;color:var(--text-muted)">
+            <i class="fas fa-spinner fa-spin"></i> Loading...
+          </div>
+          <div v-else-if="filteredLedger.length === 0" class="empty-msg" style="padding:3rem;text-align:center">
+            <i class="fas fa-history" style="font-size:2.5rem;opacity:.2;display:block;margin-bottom:1rem;margin-inline:auto"></i>
+            No heal events recorded yet.
+            <br><small style="opacity:.6;max-width:400px;display:inline-block">The pipeline will automatically log events here as it detects and resolves system anomalies across your agents.</small>
+          </div>
+          <table v-else style="width:100%;border-collapse:collapse;font-size:13px">
             <thead>
               <tr style="background:var(--surface2);color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px">
                 <th class="th-left">Timestamp</th>
@@ -338,14 +300,6 @@ onUnmounted(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-if="store.loading && filteredLedger.length === 0">
-                <td colspan="9" style="padding:24px;text-align:center;color:var(--text-muted)">
-                  <i class="fas fa-spinner fa-spin"></i> Loading...
-                </td>
-              </tr>
-              <tr v-else-if="filteredLedger.length === 0">
-                <td colspan="9" class="empty-msg">No heal outcomes recorded yet.</td>
-              </tr>
               <tr
                 v-for="row in filteredLedger"
                 :key="row.id || (row.rule_id + row.ts)"
@@ -449,20 +403,13 @@ onUnmounted(() => {
               </div>
               <div v-if="authStore.isAdmin">
                 <button
-                  v-if="promoteConfirm !== state.rule_id"
                   class="btn btn-xs"
-                  @click="openPromote(state.rule_id)"
+                  :disabled="promoteLoading"
+                  @click="confirmPromote(state.rule_id)"
                 >
-                  <i class="fas fa-arrow-up"></i> Promote
+                  <i class="fas" :class="promoteLoading ? 'fa-spinner fa-spin' : 'fa-arrow-up'"></i>
+                  Promote
                 </button>
-                <div v-else style="display:flex;gap:6px;align-items:center">
-                  <span style="font-size:12px;color:var(--text-muted)">Sure?</span>
-                  <button class="btn btn-xs btn-primary" :disabled="promoteLoading" @click="confirmPromote(state.rule_id)">
-                    <i v-if="promoteLoading" class="fas fa-spinner fa-spin"></i>
-                    <span v-else>Yes</span>
-                  </button>
-                  <button class="btn btn-xs" @click="cancelPromote">No</button>
-                </div>
               </div>
             </div>
 
