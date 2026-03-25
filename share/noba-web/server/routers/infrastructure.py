@@ -196,6 +196,8 @@ def api_disk_prediction(request: Request, auth=Depends(_get_auth)):
     try:
         result = predict_capacity(["disk_percent"], range_hours=168, projection_hours=720)
         return result
+    except HTTPException:
+        raise
     except Exception:
         # Fallback to simple trend, normalized to match predict_capacity shape
         trend = db.get_trend("disk_percent", range_hours=168, projection_hours=720)
@@ -409,6 +411,8 @@ def api_pmx_node_vms(node: str, auth=Depends(_get_auth)):
                     "uptime": vm.get("uptime", 0),
                     "disk": vm.get("disk", 0), "maxdisk": vm.get("maxdisk", 0),
                 })
+        except HTTPException:
+            raise
         except Exception:
             pass
     return results
@@ -535,6 +539,8 @@ async def api_network_discover(hostname: str, request: Request, auth=Depends(_re
             await ws.send_json({"type": "command", "id": cmd_id,
                                 "cmd": "network_discover", "params": {}})
             delivered = True
+        except HTTPException:
+            raise
         except Exception:
             with _agent_ws_lock:
                 _agent_websockets.pop(hostname, None)

@@ -53,14 +53,14 @@ async def api_container_control(request: Request, auth=Depends(_require_operator
 
 # ── Docker deep management ───────────────────────────────────────────────
 @router.get("/api/containers/{name}/logs")
-def api_container_logs(name: str, request: Request, auth=Depends(_require_operator)):
+async def api_container_logs(name: str, request: Request, auth=Depends(_require_operator)):
     """Stream container logs (last N lines)."""
     if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
         raise HTTPException(400, "Invalid container name")
     lines = _int_param(request, "lines", 100, 1, 5000)
     for runtime in ("docker", "podman"):
         try:
-            r = subprocess.run([runtime, "logs", "--tail", str(lines), name],
+            r = await asyncio.to_thread(subprocess.run, [runtime, "logs", "--tail", str(lines), name],
                              capture_output=True, text=True, timeout=10)
             if r.returncode == 0:
                 output = strip_ansi(r.stdout + r.stderr)
@@ -73,13 +73,13 @@ def api_container_logs(name: str, request: Request, auth=Depends(_require_operat
 
 
 @router.get("/api/containers/{name}/inspect")
-def api_container_inspect(name: str, auth=Depends(_require_operator)):
+async def api_container_inspect(name: str, auth=Depends(_require_operator)):
     """Get detailed container info."""
     if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
         raise HTTPException(400, "Invalid container name")
     for runtime in ("docker", "podman"):
         try:
-            r = subprocess.run([runtime, "inspect", name],
+            r = await asyncio.to_thread(subprocess.run, [runtime, "inspect", name],
                              capture_output=True, text=True, timeout=10)
             if r.returncode == 0:
                 data = json.loads(r.stdout)
@@ -118,11 +118,11 @@ def api_container_inspect(name: str, auth=Depends(_require_operator)):
 
 
 @router.get("/api/containers/stats")
-def api_container_stats(auth=Depends(_get_auth)):
+async def api_container_stats(auth=Depends(_get_auth)):
     """Get per-container resource usage."""
     for runtime in ("docker", "podman"):
         try:
-            r = subprocess.run(
+            r = await asyncio.to_thread(subprocess.run,
                 [runtime, "stats", "--no-stream", "--format",
                  "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}"],
                 capture_output=True, text=True, timeout=10)
@@ -177,12 +177,14 @@ async def api_container_pull(name: str, request: Request, auth=Depends(_require_
 
 # ── /api/compose ──────────────────────────────────────────────────────────────
 @router.get("/api/compose/projects")
-def api_compose_projects(auth=Depends(_get_auth)):
+async def api_compose_projects(auth=Depends(_get_auth)):
     try:
-        r = subprocess.run(["docker", "compose", "ls", "--format", "json"],
+        r = await asyncio.to_thread(subprocess.run, ["docker", "compose", "ls", "--format", "json"],
                           capture_output=True, text=True, timeout=10)
         if r.returncode == 0:
             return json.loads(r.stdout)
+    except HTTPException:
+        raise
     except Exception:
         pass
     return []

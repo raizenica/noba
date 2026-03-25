@@ -7,7 +7,8 @@ from .base import _http_get
 
 
 # ── Proxmox VE ────────────────────────────────────────────────────────────
-def get_proxmox(url: str, user: str, token_name: str, token_value: str) -> dict | None:
+def get_proxmox(url: str, user: str, token_name: str, token_value: str,
+                verify_ssl: bool = True) -> dict | None:
     if not url or not user or not token_name or not token_value:
         return None
     base      = url.rstrip("/")
@@ -16,7 +17,7 @@ def get_proxmox(url: str, user: str, token_name: str, token_value: str) -> dict 
     hdrs      = {"Authorization": auth_hdr, "Accept": "application/json"}
     result    = {"nodes": [], "vms": [], "status": "offline"}
     try:
-        nodes_data = _http_get(f"{base}/api2/json/nodes", hdrs, timeout=5).get("data", [])
+        nodes_data = _http_get(f"{base}/api2/json/nodes", hdrs, timeout=5, verify=verify_ssl).get("data", [])
         for node in nodes_data:
             node_name = node.get("node", "unknown")
             maxmem    = node.get("maxmem", 1) or 1
@@ -29,7 +30,8 @@ def get_proxmox(url: str, user: str, token_name: str, token_value: str) -> dict 
             for ep, vtype in (("qemu", "qemu"), ("lxc", "lxc")):
                 try:
                     for vm in _http_get(
-                        f"{base}/api2/json/nodes/{node_name}/{ep}", hdrs, timeout=4
+                        f"{base}/api2/json/nodes/{node_name}/{ep}", hdrs,
+                        timeout=4, verify=verify_ssl,
                     ).get("data", [])[:30]:
                         mmem = vm.get("maxmem", 1) or 1
                         result["vms"].append({

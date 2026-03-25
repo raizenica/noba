@@ -22,6 +22,9 @@ All notable changes to NOBA Command Center are documented in this file.
 - **Tailscale "localhost" names** — Devices reporting `HostName: "localhost"` (Android/TV devices) now fall back to `DNSName` for proper identification (e.g., "samsung-sm-s938b", "google-tv-streamer-1").
 - **Infrastructure Services tab empty** — Collector now reads `monitoredServices` from YAML config as fallback when SSE query params don't include the service list.
 - **Healing approval timestamps** — Approvals tab now correctly maps `requested_at` field from the API instead of the non-existent `ts` field. Also fixed column header "Trust" → "Trigger" and field mapping for `automation_id`.
+- **Security findings deduplication** — Re-scans now replace old findings for the host instead of appending, preventing duplicated entries in the findings table.
+- **HTTPException guards** — Added `except HTTPException: raise` before generic `except Exception` across all 11 routers (79 locations) to prevent swallowing HTTP errors.
+- **Blocking docker commands** — Wrapped remaining sync subprocess calls in `routers/containers.py` with `asyncio.to_thread()` to avoid blocking the FastAPI event loop.
 
 ### Improved
 - **Dashboard integration cards** — Empty "No data available" integration cards are now collapsed into a single "N unconfigured integrations" button, drastically reducing scroll depth.

@@ -56,6 +56,8 @@ def _is_safe_url(url: str) -> bool:
         except socket.gaierror:
             return False  # can't resolve = not safe
         return True
+    except HTTPException:
+        raise
     except Exception:
         return False
 
@@ -126,6 +128,8 @@ async def api_create_instance(request: Request, auth=Depends(_require_admin)):
             site=body.get("site"),
             tags=tags,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(400, f"Failed to create instance: {exc}")
 
@@ -170,6 +174,8 @@ async def api_update_instance(
                     f"UPDATE integration_instances SET {sets} WHERE id = ?", vals,
                 )
                 conn.commit()
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(400, f"Update failed: {exc}")
 
@@ -226,6 +232,8 @@ async def api_test_connection(request: Request, auth=Depends(_require_operator))
             "success": False, "error": "Connection timed out",
             "platform": platform, "url": url,
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         return {
             "success": False, "error": str(exc),

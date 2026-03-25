@@ -70,6 +70,8 @@ async def api_security_scan(hostname: str, request: Request, auth=Depends(_requi
             await ws.send_json({"type": "command", "id": cmd_id,
                                 "cmd": cmd_type, "params": {}})
             delivered = True
+        except HTTPException:
+            raise
         except Exception:
             with _agent_ws_lock:
                 _agent_websockets.pop(hostname, None)
@@ -115,6 +117,8 @@ async def api_security_scan_all(request: Request, auth=Depends(_require_operator
                 await ws.send_json({"type": "command", "id": cmd_id,
                                     "cmd": cmd_type, "params": {}})
                 delivered = True
+            except HTTPException:
+                raise
             except Exception:
                 with _agent_ws_lock:
                     _agent_websockets.pop(hostname, None)

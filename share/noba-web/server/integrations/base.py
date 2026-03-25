@@ -40,15 +40,25 @@ def ssl_verify(setting: bool | str = True):
     return bool(setting)
 
 
-def _http_get(url: str, headers: dict | None = None, timeout: int = 4) -> dict | list:
+def _http_get(url: str, headers: dict | None = None, timeout: int = 4,
+              verify: bool | str | None = None) -> dict | list:
     """Execute GET request with classified error propagation.
+
+    Args:
+        verify: Override SSL verification. None = use shared client (verify=True).
+                False = skip verification. str = CA bundle path.
 
     Raises:
         ConfigError: 4xx (Auth/URL) errors that require user attention.
         TransientError: 5xx or network errors that may resolve on retry.
     """
     try:
-        r = _client.get(url, headers=headers or {}, timeout=timeout)
+        if verify is not None and verify is not True:
+            # Use a one-off client with custom verify setting
+            with httpx.Client(timeout=timeout, follow_redirects=False, verify=verify) as c:
+                r = c.get(url, headers=headers or {})
+        else:
+            r = _client.get(url, headers=headers or {}, timeout=timeout)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as exc:

@@ -218,6 +218,8 @@ async def api_discover_services(hostname: str, request: Request,
         try:
             await ws.send_json({"commands": [cmd]})
             delivered = True
+        except HTTPException:
+            raise
         except Exception:
             pass
     if not delivered:
@@ -300,6 +302,8 @@ async def api_baseline_set_from_agent(baseline_id: int, hostname: str,
                                 "cmd": "file_checksum",
                                 "params": cmd["params"]})
             delivered = True
+        except HTTPException:
+            raise
         except Exception:
             pass
     if not delivered:

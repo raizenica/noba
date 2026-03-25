@@ -21,6 +21,11 @@ def record_scan(conn, lock, hostname: str, score: int, findings: list[dict]) -> 
                 (hostname, score, now, json.dumps(findings)),
             )
             score_id = cur.lastrowid
+            # Replace old findings for this host (prevents duplicates on re-scan)
+            conn.execute(
+                "DELETE FROM security_findings WHERE hostname = ?",
+                (hostname,),
+            )
             for f in findings:
                 conn.execute(
                     "INSERT INTO security_findings "

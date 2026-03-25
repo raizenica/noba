@@ -203,6 +203,8 @@ async def api_automations_run(auto_id: str, request: Request, auth=Depends(_requ
         raw = await request.body()
         if raw:
             body_data = json.loads(raw)
+    except HTTPException:
+        raise
     except Exception:
         pass
     variables = body_data.get("variables", {}) if isinstance(body_data, dict) else {}
@@ -405,6 +407,8 @@ async def api_automations_import(request: Request, auth=Depends(_require_admin))
     try:
         text = raw.decode("utf-8")
         parsed = yaml.safe_load(text)
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(400, "Invalid YAML")
     if not isinstance(parsed, dict):

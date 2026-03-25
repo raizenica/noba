@@ -74,6 +74,8 @@ def _store_capability_manifest(hostname: str, capabilities: dict | None) -> None
         return
     try:
         db.upsert_capability_manifest(hostname, json.dumps(capabilities))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("Failed to store capability manifest for %s: %s", hostname, exc)
 
@@ -87,6 +89,8 @@ def _record_security_scan(hostname: str, cr: dict) -> None:
                 int(cr.get("score", 0)),
                 cr.get("findings", []),
             )
+        except HTTPException:
+            raise
         except Exception:
             pass
 
@@ -104,6 +108,8 @@ def _store_device_discovery(hostname: str, cr: dict) -> None:
                 open_ports=dev.get("open_ports"),
                 discovered_by=hostname,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.warning("Failed to persist discovered device: %s", e)
 
@@ -121,6 +127,8 @@ def _store_backup_verification(hostname: str, cr: dict) -> None:
             status=cr.get("status", "error"),
             details=json.dumps(details) if details else None,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("Failed to persist backup verification: %s", e)
 
@@ -166,6 +174,8 @@ def _store_agent_metrics(hostname: str, body: dict) -> None:
             arch=body.get("arch", ""),
             agent_version=body.get("agent_version", ""),
         )
+    except HTTPException:
+        raise
     except Exception:
         pass
     try:
@@ -176,6 +186,8 @@ def _store_agent_metrics(hostname: str, body: dict) -> None:
         for disk in body.get("disks", [])[:1]:
             agent_metrics.append((f"agent_{hostname}_disk", disk.get("percent", 0), disk.get("mount", "/")))
         db.insert_metrics(agent_metrics)
+    except HTTPException:
+        raise
     except Exception:
         pass
 
@@ -195,6 +207,8 @@ def _build_heal_policy(hostname: str) -> dict:
                     "condition": rule.get("condition", ""),
                 }
         return build_agent_policy(hostname, rules_cfg, db)
+    except HTTPException:
+        raise
     except Exception:
         return {}
 
@@ -207,6 +221,8 @@ def _ingest_heal_reports(hostname: str, body: dict) -> None:
     try:
         from ..healing.agent_runtime import ingest_agent_heal_reports
         ingest_agent_heal_reports(hostname, heal_reports, db)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.warning("Failed to ingest heal reports from %s: %s", hostname, exc)
 
@@ -237,6 +253,8 @@ def _check_auto_update(hostname: str, body: dict, pending: list) -> None:
                                     hostname, agent_version, server_version,
                                 )
                         break
+    except HTTPException:
+        raise
     except Exception:
         pass
 
@@ -328,6 +346,8 @@ def _handle_ws_result(hostname: str, msg: dict) -> None:
     if cmd_id:
         try:
             db.complete_command(cmd_id, msg)
+        except HTTPException:
+            raise
         except Exception:
             pass
     # Reuse report helpers for security scan / backup verification
@@ -359,6 +379,8 @@ async def _forward_pty_to_agent(hostname: str, data: dict, role: str, ws: WebSoc
     if agent_ws:
         try:
             await agent_ws.send_json(data)
+        except HTTPException:
+            raise
         except Exception:
             await ws.send_json({"type": "pty_error", "error": "Agent WebSocket disconnected"})
     else:
@@ -393,6 +415,8 @@ async def _dispatch_terminal_command(
                 "cmd": cmd_type, "params": params,
             })
             delivered = True
+        except HTTPException:
+            raise
         except Exception:
             with _agent_ws_lock:
                 _agent_websockets.pop(hostname, None)
@@ -424,6 +448,8 @@ def _store_interface_metrics(hostname: str, result: dict) -> None:
             )
         if iface_metrics:
             db.insert_metrics(iface_metrics)
+    except HTTPException:
+        raise
     except Exception:
         pass
 
@@ -456,6 +482,8 @@ async def agent_websocket(ws: WebSocket):
         if old:
             try:
                 await old.close(code=WS_CLOSE_NORMAL, reason="Replaced by new connection")
+            except HTTPException:
+                raise
             except Exception:
                 pass
 
@@ -499,6 +527,8 @@ async def agent_websocket(ws: WebSocket):
 
     except WebSocketDisconnect:
         pass
+    except HTTPException:
+        raise
     except Exception as exc:
         _ws_logger.warning("[ws] Error for %s: %s", hostname, exc)
     finally:
@@ -542,10 +572,14 @@ async def agent_terminal_ws(hostname: str, ws: WebSocket):
                 msg = await q.get()
                 try:
                     await ws.send_json(msg)
+                except HTTPException:
+                    raise
                 except Exception:
                     break
         except asyncio.CancelledError:
             pass
+        except HTTPException:
+            raise
         except Exception:
             pass
 
@@ -564,6 +598,8 @@ async def agent_terminal_ws(hostname: str, ws: WebSocket):
 
     except WebSocketDisconnect:
         pass
+    except HTTPException:
+        raise
     except Exception as exc:
         _ws_logger.warning("[terminal] Error for %s: %s", hostname, exc)
     finally:
@@ -573,6 +609,8 @@ async def agent_terminal_ws(hostname: str, ws: WebSocket):
         if agent_ws:
             try:
                 await agent_ws.send_json({"type": "pty_close", "session": f"term-{hostname}"})
+            except HTTPException:
+                raise
             except Exception:
                 pass
         forward_task.cancel()
@@ -734,6 +772,8 @@ async def api_agent_command(hostname: str, request: Request, auth=Depends(_requi
             await ws.send_json({"type": "command", "id": cmd_id,
                                 "cmd": cmd_type, "params": params})
             delivered = True
+        except HTTPException:
+            raise
         except Exception:
             with _agent_ws_lock:
                 _agent_websockets.pop(hostname, None)
@@ -849,6 +889,8 @@ async def api_agent_network_stats(hostname: str, request: Request, auth=Depends(
                                      f"host={hostname} id={cmd_id}", ip)
                         return result
                 await asyncio.sleep(0.1)
+        except HTTPException:
+            raise
         except Exception:
             delivered = False
 
@@ -1128,6 +1170,8 @@ systemctl is-active noba-agent
         }
     except subprocess.TimeoutExpired:
         return {"status": "error", "error": "SSH connection timed out"}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -1302,6 +1346,8 @@ async def api_agent_transfer(hostname: str, request: Request, auth=Depends(_requ
         try:
             await ws.send_json({"type": "command", "cmd": "file_push", **cmd})
             delivered = True
+        except HTTPException:
+            raise
         except Exception:
             pass
     if not delivered:
