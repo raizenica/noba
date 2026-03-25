@@ -1,12 +1,16 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useApi } from '../../composables/useApi'
 import { useNotificationsStore } from '../../stores/notifications'
 
+const props = defineProps({
+  editInstance: { type: Object, default: null }
+})
 const emit = defineEmits(['saved', 'cancel'])
-const { get, post } = useApi()
+const { get, post, patch } = useApi()
 const notifications = useNotificationsStore()
 
+const isEdit = ref(false)
 const step = ref(0)
 const steps = ['Category', 'Platform', 'Configure', 'Test & Save']
 
@@ -35,10 +39,49 @@ const testing = ref(false)
 const saving = ref(false)
 const testResult = ref(null)
 
+// Watch for edit mode and pre-fill data
+watch(() => props.editInstance, (inst) => {
+  if (inst) {
+    isEdit.value = true
+    steps[0] = 'Configure'
+    steps[1] = 'Test & Save'
+    step.value = 1
+    
+    selectedCategory.value = inst.category || ''
+    selectedPlatform.value = inst.platform || ''
+    instanceId.value = inst.id || ''
+    instanceUrl.value = inst.url || ''
+    instanceSite.value = inst.site || ''
+    instanceTags.value = Array.isArray(inst.tags) ? inst.tags.join(', ') : ''
+    verifySsl.value = inst.verify_ssl !== 0
+    
+    // Parse auth_config
+    const authConfig = typeof inst.auth_config === 'string' 
+      ? JSON.parse(inst.auth_config) 
+      : (inst.auth_config || {})
+    
+    if (authConfig.method === 'token') {
+      authMethod.value = 'token'
+      authToken.value = authConfig.token_env || ''
+    } else if (authConfig.method === 'userpass') {
+      authMethod.value = 'userpass'
+      authUser.value = authConfig.username || ''
+      authPass.value = authConfig.password_env || ''
+    } else if (authConfig.method === 'apikey') {
+      authMethod.value = 'apikey'
+      authApiKey.value = authConfig.apikey_env || ''
+    } else {
+      authMethod.value = 'none'
+    }
+  }
+}, { immediate: true })
+
 onMounted(async () => {
-  try {
-    categories.value = await get('/api/integrations/catalog/categories')
-  } catch { /* silent */ }
+  if (!props.editInstance) {
+    try {
+      categories.value = await get('/api/integrations/catalog/categories')
+    } catch { /* silent */ }
+  }
 })
 
 function categoryIcon(cat) {
@@ -111,17 +154,31 @@ async function saveInstance() {
     const tags = instanceTags.value
       ? instanceTags.value.split(',').map(t => t.trim()).filter(Boolean)
       : []
-    await post('/api/integrations/instances', {
-      id: instanceId.value || selectedPlatform.value + '-1',
-      category: selectedCategory.value,
-      platform: selectedPlatform.value,
-      url: instanceUrl.value,
-      auth_config: buildAuthConfig(),
-      site: instanceSite.value || null,
-      tags,
-      verify_ssl: verifySsl.value ? 1 : 0,
-    })
-    notifications.addToast('Integration saved successfully', 'success')
+    
+    if (isEdit.value && props.editInstance) {
+      // Update existing instance
+      await patch(`/api/integrations/instances/${props.editInstance.id}`, {
+        url: instanceUrl.value,
+        auth_config: buildAuthConfig(),
+        site: instanceSite.value || null,
+        tags,
+        verify_ssl: verifySsl.value ? 1 : 0,
+      })
+      notifications.addToast('Integration updated successfully', 'success')
+    } else {
+      // Create new instance
+      await post('/api/integrations/instances', {
+        id: instanceId.value || selectedPlatform.value + '-1',
+        category: selectedCategory.value,
+        platform: selectedPlatform.value,
+        url: instanceUrl.value,
+        auth_config: buildAuthConfig(),
+        site: instanceSite.value || null,
+        tags,
+        verify_ssl: verifySsl.value ? 1 : 0,
+      })
+      notifications.addToast('Integration saved successfully', 'success')
+    }
     emit('saved')
   } catch (e) {
     notifications.addToast('Failed to save: ' + (e.message || 'Unknown error'), 'danger')
@@ -154,8 +211,8 @@ async function saveInstance() {
       <button class="btn btn-xs" @click="emit('cancel')">Cancel</button>
     </div>
 
-    <!-- Step 2: Platform -->
-    <div v-if="step === 1" class="wizard-body">
+    <!-- Step 2: Platform (skip in edit mode) -->
+    <div v-if="step === 1 && !isEdit" class="wizard-body">
       <h3>Which platform?</h3>
       <div class="wizard-grid">
         <button v-for="p in platforms" :key="p" class="wizard-card"
@@ -169,9 +226,9 @@ async function saveInstance() {
       </div>
     </div>
 
-    <!-- Step 3: Configure -->
-    <div v-if="step === 2" class="wizard-body">
-      <h3>Configure {{ selectedPlatform }}</h3>
+    <!-- Step 3: Configure (step 1 in edit mode) -->
+    <div v-if="step === 2 || (isEdit && step === 1)" class="wizard-body">
+      <h3>{{ isEdit ? 'Edit' : 'Configure' }} {{ selectedPlatform }}</h3>
       <div class="wizard-form">
         <div>
           <label class="field-label">Instance ID</label>
@@ -221,13 +278,13 @@ async function saveInstance() {
         </div>
       </div>
       <div style="display:flex;gap:.5rem;margin-top:1rem">
-        <button class="btn btn-xs" @click="step = 1">Back</button>
-        <button class="btn btn-primary" @click="step = 3">Next</button>
+        <button v-if="!isEdit" class="btn btn-xs" @click="step = 1">Back</button>
+        <button class="btn btn-primary" @click="step = isEdit ? 2 : 3">{{ isEdit ? 'Next' : 'Next' }}</button>
       </div>
     </div>
 
-    <!-- Step 4: Test & Save -->
-    <div v-if="step === 3" class="wizard-body">
+    <!-- Step 4: Test & Save (step 2 in edit mode) -->
+    <div v-if="step === 3 || (isEdit && step === 2)" class="wizard-body">
       <h3>Test & Save</h3>
       <div class="wizard-summary">
         <div class="row"><span class="row-label">Platform</span><span class="row-val badge ba">{{ selectedPlatform }}</span></div>
@@ -237,12 +294,12 @@ async function saveInstance() {
         <div v-if="instanceSite" class="row"><span class="row-label">Site</span><span class="row-val">{{ instanceSite }}</span></div>
       </div>
       <div style="display:flex;gap:.5rem;margin-top:1rem">
-        <button class="btn btn-xs" @click="step = 2">Back</button>
+        <button v-if="!isEdit" class="btn btn-xs" @click="step = isEdit ? 1 : 2">Back</button>
         <button class="btn" @click="testConnection" :disabled="testing">
           {{ testing ? 'Testing...' : 'Test Connection' }}
         </button>
         <button class="btn btn-primary" @click="saveInstance" :disabled="saving">
-          {{ saving ? 'Saving...' : 'Save Integration' }}
+          {{ saving ? (isEdit ? 'Updating...' : 'Saving...') : (isEdit ? 'Update Integration' : 'Save Integration') }}
         </button>
       </div>
       <!-- Test result -->

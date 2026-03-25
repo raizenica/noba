@@ -52,6 +52,7 @@ function callbackUrl(provider) {
 // Managed integrations
 const instances = ref([])
 const showSetup = ref(false)
+const editingInstance = ref(null)
 
 async function fetchInstances() {
   try {
@@ -70,9 +71,20 @@ async function deleteInstance(id) {
   }
 }
 
+function editInstance(inst) {
+  editingInstance.value = inst
+  showSetup.value = true
+}
+
 function onInstanceSaved() {
   showSetup.value = false
+  editingInstance.value = null
   fetchInstances()
+}
+
+function onSetupCancel() {
+  showSetup.value = false
+  editingInstance.value = null
 }
 
 onMounted(async () => {
@@ -123,7 +135,7 @@ const cats = [
       </div>
 
       <!-- Setup wizard -->
-      <IntegrationSetup v-if="showSetup" @saved="onInstanceSaved" @cancel="showSetup = false" />
+      <IntegrationSetup v-if="showSetup" :edit-instance="editingInstance" @saved="onInstanceSaved" @cancel="onSetupCancel" />
 
       <!-- Instance list -->
       <div v-if="!showSetup && instances.length" class="instance-list">
@@ -135,9 +147,14 @@ const cats = [
           <span :class="['badge', inst.health_status === 'online' ? 'bs' : inst.health_status === 'offline' ? 'bd' : 'bw']">
             {{ inst.health_status || 'unknown' }}
           </span>
-          <button class="btn btn-xs btn-danger" @click="deleteInstance(inst.id)">
-            <i class="fas fa-trash"></i>
-          </button>
+          <div style="display:flex;gap:.25rem">
+            <button class="btn btn-xs" @click="editInstance(inst)" title="Edit integration">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button class="btn btn-xs btn-danger" @click="deleteInstance(inst.id)" title="Delete integration">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
         </div>
       </div>
       <div v-if="!showSetup && !instances.length" class="empty-msg" style="padding:2rem;text-align:center;background:var(--surface);border:1px dashed var(--border);border-radius:6px">

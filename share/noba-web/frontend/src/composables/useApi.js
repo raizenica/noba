@@ -71,6 +71,7 @@ export function useApi() {
   const get = (url) => request(url)
   const post = (url, body) => request(url, { method: 'POST', body })
   const put = (url, body) => request(url, { method: 'PUT', body })
+  const patch = (url, body) => request(url, { method: 'PATCH', body })
   const del = (url) => request(url, { method: 'DELETE' })
   const download = async (url) => {
     const auth = useAuthStore()
@@ -81,5 +82,5 @@ export function useApi() {
     return res
   }
 
-  return { request, get, post, put, del, download, loading, error }
+  return { request, get, post, put, patch, del, download, loading, error }
 }
