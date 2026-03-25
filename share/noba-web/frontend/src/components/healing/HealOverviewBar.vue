@@ -1,8 +1,10 @@
 <script setup>
 import { computed } from 'vue'
 import { useHealingStore } from '../../stores/healing'
+import { useDashboardStore } from '../../stores/dashboard'
 
 const store = useHealingStore()
+const dashboardStore = useDashboardStore()
 
 const pipelineStatus = computed(() => {
   if (store.activeMaintenance.length) return 'Maintenance'
@@ -22,6 +24,7 @@ const pipelineClass = computed(() => {
     <div class="heal-stat">
       <span class="heal-stat-label">Pipeline</span>
       <span :class="['badge', pipelineClass]">{{ pipelineStatus }}</span>
+      <span style="font-size:.7rem;color:var(--text-muted);margin-left:.5rem">up {{ dashboardStore.live.uptime || '--' }}</span>
     </div>
     <div class="heal-stat">
       <span class="heal-stat-label">Active Heals</span>

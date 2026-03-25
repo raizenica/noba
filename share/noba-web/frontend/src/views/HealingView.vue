@@ -7,7 +7,10 @@ import { useIntervals } from '../composables/useIntervals'
 import { useModalsStore } from '../stores/modals'
 import AppTabBar from '../components/ui/AppTabBar.vue'
 import HealOverviewBar from '../components/healing/HealOverviewBar.vue'
-import { HEALING_FETCH_ALL_INTERVAL_MS, LEDGER_TIMELINE_LIMIT } from '../constants'
+import HealingOverviewTab from '../components/healing/HealingOverviewTab.vue'
+import HealingLedgerTab from '../components/healing/HealingLedgerTab.vue'
+import HealingApprovalTab from '../components/healing/HealingApprovalTab.vue'
+import { HEALING_FETCH_ALL_INTERVAL_MS } from '../constants'
 
 const authStore = useAuthStore()
 const store = useHealingStore()
@@ -26,41 +29,6 @@ const tabs = computed(() => [
   { key: 'approvals',    label: 'Approvals',    icon: 'fa-check-circle', badge: store.pendingApprovals.length },
   { key: 'maintenance',  label: 'Maintenance',  icon: 'fa-wrench',       badge: store.activeMaintenance.length },
 ])
-
-// ── Ledger filters (local to view) ────────────────────────────────────────────
-const ledgerFilterRule = ref('')
-const ledgerFilterTarget = ref('')
-const ledgerLoading = ref(false)
-
-const ledgerRuleOptions = computed(() => {
-  const ids = [...new Set(store.ledger.map(r => r.rule_id).filter(Boolean))]
-  return ids.sort()
-})
-
-const ledgerTargetOptions = computed(() => {
-  const targets = [...new Set(store.ledger.map(r => r.target).filter(Boolean))]
-  return targets.sort()
-})
-
-const filteredLedger = computed(() => {
-  return store.ledger.filter(r => {
-    if (ledgerFilterRule.value && r.rule_id !== ledgerFilterRule.value) return false
-    if (ledgerFilterTarget.value && r.target !== ledgerFilterTarget.value) return false
-    return true
-  })
-})
-
-async function refetchLedger() {
-  ledgerLoading.value = true
-  try {
-    const params = { limit: LEDGER_TIMELINE_LIMIT }
-    if (ledgerFilterRule.value) params.rule_id = ledgerFilterRule.value
-    if (ledgerFilterTarget.value) params.target = ledgerFilterTarget.value
-    await store.fetchLedger(params)
-  } finally {
-    ledgerLoading.value = false
-  }
-}
 
 // ── Trust actions ─────────────────────────────────────────────────────────────
 const promoteLoading = ref(false)
@@ -82,23 +50,6 @@ async function confirmPromote(ruleId) {
   }
 }
 
-// ── Suggestion actions ────────────────────────────────────────────────────────
-const dismissingId = ref(null)
-
-async function dismissSuggestion(id) {
-  dismissingId.value = id
-  try {
-    const res = await store.dismissSuggestion(id)
-    if (res && res.success) {
-      notify.addToast('Suggestion dismissed', 'success')
-    }
-  } catch {
-    notify.addToast('Failed to dismiss suggestion', 'error')
-  } finally {
-    dismissingId.value = null
-  }
-}
-
 // ── Maintenance actions ───────────────────────────────────────────────────────
 const endingMaintId = ref(null)
 
@@ -117,22 +68,9 @@ async function endMaintenance(id) {
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
-function fmtBool(val) {
-  if (val === true) return '\u2713'
-  if (val === false) return '\u2717'
-  return '\u2013'
-}
-
 function fmtTs(ts) {
   if (!ts) return '\u2013'
   return new Date(ts * 1000).toLocaleString()
-}
-
-function ledgerRowStyle(row) {
-  if (row.verified === true) return { borderLeft: '3px solid var(--success)' }
-  if (row.action_success === false) return { borderLeft: '3px solid var(--danger)' }
-  if (row.verified === false) return { borderLeft: '3px solid var(--warning)' }
-  return {}
 }
 
 function trustLevelClass(level) {
@@ -140,36 +78,6 @@ function trustLevelClass(level) {
   if (level === 'approve') return 'bw'
   return 'ba'
 }
-
-function severityClass(severity) {
-  if (severity === 'high') return 'bd'
-  if (severity === 'medium') return 'bw'
-  return 'bs'
-}
-
-// ── Tab badge counts ──────────────────────────────────────────────────────────
-const approvalBadge = computed(() => store.pendingApprovals.length || 0)
-const maintenanceBadge = computed(() => store.activeMaintenance.length || 0)
-
-// ── Effectiveness summary ─────────────────────────────────────────────────────
-const RULE_LABELS = {
-  total: 'Total',
-  verified_count: 'Verified',
-  failed_count: 'Failed',
-  pending_count: 'Pending',
-  success_rate: 'Success Rate',
-}
-
-const effectivenessEntries = computed(() => {
-  const eff = store.effectiveness
-  if (!eff || typeof eff !== 'object') return []
-  if (Array.isArray(eff)) return eff
-  return Object.entries(eff).map(([rule_id, stats]) => ({
-    rule_id,
-    display_name: RULE_LABELS[rule_id] || rule_id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-    ...stats,
-  }))
-})
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 onMounted(() => {
@@ -196,156 +104,10 @@ onUnmounted(() => {
     <AppTabBar :tabs="tabs" :active="activeTab" @change="(key) => activeTab = key" />
 
     <!-- ── Overview Tab ──────────────────────────────────────────────────── -->
-    <div v-if="activeTab === 'overview'">
-      <!-- Effectiveness Summary -->
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-header">
-          <h3 class="card-title"><i class="fas fa-chart-bar mr-6"></i>Effectiveness Summary</h3>
-        </div>
-        <div class="card-body" style="padding:0;overflow-x:auto">
-          <div v-if="store.loading && effectivenessEntries.length === 0" style="padding:24px;text-align:center;color:var(--text-muted)">
-            <i class="fas fa-spinner fa-spin"></i> Loading...
-          </div>
-          <p v-else-if="effectivenessEntries.length === 0" class="empty-msg">No effectiveness data yet — metrics appear once healing actions have run.</p>
-          <table v-else style="width:100%;border-collapse:collapse;font-size:13px">
-            <thead>
-              <tr style="background:var(--surface2);color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px">
-                <th class="th-left">Rule</th>
-                <th class="th-center">Total</th>
-                <th class="th-center">Success</th>
-                <th class="th-center">Failed</th>
-                <th class="th-center">Rate</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="entry in effectivenessEntries" :key="entry.rule_id" class="border-b table-row-hover">
-                <td class="td-body" style="font-family:monospace;font-size:12px">{{ entry.display_name || entry.rule_id || '\u2013' }}</td>
-                <td class="td-body-center">{{ entry.total || entry.count || 0 }}</td>
-                <td class="td-body-center" style="color:var(--success);font-weight:600">{{ entry.successes || entry.success || 0 }}</td>
-                <td class="td-body-center" style="color:var(--danger);font-weight:600">{{ entry.failures || entry.failed || 0 }}</td>
-                <td class="td-body-center">
-                  <span class="badge" :class="(entry.rate || entry.success_rate || 0) >= 0.8 ? 'bs' : (entry.rate || entry.success_rate || 0) >= 0.5 ? 'bw' : 'bd'">
-                    {{ ((entry.rate || entry.success_rate || 0) * 100).toFixed(0) }}%
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Suggestions -->
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title"><i class="fas fa-lightbulb mr-6"></i>Suggestions</h3>
-        </div>
-        <div class="card-body">
-          <div v-if="store.loading && store.suggestions.length === 0" style="padding:24px;text-align:center;color:var(--text-muted)">
-            <i class="fas fa-spinner fa-spin"></i> Loading...
-          </div>
-          <p v-else-if="store.suggestions.length === 0" class="empty-msg" style="margin:0">No suggestions at this time. The pipeline is running smoothly.</p>
-          <div v-else style="display:flex;flex-direction:column;gap:12px">
-            <div v-for="sug in store.suggestions" :key="sug.id" class="border-b" style="display:flex;align-items:flex-start;gap:14px;padding:10px 0">
-              <div style="flex:1">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-                  <span class="badge ba">{{ sug.category || 'general' }}</span>
-                  <span class="badge" :class="severityClass(sug.severity)">{{ sug.severity || 'low' }}</span>
-                  <span v-if="sug.rule_id" style="font-family:monospace;font-size:11px;color:var(--text-muted)">{{ sug.rule_id }}</span>
-                </div>
-                <p style="margin:0;font-size:13px;line-height:1.5">{{ sug.message }}</p>
-              </div>
-              <div v-if="authStore.isOperator" style="flex-shrink:0">
-                <button class="btn btn-xs" :disabled="dismissingId === sug.id" @click="dismissSuggestion(sug.id)">
-                  <i v-if="dismissingId === sug.id" class="fas fa-spinner fa-spin"></i>
-                  <i v-else class="fas fa-times"></i>
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <HealingOverviewTab v-if="activeTab === 'overview'" />
 
     <!-- ── Ledger Tab ────────────────────────────────────────────────────── -->
-    <div v-if="activeTab === 'ledger'">
-      <!-- Filters -->
-      <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-        <select v-model="ledgerFilterRule" class="form-select" style="width:auto" @change="refetchLedger">
-          <option value="">All rules</option>
-          <option v-for="r in ledgerRuleOptions" :key="r" :value="r">{{ r }}</option>
-        </select>
-        <select v-model="ledgerFilterTarget" class="form-select" style="width:auto" @change="refetchLedger">
-          <option value="">All targets</option>
-          <option v-for="t in ledgerTargetOptions" :key="t" :value="t">{{ t }}</option>
-        </select>
-        <button class="btn btn-xs" @click="refetchLedger" :disabled="ledgerLoading">
-          <i class="fas fa-sync-alt" :class="{ 'fa-spin': ledgerLoading }"></i>
-          Refresh
-        </button>
-        <span style="color:var(--text-muted);font-size:12px">Auto-refreshes every 30s</span>
-      </div>
-
-      <!-- Table -->
-      <div class="card">
-        <div class="card-body" style="padding:0;overflow-x:auto">
-          <div v-if="store.loading && filteredLedger.length === 0" style="padding:32px;text-align:center;color:var(--text-muted)">
-            <i class="fas fa-spinner fa-spin"></i> Loading...
-          </div>
-          <div v-else-if="filteredLedger.length === 0" class="empty-msg" style="padding:3rem;text-align:center">
-            <i class="fas fa-history" style="font-size:2.5rem;opacity:.2;display:block;margin-bottom:1rem;margin-inline:auto"></i>
-            No heal events recorded yet.
-            <br><small style="opacity:.6;max-width:400px;display:inline-block">The pipeline will automatically log events here as it detects and resolves system anomalies across your agents.</small>
-          </div>
-          <table v-else style="width:100%;border-collapse:collapse;font-size:13px">
-            <thead>
-              <tr style="background:var(--surface2);color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px">
-                <th class="th-left">Timestamp</th>
-                <th class="th-left">Rule ID</th>
-                <th class="th-left">Target</th>
-                <th class="th-left">Action</th>
-                <th class="th-center">Step</th>
-                <th class="th-left">Trust</th>
-                <th class="th-center">Success</th>
-                <th class="th-center">Verified</th>
-                <th class="th-right">Duration</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in filteredLedger"
-                :key="row.id || (row.rule_id + row.ts)"
-                :style="ledgerRowStyle(row)"
-                class="border-b table-row-hover" style="transition:background .15s"
-              >
-                <td class="td-body" style="color:var(--text-muted);white-space:nowrap">{{ fmtTs(row.ts) }}</td>
-                <td class="td-body" style="font-family:monospace;font-size:12px">{{ row.rule_id || '\u2013' }}</td>
-                <td class="td-body" style="font-family:monospace;font-size:12px">{{ row.target || '\u2013' }}</td>
-                <td class="td-body">
-                  <span class="badge ba">{{ row.action_type || '\u2013' }}</span>
-                </td>
-                <td class="td-body-center">{{ row.escalation_step ||0 }}</td>
-                <td class="td-body">
-                  <span v-if="row.trust_level" class="badge" :class="trustLevelClass(row.trust_level)">{{ row.trust_level }}</span>
-                  <span v-else style="color:var(--text-muted)">\u2013</span>
-                </td>
-                <td class="td-body-center" style="font-weight:600"
-                    :style="{ color: row.action_success === true ? 'var(--success)' : row.action_success === false ? 'var(--danger)' : 'var(--text-muted)' }">
-                  {{ fmtBool(row.action_success) }}
-                </td>
-                <td class="td-body-center" style="font-weight:600"
-                    :style="{ color: row.verified === true ? 'var(--success)' : row.verified === false ? 'var(--warning)' : 'var(--text-muted)' }">
-                  {{ fmtBool(row.verified) }}
-                </td>
-                <td class="td-body-right" style="color:var(--text-muted)">
-                  {{ row.duration_s != null ? (row.duration_s ||0).toFixed(1) + 's' : '\u2013' }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+    <HealingLedgerTab v-if="activeTab === 'ledger'" />
 
     <!-- ── Dependencies Tab ──────────────────────────────────────────────── -->
     <div v-if="activeTab === 'dependencies'">
@@ -441,49 +203,7 @@ onUnmounted(() => {
     </div>
 
     <!-- ── Approvals Tab ─────────────────────────────────────────────────── -->
-    <div v-if="activeTab === 'approvals'">
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title"><i class="fas fa-check-circle mr-6"></i>Pending Approvals</h3>
-        </div>
-        <div class="card-body" style="padding:0;overflow-x:auto">
-          <div v-if="store.loading && store.pendingApprovals.length === 0" style="padding:24px;text-align:center;color:var(--text-muted)">
-            <i class="fas fa-spinner fa-spin"></i> Loading...
-          </div>
-          <p v-else-if="store.pendingApprovals.length === 0" class="empty-msg">No pending approvals. All heal actions are autonomous or completed.</p>
-          <table v-else style="width:100%;border-collapse:collapse;font-size:13px">
-            <thead>
-              <tr style="background:var(--surface2);color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px">
-                <th class="th-left">Timestamp</th>
-                <th class="th-left">Rule ID</th>
-                <th class="th-left">Target</th>
-                <th class="th-left">Action</th>
-                <th class="th-center">Step</th>
-                <th class="th-left">Trigger</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in store.pendingApprovals"
-                :key="row.id"
-                class="border-b table-row-hover" style="transition:background .15s"
-              >
-                <td class="td-body" style="color:var(--text-muted);white-space:nowrap">{{ fmtTs(row.requested_at) }}</td>
-                <td class="td-body" style="font-family:monospace;font-size:12px">{{ row.automation_id || row.rule_id || '\u2013' }}</td>
-                <td class="td-body" style="font-family:monospace;font-size:12px">{{ row.target || '\u2013' }}</td>
-                <td class="td-body">
-                  <span class="badge ba">{{ row.action_type || '\u2013' }}</span>
-                </td>
-                <td class="td-body-center">{{ row.escalation_step ||0 }}</td>
-                <td class="td-body">
-                  <span class="badge bw">{{ row.trigger || 'manual' }}</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+    <HealingApprovalTab v-if="activeTab === 'approvals'" />
 
     <!-- ── Maintenance Tab ───────────────────────────────────────────────── -->
     <div v-if="activeTab === 'maintenance'">

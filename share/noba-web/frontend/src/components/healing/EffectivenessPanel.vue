@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Chart } from 'chart.js/auto'
 import { useHealingStore } from '../../stores/healing'
 
@@ -175,6 +175,14 @@ function buildRuleChart(ledger) {
   })
 }
 
+const hasData = computed(() => {
+  const eff = store.effectiveness || {}
+  const ledger = store.ledger || []
+  if (ledger.length > 0) return true
+  if (Array.isArray(eff)) return eff.some(e => (e.total || e.count || 0) > 0)
+  return Object.values(eff).some(v => typeof v === 'object' && (v.total || v.count || 0) > 0)
+})
+
 function renderAll() {
   buildSuccessChart(store.effectiveness || {})
   buildActionChart(store.ledger || [])
@@ -203,7 +211,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="effectiveness-grid">
+  <div v-if="hasData" class="effectiveness-grid">
     <div class="eff-card">
       <h4>Success Rate</h4>
       <canvas ref="successChart" />
@@ -216,6 +224,10 @@ onBeforeUnmount(() => {
       <h4>Per-Rule Effectiveness</h4>
       <canvas ref="ruleChart" />
     </div>
+  </div>
+  <div v-else style="text-align:center;padding:2rem;color:var(--text-muted)">
+    <i class="fas fa-chart-pie" style="font-size:2rem;opacity:.2;display:block;margin-bottom:.75rem"></i>
+    No healing data yet — charts will appear once the pipeline processes events.
   </div>
 </template>
 
