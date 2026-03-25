@@ -505,7 +505,7 @@ fi
 # 4. Web dashboard
 # ── Python dependencies for web dashboard ────────────────────────────────────
 header "Python Dependencies"
-_py_deps=(fastapi "uvicorn[standard]" psutil pyyaml httpx websocket-client cryptography)
+_py_deps=(fastapi "uvicorn[standard]" psutil pyyaml httpx websocket-client cryptography defusedxml)
 if [[ "$DRY_RUN" == true ]]; then
     dry "pip install ${_py_deps[*]}"
 else

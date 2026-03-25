@@ -356,7 +356,7 @@ class RSSFeedWatcher:
             self._thread.join(timeout=5)
 
     def _loop(self) -> None:
-        import xml.etree.ElementTree as ET
+        import defusedxml.ElementTree as ET
         import httpx
         # Initial scan to populate seen items (don't trigger on first run)
         for feed in self._feeds:

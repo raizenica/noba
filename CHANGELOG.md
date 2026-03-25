@@ -4,6 +4,9 @@ All notable changes to NOBA Command Center are documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **XXE vulnerability patched** — RSS feed scheduler now uses `defusedxml.ElementTree` instead of `xml.etree.ElementTree` to prevent XML External Entity attacks and XML bombs.
+
 ### Added
 - **Database migration framework** (`server/db/migrations.py`) — Schema version tracking with up/down migrations, rollback capability, and auto-migration on startup. Ready for future schema evolution.
 - **SSE stream testing** (`dev/smoke.py`) — SSE endpoints (`/api/stream/*`) now tested with timeout-based connection validation instead of being skipped.
