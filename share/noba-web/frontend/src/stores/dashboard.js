@@ -33,7 +33,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     esphome: null, pikvm: null, piKvm: null, gitea: null, gitlab: null,
     github: null, paperless: null, vaultwarden: null,
     unifiProtect: null, scrutiny: null, plugins: null,
-    tailscale: null, frigate: null, vpn: null,
+    tailscale: null, frigate: null, vpn: null, n8n: null,
     energy: [], cameraFeeds: [], kuma: [],
     radarrExtended: null, sonarrExtended: null,
     radarrCalendar: [], sonarrCalendar: [],

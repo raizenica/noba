@@ -77,6 +77,7 @@ const visItems = [
   { key: 'bazarr',        label: 'Bazarr' },
   { key: 'dockerUpdates', label: 'Docker Updates' },
   { key: 'devicePresence',label: 'Device Presence' },
+  { key: 'n8n',           label: 'n8n Automation' },
 ]
 
 async function save() {

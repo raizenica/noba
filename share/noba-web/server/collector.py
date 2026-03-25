@@ -156,6 +156,8 @@ def collect_stats(qs: dict) -> dict:
     energy_urls  = [x.strip() for x in cfg.get("energySensors", "").split(",") if x.strip()]
     frigate_url  = cfg.get("frigateUrl", "")
     pihole_pass  = cfg.get("piholePassword", "")
+    n8n_url      = cfg.get("n8nUrl", "")
+    n8n_key      = cfg.get("n8nApiKey", "")
 
     bmc_list = []
     for entry in bmc_map:
@@ -228,6 +230,11 @@ def collect_stats(qs: dict) -> dict:
     energy_fut   = _pool.submit(get_energy_shelly, energy_urls) if energy_urls else None
     frigate_fut  = _pool.submit(get_frigate, frigate_url) if frigate_url else None
     tailscale_fut = _pool.submit(get_tailscale_status)
+    if n8n_url:
+        from .integrations.n8n import collect_n8n
+        n8n_fut = _pool.submit(collect_n8n, n8n_url, n8n_key)
+    else:
+        n8n_fut = None
 
     # Docker image update check — only every 5th cycle to avoid registry spam
     global _docker_update_cycle
@@ -249,7 +256,7 @@ def collect_stats(qs: dict) -> dict:
         pikvm_fut, k8s_fut, gitea_fut, gitlab_fut, github_fut,
         paperless_fut, vw_fut, weather_fut, cert_fut, domain_fut,
         vpn_fut, docker_upd_fut, presence_fut, scrutiny_fut, energy_fut,
-        frigate_fut, tailscale_fut,
+        frigate_fut, tailscale_fut, n8n_fut,
         *svc_futs.keys(), *ping_futs.keys(), *bmc_futs.keys(),
     ] if f is not None]
     _done, _not_done = _wait_futures(_all_futs, timeout=4.5)
@@ -382,6 +389,7 @@ def collect_stats(qs: dict) -> dict:
     stats["energy"]         = _get(energy_fut, name="Energy", default=[])
     stats["frigate"]        = _get(frigate_fut, name="Frigate")
     stats["tailscale"]      = _get(tailscale_fut, name="Tailscale")
+    stats["n8n"]            = _get(n8n_fut, name="n8n")
 
     stats.update(collect_disk_io())
     stats.update(collect_per_interface_net())

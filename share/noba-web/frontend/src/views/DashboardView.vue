@@ -53,6 +53,7 @@ import VpnCard          from '../components/cards/VpnCard.vue'
 import EnergyCard       from '../components/cards/EnergyCard.vue'
 import CameraFeedsCard  from '../components/cards/CameraFeedsCard.vue'
 import RecoveryCard     from '../components/cards/RecoveryCard.vue'
+import N8nCard         from '../components/cards/N8nCard.vue'
 import PredictionCard  from '../components/cards/PredictionCard.vue'
 import IntegrationCard from '../components/cards/IntegrationCard.vue'
 import { getTemplate } from '../data/cardTemplates'
@@ -292,6 +293,7 @@ onUnmounted(() => {
         <!-- Data-driven cards (no URL needed) -->
         <EnergyCard      v-if="(dashboardStore.live.energy || []).length > 0"              data-id="energy" />
         <CameraFeedsCard v-if="(dashboardStore.live.cameraFeeds || []).length > 0"         data-id="cameraFeeds" />
+        <N8nCard         v-if="showCard('n8n') && dashboardStore.live.n8n"                 data-id="n8n" />
 
         <!-- Prediction -->
         <PredictionCard  v-if="showCard('prediction')"                                      data-id="prediction" />

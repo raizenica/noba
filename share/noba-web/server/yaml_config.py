@@ -124,6 +124,8 @@ def read_yaml_settings() -> dict:
         # AI / LLM
         "llmProvider": "", "llmModel": "", "llmApiKey": "", "llmBaseUrl": "",
         "llmMaxTokens": 4096, "llmTemperature": 0.3, "llmEnabled": False,
+        # ── Workflow automation ────────────────────────────────────────────
+        "n8nUrl": "", "n8nApiKey": "",
     }
     if not os.path.exists(NOBA_YAML):
         with _settings_cache_lock:
