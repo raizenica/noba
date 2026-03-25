@@ -15,6 +15,11 @@ All notable changes to NOBA Command Center are documented in this file.
 - **`.dockerignore`** — Excludes `.git`, `node_modules`, `__pycache__`, `tests/`, `.venv` from Docker build context.
 ### Fixed
 - **Memory progress bar** — Core System card now correctly displays memory percentage by falling back to the `memPercent` SSE field when the `memory` object is a pre-formatted string.
+- **Hardware card empty** — CPU and GPU model names were missing because `hwCpu`/`hwGpu` keys weren't declared in the dashboard store's reactive object, causing SSE data to be silently dropped.
+- **Agent "Last seen: --"** — SSE agent list now includes `last_seen_s` field, matching the REST API. Online agents now show "7s ago" instead of "--".
+- **GPU model `<br>` literal** — Backend no longer injects HTML `<br>` into GPU model string; frontend uses `white-space: pre-line` for multi-GPU line breaks.
+- **Pi-hole unauthorized state** — Pi-hole card now shows a clean "API Key Required" badge with a settings link instead of rendering broken empty metric boxes with raw JSON errors.
+- **Tailscale "localhost" names** — Devices reporting `HostName: "localhost"` (Android/TV devices) now fall back to `DNSName` for proper identification (e.g., "samsung-sm-s938b", "google-tv-streamer-1").
 
 ### Improved
 - **Dashboard integration cards** — Empty "No data available" integration cards are now collapsed into a single "N unconfigured integrations" button, drastically reducing scroll depth.

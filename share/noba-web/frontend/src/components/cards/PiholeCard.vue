@@ -30,7 +30,15 @@ async function togglePihole() {
       </button>
     </template>
 
-    <template v-if="pihole">
+    <template v-if="pihole && (pihole.status === 'unauthorized' || pihole.status === 'error')">
+      <div style="text-align:center;padding:.5rem 0">
+        <span class="badge bd" style="font-size:.7rem">{{ pihole.status === 'unauthorized' ? 'API Key Required' : 'Connection Error' }}</span>
+        <p style="font-size:.72rem;color:var(--text-muted);margin:.6rem 0 0">
+          <router-link to="/settings/integrations" class="empty-link">Configure in Settings → Integrations</router-link>
+        </p>
+      </div>
+    </template>
+    <template v-else-if="pihole">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.875rem">
         <span class="badge" :class="pihole.status === 'enabled' ? 'bs' : 'bd'">{{ pihole.status }}</span>
         <span style="font-size:.68rem;color:var(--text-muted)">{{ pihole.domains }} domains</span>
@@ -62,6 +70,6 @@ async function togglePihole() {
         </div>
       </div>
     </template>
-    <div v-else class="empty-msg">Pi-hole unreachable — <router-link to="/settings?tab=integrations" class="empty-link">configure in Settings</router-link>.</div>
+    <div v-else class="empty-msg">Pi-hole unreachable — <router-link to="/settings/integrations" class="empty-link">configure in Settings</router-link>.</div>
   </DashboardCard>
 </template>

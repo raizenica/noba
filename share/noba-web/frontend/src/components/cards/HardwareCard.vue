@@ -30,7 +30,7 @@ const showGpuTemp = computed(() =>
     </div>
     <div class="row">
       <span class="row-label">GPU</span>
-      <span class="row-val" style="font-size:.76rem;max-width:210px">{{ hwGpu }}</span>
+      <span class="row-val" style="font-size:.76rem;max-width:210px;white-space:pre-line">{{ hwGpu }}</span>
     </div>
     <div v-if="showGpuTemp" class="row">
       <span class="row-label">GPU Temp</span>

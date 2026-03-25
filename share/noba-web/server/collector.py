@@ -178,7 +178,8 @@ def collect_stats(qs: dict) -> dict:
     rad_fut   = _pool.submit(get_servarr, rad_url, rad_key)  if rad_url else None
     son_fut   = _pool.submit(get_servarr, son_url, son_key)  if son_url else None
     qbit_fut  = _pool.submit(get_qbit,   qbit_url, qbit_user, qbit_pass) if qbit_url else None
-    pmx_fut   = _pool.submit(get_proxmox, pmx_url, pmx_user, pmx_tname, pmx_tval) if pmx_url else None
+    pmx_verify = cfg.get("proxmoxVerifySsl", True)
+    pmx_fut   = _pool.submit(get_proxmox, pmx_url, pmx_user, pmx_tname, pmx_tval, pmx_verify) if pmx_url else None
     ag_fut    = _pool.submit(get_adguard, ag_url, ag_user, ag_pass) if ag_url else None
     jf_fut    = _pool.submit(get_jellyfin, jf_url, jf_key) if jf_url else None
     hass_fut  = _pool.submit(get_hass, hass_url, hass_tok) if hass_url else None
@@ -397,6 +398,7 @@ def collect_stats(qs: dict) -> dict:
                     "cpu_percent": adata.get("cpu_percent", 0),
                     "mem_percent": adata.get("mem_percent", 0),
                     "online": age < _AGENT_MAX_AGE,
+                    "last_seen_s": int(age),
                     "platform": adata.get("platform", ""),
                     "uptime_s": adata.get("uptime_s", 0),
                     "disks": adata.get("disks", []),

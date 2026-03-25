@@ -32,7 +32,7 @@ def collect_hardware() -> dict:
         ["bash", "-c", "lspci | grep -i 'vga\\|3d' | cut -d: -f3"],
         cache_key="lspci", cache_ttl=3600,
     )
-    s["hwGpu"] = raw_gpu.replace("\n", "<br>") if raw_gpu else "Unknown GPU"
+    s["hwGpu"] = raw_gpu.strip() if raw_gpu else "Unknown GPU"
 
     # CPU temperature — try psutil first, fall back to sensors
     cpu_temp = None

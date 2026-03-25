@@ -14,6 +14,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     containers: [], alerts: [], diskIo: [],
     // System info (from collect_system + collect_hardware)
     osName: '', kernel: '', hostname: '', defaultIp: '',
+    hwCpu: '', hwGpu: '',
     memPercent: 0, battery: null,
     cpuHistory: [], netHealth: null,
     topCpu: [], topMem: [], topIo: [],

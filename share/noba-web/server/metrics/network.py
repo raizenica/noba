@@ -312,8 +312,12 @@ def get_tailscale_status() -> dict | None:
         peers = []
         for _key, p in peers_raw.items():
             ips = p.get("TailscaleIPs", [])
+            host = p.get("HostName", "")
+            if not host or host == "localhost":
+                dns = p.get("DNSName", "")
+                host = dns.split(".")[0] if dns else host or "unknown"
             peers.append({
-                "hostname": p.get("HostName", ""),
+                "hostname": host,
                 "ip": ips[0] if ips else "",
                 "os": p.get("OS", ""),
                 "online": p.get("Online", False),
