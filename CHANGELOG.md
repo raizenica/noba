@@ -14,7 +14,11 @@ All notable changes to NOBA Command Center are documented in this file.
 - **14 CSS utility classes** — Table cell, border, spacing, and typography utilities replacing 208 inline style attributes.
 - **`.dockerignore`** — Excludes `.git`, `node_modules`, `__pycache__`, `tests/`, `.venv` from Docker build context.
 ### Improved
-- **Unified tab navigation** — Created a reusable `AppTabBar` component to standardize navigation across Logs, Monitoring, Healing, and Settings views.
+- **Infrastructure UI unification** — Migrated the Infrastructure view and Kubernetes browser to the `AppTabBar` component, ensuring consistent navigation and styling across all system views.
+- **Modernized scaling interaction** — Replaced native browser `prompt()` with a non-blocking `AppModal` for Kubernetes deployment scaling, providing a safer and theme-consistent user experience.
+- **Custom chart optimization** — Refactored the Custom Charts builder to use the `ChartWrapper` component, leveraging incremental update performance and reducing redundant code.
+- **UI input standardization** — Swept the Traffic and Kubernetes tabs to replace inconsistent inline styles with global `.field-input` and `.field-select` utility classes.
+- **Unified tab navigation** — Created a reusable `AppTabBar` component to standardize navigation across Logs, Monitoring, Healing, Infrastructure, and Settings views.
 - **Interactive security feedback** — Added per-host scan status indicators in the Security view, providing immediate visual confirmation of dispatched scan requests.
 - **Healing consistency** — Standardized trust promotion actions using the global `modals.confirm()` store and implemented actionable empty states for the healing ledger.
 - **Workflow builder dirty guard** — Implemented an "unsaved changes" warning in the `WorkflowBuilder`. Users are now prompted before closing the modal if modifications were made to the graph, preventing accidental data loss.

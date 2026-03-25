@@ -22,6 +22,14 @@ const logsTitle     = ref('')
 const podLogs       = ref('')
 const logsLoading   = ref(false)
 
+// Scale modal
+const showScaleModal = ref(false)
+const scaleTitle     = ref('')
+const scaleNs        = ref('')
+const scaleTarget    = ref('')
+const scaleValue     = ref(1)
+const scaleLoading   = ref(false)
+
 // Active sub-tab
 const subTab = ref('pods')
 
@@ -65,23 +73,37 @@ async function fetchPodLogs(namespace, name) {
   logsLoading.value = false
 }
 
-async function scaleDeployment(namespace, name, currentReplicas) {
-  const input = prompt(`Scale ${namespace}/${name} to how many replicas?`, currentReplicas ?? 1)
-  if (input === null) return
-  const replicas = parseInt(input)
+function openScale(namespace, name, currentReplicas) {
+  scaleNs.value = namespace
+  scaleTarget.value = name
+  scaleValue.value = currentReplicas ?? 1
+  scaleTitle.value = `${namespace}/${name}`
+  showScaleModal.value = true
+}
+
+async function doScale() {
+  const replicas = parseInt(String(scaleValue.value), 10)
   if (isNaN(replicas) || replicas < 0) {
     notif.addToast('Invalid replica count', 'error')
     return
   }
+  scaleLoading.value = true
   try {
     const data = await post(
-      `/api/k8s/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/scale`,
+      `/api/k8s/deployments/${encodeURIComponent(scaleNs.value)}/${encodeURIComponent(scaleTarget.value)}/scale`,
       { replicas }
     )
-    notif.addToast(data?.success ? `Scaled to ${data.replicas} replicas` : 'Scale failed', data?.success ? 'success' : 'error')
-    fetchDeployments(selectedNs.value)
+    if (data?.success) {
+      notif.addToast(`Scaled to ${data.replicas} replicas`, 'success')
+      showScaleModal.value = false
+      fetchDeployments(selectedNs.value)
+    } else {
+      notif.addToast('Scale failed', 'error')
+    }
   } catch (e) {
     notif.addToast('Scale failed: ' + e.message, 'error')
+  } finally {
+    scaleLoading.value = false
   }
 }
 
@@ -111,10 +133,11 @@ function podStatusClass(phase) {
     <!-- Namespace selector + sub-tabs -->
     <div style="display:flex;gap:.5rem;margin-bottom:.8rem;flex-wrap:wrap;align-items:center">
       <div style="display:flex;flex-direction:column;gap:.2rem">
-        <label style="font-size:.7rem;color:var(--text-dim)">Namespace</label>
+        <label class="field-label">Namespace</label>
         <select
           v-model="selectedNs"
-          style="padding:.3rem .5rem;font-size:.8rem;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text)"
+          class="field-select"
+          style="min-width:160px"
         >
           <option value="">All namespaces</option>
           <option v-for="ns in namespaces" :key="ns.name || ns" :value="ns.name || ns">
@@ -222,7 +245,7 @@ function podStatusClass(phase) {
                 <button
                   class="btn btn-xs"
                   title="Scale"
-                  @click="scaleDeployment(dep.namespace || selectedNs, dep.name, dep.replicas)"
+                  @click="openScale(dep.namespace || selectedNs, dep.name, dep.replicas)"
                 >
                   <i class="fas fa-sliders-h"></i> Scale
                 </button>
@@ -241,6 +264,31 @@ function podStatusClass(phase) {
         style="background:var(--surface-2);border-radius:4px;padding:.6rem;font-size:.72rem;line-height:1.5;
                max-height:500px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-family:'Fira Code',monospace"
       >{{ podLogs || 'No log output.' }}</pre>
+    </AppModal>
+
+    <!-- Scale modal -->
+    <AppModal :show="showScaleModal" :title="'Scale Deployment: ' + scaleTitle" width="400px" @close="showScaleModal = false">
+      <div style="padding:1rem">
+        <label class="field-label">Desired Replicas</label>
+        <input
+          v-model.number="scaleValue"
+          type="number"
+          min="0"
+          max="100"
+          class="field-input"
+          style="width:100%"
+          @keyup.enter="doScale"
+        />
+        <div style="font-size:.65rem;color:var(--text-muted);margin-top:.5rem">
+          Enter the number of pods to run for this deployment.
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn" @click="showScaleModal = false">Cancel</button>
+        <button class="btn btn-primary" :disabled="scaleLoading" @click="doScale">
+          <i v-if="scaleLoading" class="fas fa-spinner fa-spin mr-sm"></i>Scale
+        </button>
+      </template>
     </AppModal>
   </div>
 </template>

@@ -69,10 +69,10 @@ defineExpose({ fetchNetworkStats })
   <div>
     <div style="display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:flex-end">
       <div style="display:flex;flex-direction:column;gap:.2rem;min-width:160px">
-        <label style="font-size:.7rem;color:var(--text-dim)">Agent</label>
+        <label class="field-label">Agent</label>
         <select
           v-model="trafficAgent"
-          style="padding:.3rem .5rem;font-size:.8rem;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text)"
+          class="field-select"
         >
           <option value="">Select agent...</option>
           <option v-for="a in agents" :key="a.hostname" :value="a.hostname">{{ a.hostname }}</option>
@@ -146,8 +146,9 @@ defineExpose({ fetchNetworkStats })
         <input
           v-model="trafficConnFilter"
           type="text"
+          class="field-input"
           placeholder="Filter by process, address, state..."
-          style="padding:.3rem .5rem;font-size:.8rem;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);flex:1;min-width:200px"
+          style="flex:1;min-width:200px"
         >
       </div>
       <div style="overflow-x:auto;max-height:400px;overflow-y:auto">

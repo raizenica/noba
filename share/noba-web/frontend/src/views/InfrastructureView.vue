@@ -1,6 +1,7 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useAuthStore } from '../stores/auth'
+import AppTabBar from '../components/ui/AppTabBar.vue'
 
 import ServiceMapTab    from '../components/infrastructure/ServiceMapTab.vue'
 import ServiceList      from '../components/infrastructure/ServiceList.vue'
@@ -17,6 +18,27 @@ import PredictionsTab   from '../components/infrastructure/PredictionsTab.vue'
 const authStore = useAuthStore()
 
 const activeTab = ref('servicemap')
+
+const tabs = computed(() => {
+  const t = [
+    { key: 'servicemap',  label: 'Service Map', icon: 'fa-project-diagram' },
+    { key: 'services',    label: 'Services',    icon: 'fa-list' },
+    { key: 'topology',    label: 'Topology',    icon: 'fa-network-wired' },
+    { key: 'k8s',         label: 'Kubernetes',  icon: 'fa-dharmachakra' },
+    { key: 'tailscale',   label: 'Tailscale',   icon: 'fa-shield-alt' },
+    { key: 'sync',        label: 'Cross-Site Sync', icon: 'fa-sync' },
+    { key: 'drift',       label: 'Config Drift', icon: 'fa-file-medical-alt' },
+  ]
+  if (authStore.isOperator) {
+    t.push({ key: 'export', label: 'Export', icon: 'fa-file-export' })
+  }
+  t.push(
+    { key: 'traffic',     label: 'Traffic',     icon: 'fa-chart-area' },
+    { key: 'networkmap',  label: 'Network Map', icon: 'fa-route' },
+    { key: 'predictions', label: 'Predictions', icon: 'fa-chart-line' },
+  )
+  return t
+})
 
 const serviceMapRef = ref(null)
 const topologyRef   = ref(null)
@@ -37,72 +59,12 @@ function setTab(tab) {
 <template>
   <div style="padding:1rem">
     <h2 style="margin-bottom:1rem">
-      <i class="fas fa-server" style="margin-right:.5rem"></i> Infrastructure
+      <i class="fas fa-server" style="margin-right:.5rem;color:var(--accent)"></i>
+      Infrastructure
     </h2>
 
     <!-- Tab bar -->
-    <div class="tab-bar" style="margin-bottom:1rem;display:flex;flex-wrap:wrap;gap:.3rem">
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'servicemap' ? 'btn-primary' : ''"
-        @click="setTab('servicemap')"
-      >Service Map</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'services' ? 'btn-primary' : ''"
-        @click="setTab('services')"
-      >Services</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'topology' ? 'btn-primary' : ''"
-        @click="setTab('topology')"
-      >Topology</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'k8s' ? 'btn-primary' : ''"
-        @click="setTab('k8s')"
-      >Kubernetes</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'tailscale' ? 'btn-primary' : ''"
-        @click="setTab('tailscale')"
-      >Tailscale</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'sync' ? 'btn-primary' : ''"
-        @click="setTab('sync')"
-      >Cross-Site Sync</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'drift' ? 'btn-primary' : ''"
-        @click="setTab('drift')"
-      >Config Drift</button>
-      <button
-        v-if="authStore.isOperator"
-        class="btn btn-xs"
-        :class="activeTab === 'export' ? 'btn-primary' : ''"
-        @click="setTab('export')"
-      >Export</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'traffic' ? 'btn-primary' : ''"
-        @click="setTab('traffic')"
-      >
-        <i class="fas fa-chart-area mr-sm"></i>Traffic
-      </button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'networkmap' ? 'btn-primary' : ''"
-        @click="setTab('networkmap')"
-      >Network Map</button>
-      <button
-        class="btn btn-xs"
-        :class="activeTab === 'predictions' ? 'btn-primary' : ''"
-        @click="setTab('predictions')"
-      >
-        <i class="fas fa-chart-line mr-sm"></i>Predictions
-      </button>
-    </div>
+    <AppTabBar :tabs="tabs" :active="activeTab" @change="setTab" />
 
     <!-- Tab contents -->
     <div v-show="activeTab === 'servicemap'">

@@ -1,12 +1,10 @@
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed } from 'vue'
 import { useApi } from '../../composables/useApi'
 import { useNotificationsStore } from '../../stores/notifications'
 import { useModalsStore } from '../../stores/modals'
-import { Chart, registerables } from 'chart.js'
 import AppModal from '../ui/AppModal.vue'
-
-Chart.register(...registerables)
+import ChartWrapper from '../ui/ChartWrapper.vue'
 
 const { get, post, del } = useApi()
 const notif  = useNotificationsStore()
@@ -18,8 +16,6 @@ const multiMetrics       = ref([])
 const historyRange       = ref(24)
 const multiMetricData    = ref({})
 const multiMetricLoading = ref(false)
-let   _multiChart        = null
-const multiCanvas        = ref(null)
 
 // ── Saved dashboards ────────────────────────────────────────────────────────
 const savedDashboards    = ref([])
@@ -42,8 +38,6 @@ async function fetchMultiMetricChart() {
     const metrics = multiMetrics.value.join(',')
     const data    = await get(`/api/history/multi?metrics=${metrics}&range=${historyRange.value}`)
     multiMetricData.value = data || {}
-    await nextTick()
-    renderMultiChart()
   } catch { /* silent */ }
   finally { multiMetricLoading.value = false }
 }
@@ -61,9 +55,8 @@ function removeMetric(metric) {
   fetchMultiMetricChart()
 }
 
-function renderMultiChart() {
-  if (!multiCanvas.value) return
-  if (_multiChart) { _multiChart.destroy(); _multiChart = null }
+const multiChartConfig = computed(() => {
+  if (!Object.keys(multiMetricData.value).length) return null
   const colors   = ['#7aa2f7','#f7768e','#9ece6a','#e0af68','#bb9af7','#7dcfff','#ff9e64','#c0caf5','#73daca','#b4f9f8']
   const datasets = []
   let i = 0
@@ -80,7 +73,7 @@ function renderMultiChart() {
     })
     i++
   }
-  _multiChart = new Chart(multiCanvas.value.getContext('2d'), {
+  return {
     type: 'line',
     data: { datasets },
     options: {
@@ -103,8 +96,8 @@ function renderMultiChart() {
       },
       plugins: { legend: { labels: { color: 'rgba(255,255,255,.7)' } } },
     },
-  })
-}
+  }
+})
 
 const selectableMetrics = computed(() =>
   availableMetrics.value.filter(m => m.type === 'history' || m.type === 'number')
@@ -268,7 +261,11 @@ defineExpose({ fetchAvailableMetrics, fetchDashboards, fetchMultiMetricChart })
 
     <!-- Chart canvas -->
     <div style="position:relative;height:400px">
-      <canvas ref="multiCanvas" style="width:100%;height:100%"></canvas>
+      <ChartWrapper
+        v-if="multiChartConfig"
+        :config="multiChartConfig"
+        style="width:100%;height:100%"
+      />
     </div>
     <div
       v-if="multiMetrics.length === 0"
