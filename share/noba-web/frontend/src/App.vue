@@ -18,6 +18,7 @@ import SystemInfoModal from './components/modals/SystemInfoModal.vue'
 import NetworkModal from './components/modals/NetworkModal.vue'
 import ProcessModal from './components/modals/ProcessModal.vue'
 import BackupExplorerModal from './components/modals/BackupExplorerModal.vue'
+import AiChatPanel from './components/modals/AiChatPanel.vue'
 import AppModal from './components/ui/AppModal.vue'
 
 const router = useRouter()
@@ -134,6 +135,17 @@ watch(sidebarCollapsed, (val) => {
       <NetworkModal />
       <ProcessModal />
       <BackupExplorerModal />
+      <AiChatPanel />
+
+      <!-- Floating AI chat button — shown when AI is enabled -->
+      <button
+        v-if="settings.data.llmEnabled"
+        class="ai-fab"
+        title="AI Ops Assistant"
+        @click="modals.aiChat = !modals.aiChat"
+      >
+        <i class="fas fa-robot"></i>
+      </button>
     </template>
     <router-view v-else />
     <ToastContainer />

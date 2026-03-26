@@ -12,6 +12,7 @@ export const useModalsStore = defineStore('modals', () => {
   const networkModal = ref(false)
   const processModal = ref(false)
   const backupExplorerModal = ref(false)
+  const aiChat = ref(false)
 
   // ── Global confirm dialog ────────────────────────────────────────────────
   const confirmDialog = ref({ show: false, message: '', resolve: null })
@@ -53,6 +54,7 @@ export const useModalsStore = defineStore('modals', () => {
     networkModal,
     processModal,
     backupExplorerModal,
+    aiChat,
     confirmDialog,
     confirm,
     confirmYes,

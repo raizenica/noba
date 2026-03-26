@@ -43,6 +43,7 @@ All notable changes to NOBA Command Center are documented in this file.
 - **Blocking docker commands** — Wrapped remaining sync subprocess calls in `routers/containers.py` with `asyncio.to_thread()` to avoid blocking the FastAPI event loop.
 
 ### Added
+- **AI Ops Assistant chat panel** — Floating robot FAB button (bottom-right, visible when AI is enabled) opens a slide-in chat panel backed by `/api/ai/chat`. Supports full conversation history (up to 20 turns), markdown/code formatting, and action chips extracted from AI responses (`[ACTION:cmd:host:params]`). Action chips populate the input with a confirmation prompt rather than auto-executing. Panel uses pre-existing CSS (`ai-panel`, `ai-fab`, `ai-messages`, `ai-action-btn`) that was designed but never wired to a component.
 - **AI / LLM Test Connection button** — Settings > Integrations > AI / LLM now shows a "Test Connection" button (when AI is enabled) that calls `/api/ai/test` and displays a success/failure message inline. Lets operators verify Ollama/Anthropic/OpenAI connectivity without leaving the settings page.
 
 ### Improved
