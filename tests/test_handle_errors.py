@@ -32,7 +32,7 @@ def test_handle_errors_converts_unhandled_to_500():
     client = TestClient(app, raise_server_exceptions=False)
     r = client.get("/boom")
     assert r.status_code == 500
-    assert "something went wrong" in r.json()["detail"]
+    assert r.json()["detail"] == "Internal server error"
 
 
 def test_handle_errors_async_route():
@@ -46,7 +46,7 @@ def test_handle_errors_async_route():
     client = TestClient(app, raise_server_exceptions=False)
     r = client.get("/async-boom")
     assert r.status_code == 500
-    assert "async failure" in r.json()["detail"]
+    assert r.json()["detail"] == "Internal server error"
 
 
 def test_handle_errors_happy_path():
