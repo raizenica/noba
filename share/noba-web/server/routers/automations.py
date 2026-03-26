@@ -16,6 +16,7 @@ from ..config import ALLOWED_AUTO_TYPES, SCRIPT_DIR, SCRIPT_MAP
 from ..deps import (
     _client_ip, _get_auth, _int_param, _read_body, _require_admin,
     _require_operator, _safe_int, db,
+    handle_errors,
 )
 from ..runner import job_runner
 from ..workflow_engine import (
@@ -52,6 +53,7 @@ def _build_command(script: str, safe_args: list[str], args_in) -> list[str] | No
 
 # ── /api/run-status (legacy compat) ──────────────────────────────────────────
 @router.get("/api/run-status")
+@handle_errors
 def api_run_status(auth=Depends(_get_auth)):
     active = job_runner.get_active_ids()
     if not active:
@@ -65,6 +67,7 @@ def api_run_status(auth=Depends(_get_auth)):
 
 # ── /api/runs ─────────────────────────────────────────────────────────────────
 @router.get("/api/runs")
+@handle_errors
 def api_runs(request: Request, auth=Depends(_get_auth)):
     limit = _int_param(request, "limit", 50, 1, 500)
     status = request.query_params.get("status")
@@ -75,6 +78,7 @@ def api_runs(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/runs/{run_id}")
+@handle_errors
 def api_run_detail(run_id: int, auth=Depends(_get_auth)):
     run = db.get_job_run(run_id)
     if not run:
@@ -83,6 +87,7 @@ def api_run_detail(run_id: int, auth=Depends(_get_auth)):
 
 
 @router.post("/api/runs/{run_id}/cancel")
+@handle_errors
 def api_run_cancel(run_id: int, request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     if not job_runner.cancel(run_id):
@@ -92,6 +97,7 @@ def api_run_cancel(run_id: int, request: Request, auth=Depends(_require_operator
 
 
 @router.post("/api/runs/{run_id}/approve")
+@handle_errors
 async def api_run_approve(run_id: int, request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     run = db.get_job_run(run_id)
@@ -106,12 +112,14 @@ async def api_run_approve(run_id: int, request: Request, auth=Depends(_require_a
 
 # ── /api/automations — CRUD + manual trigger ─────────────────────────────────
 @router.get("/api/automations")
+@handle_errors
 def api_automations_list(request: Request, auth=Depends(_get_auth)):
     type_filter = request.query_params.get("type")
     return db.list_automations(type_filter=type_filter)
 
 
 @router.post("/api/automations")
+@handle_errors
 async def api_automations_create(request: Request, auth=Depends(_require_operator)):
     import uuid
     username, _ = auth
@@ -142,6 +150,7 @@ async def api_automations_create(request: Request, auth=Depends(_require_operato
 
 
 @router.put("/api/automations/{auto_id}")
+@handle_errors
 async def api_automations_update(auto_id: str, request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip = _client_ip(request)
@@ -176,6 +185,7 @@ async def api_automations_update(auto_id: str, request: Request, auth=Depends(_r
 
 
 @router.delete("/api/automations/{auto_id}")
+@handle_errors
 def api_automations_delete(auto_id: str, request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     ip = _client_ip(request)
@@ -189,6 +199,7 @@ def api_automations_delete(auto_id: str, request: Request, auth=Depends(_require
 
 
 @router.post("/api/automations/{auto_id}/run")
+@handle_errors
 async def api_automations_run(auto_id: str, request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip = _client_ip(request)
@@ -336,6 +347,7 @@ _AUTOMATION_TEMPLATES = [
 
 
 @router.get("/api/automations/templates")
+@handle_errors
 def api_automation_templates(auth=Depends(_get_auth)):
     return _AUTOMATION_TEMPLATES
 
@@ -343,12 +355,14 @@ def api_automation_templates(auth=Depends(_get_auth)):
 # ── /api/playbooks — playbook library ────────────────────────────────────────
 
 @router.get("/api/playbooks")
+@handle_errors
 def api_list_playbooks(auth=Depends(_get_auth)):
     """List available playbook templates."""
     return db.list_playbook_templates()
 
 
 @router.get("/api/playbooks/{playbook_id}")
+@handle_errors
 def api_get_playbook(playbook_id: str, auth=Depends(_get_auth)):
     """Get a single playbook template by id."""
     template = db.get_playbook_template(playbook_id)
@@ -358,6 +372,7 @@ def api_get_playbook(playbook_id: str, auth=Depends(_get_auth)):
 
 
 @router.post("/api/playbooks/{playbook_id}/install")
+@handle_errors
 async def api_install_playbook(
     playbook_id: str, request: Request, auth=Depends(_require_operator)
 ):
@@ -377,12 +392,14 @@ async def api_install_playbook(
 
 # ── /api/automations/stats ────────────────────────────────────────────────────
 @router.get("/api/automations/stats")
+@handle_errors
 def api_automation_stats(auth=Depends(_get_auth)):
     return db.get_automation_stats()
 
 
 # ── /api/automations/export ───────────────────────────────────────────────────
 @router.get("/api/automations/export")
+@handle_errors
 def api_automations_export(auth=Depends(_require_admin)):
     import yaml
     autos = db.list_automations()
@@ -396,6 +413,7 @@ def api_automations_export(auth=Depends(_require_admin)):
 
 # ── /api/automations/import ───────────────────────────────────────────────────
 @router.post("/api/automations/import")
+@handle_errors
 async def api_automations_import(request: Request, auth=Depends(_require_admin)):
     import uuid
     import yaml
@@ -451,6 +469,7 @@ async def api_automations_import(request: Request, auth=Depends(_require_admin))
 
 # ── /api/automations/{auto_id}/trigger ────────────────────────────────────────
 @router.post("/api/automations/{auto_id}/trigger")
+@handle_errors
 async def api_automations_trigger(auto_id: str, request: Request):
     """Trigger an automation via API key (no login required).
 
@@ -518,6 +537,7 @@ async def api_automations_trigger(auto_id: str, request: Request):
 
 # ── /api/automations/{auto_id}/trace ──────────────────────────────────────────
 @router.get("/api/automations/{auto_id}/trace")
+@handle_errors
 def api_automation_trace(auto_id: str, auth=Depends(_get_auth)):
     """Get execution trace for a workflow automation."""
     auto = db.get_automation(auto_id)
@@ -540,6 +560,7 @@ def api_automation_trace(auto_id: str, auth=Depends(_get_auth)):
 
 # ── /api/automations/validate-workflow ────────────────────────────────────────
 @router.post("/api/automations/validate-workflow")
+@handle_errors
 async def api_validate_workflow(request: Request, auth=Depends(_require_operator)):
     """Validate a workflow definition -- check all step IDs exist."""
     body = await _read_body(request)
@@ -558,6 +579,7 @@ async def api_validate_workflow(request: Request, auth=Depends(_require_operator
 
 # ── /api/webhook ──────────────────────────────────────────────────────────────
 @router.post("/api/webhook")
+@handle_errors
 async def api_webhook(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
@@ -596,6 +618,7 @@ async def api_webhook(request: Request, auth=Depends(_require_operator)):
 
 # ── /api/run ──────────────────────────────────────────────────────────────────
 @router.post("/api/run")
+@handle_errors
 async def api_run(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
@@ -640,12 +663,14 @@ async def api_run(request: Request, auth=Depends(_require_operator)):
 
 
 @router.get("/api/webhooks")
+@handle_errors
 def api_webhooks_list(auth=Depends(_require_admin)):
     """List all webhook endpoints (admin only)."""
     return db.list_webhooks()
 
 
 @router.post("/api/webhooks")
+@handle_errors
 async def api_webhooks_create(request: Request, auth=Depends(_require_admin)):
     """Create a new webhook endpoint with auto-generated hook_id and secret."""
 
@@ -676,6 +701,7 @@ async def api_webhooks_create(request: Request, auth=Depends(_require_admin)):
 
 
 @router.delete("/api/webhooks/{webhook_id}")
+@handle_errors
 def api_webhooks_delete(webhook_id: int, request: Request, auth=Depends(_require_admin)):
     """Delete a webhook endpoint."""
     username, _ = auth
@@ -689,17 +715,20 @@ def api_webhooks_delete(webhook_id: int, request: Request, auth=Depends(_require
 # ── Maintenance Windows ─────────────────────────────────────────────────────
 
 @router.get("/api/maintenance-windows/active")
+@handle_errors
 def api_active_maintenance_windows(auth=Depends(_get_auth)):
     """Get currently active maintenance windows."""
     return db.get_active_maintenance_windows()
 
 
 @router.get("/api/maintenance-windows")
+@handle_errors
 def api_list_maintenance_windows(auth=Depends(_get_auth)):
     return db.list_maintenance_windows()
 
 
 @router.post("/api/maintenance-windows")
+@handle_errors
 async def api_create_maintenance_window(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
@@ -721,6 +750,7 @@ async def api_create_maintenance_window(request: Request, auth=Depends(_require_
 
 
 @router.put("/api/maintenance-windows/{window_id}")
+@handle_errors
 async def api_update_maintenance_window(window_id: int, request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
@@ -732,6 +762,7 @@ async def api_update_maintenance_window(window_id: int, request: Request, auth=D
 
 
 @router.delete("/api/maintenance-windows/{window_id}")
+@handle_errors
 def api_delete_maintenance_window(window_id: int, request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     ok = db.delete_maintenance_window(window_id)
@@ -744,12 +775,14 @@ def api_delete_maintenance_window(window_id: int, request: Request, auth=Depends
 # ── Approval Queue ──────────────────────────────────────────────────────────
 
 @router.get("/api/approvals/count")
+@handle_errors
 def api_approval_count(auth=Depends(_get_auth)):
     """Get count of pending approvals (for badge in UI)."""
     return {"count": db.count_pending_approvals()}
 
 
 @router.get("/api/approvals")
+@handle_errors
 def api_list_approvals(request: Request, auth=Depends(_get_auth)):
     """List approvals, filtered by status."""
     status_filter = request.query_params.get("status", "pending")
@@ -757,6 +790,7 @@ def api_list_approvals(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/approvals/{approval_id}")
+@handle_errors
 def api_get_approval(approval_id: int, auth=Depends(_get_auth)):
     """Get approval details."""
     a = db.get_approval(approval_id)
@@ -766,6 +800,7 @@ def api_get_approval(approval_id: int, auth=Depends(_get_auth)):
 
 
 @router.post("/api/approvals/{approval_id}/decide")
+@handle_errors
 async def api_decide_approval(approval_id: int, request: Request, auth=Depends(_require_operator)):
     """Approve or deny a pending action."""
     username, role = auth
@@ -838,6 +873,7 @@ async def api_decide_approval(approval_id: int, request: Request, auth=Depends(_
 
 
 @router.get("/api/action-audit")
+@handle_errors
 def api_action_audit(request: Request, auth=Depends(_get_auth)):
     """Query the action audit trail."""
     limit = _int_param(request, "limit", 100, 1, 500)
@@ -847,6 +883,7 @@ def api_action_audit(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/webhooks/receive/{hook_id}")
+@handle_errors
 async def api_webhooks_receive(hook_id: str, request: Request):
     """PUBLIC endpoint -- receive incoming webhook, validate HMAC, trigger automation."""
     import hashlib

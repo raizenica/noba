@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .. import deps as _deps
+from ..deps import handle_errors
 from ..agent_store import _agent_data, _agent_data_lock
 from ..deps import (
     _client_ip, _get_auth, _read_body,
@@ -25,6 +26,7 @@ router = APIRouter(tags=["monitoring"])
 
 # ── Uptime SLA dashboard ────────────────────────────────────────────────────
 @router.get("/api/uptime")
+@handle_errors
 def api_uptime_dashboard(auth=Depends(_get_auth)):
     """Get uptime statistics for all monitored services and integrations."""
     stats = _deps.bg_collector.get() or {}
@@ -66,6 +68,7 @@ def api_uptime_dashboard(auth=Depends(_get_auth)):
 
 # ── /api/health-score — Infrastructure Health Score (Feature 7) ──────────────
 @router.get("/api/health-score")
+@handle_errors
 async def api_health_score(auth=Depends(_get_auth)):
     """Compute infrastructure-wide health score (0-100) with category breakdown."""
     from ..health_score import compute_health_score
@@ -81,12 +84,14 @@ async def api_health_score(auth=Depends(_get_auth)):
 
 # ── Status page endpoints ────────────────────────────────────────────────────
 @router.get("/status")
+@handle_errors
 def public_status_page() -> FileResponse:
     """Public-facing status page -- no auth required."""
     return FileResponse(_WEB_DIR / "status.html")
 
 
 @router.get("/api/status/public")
+@handle_errors
 def api_public_status() -> dict:
     """Public status data -- no auth required.
 
@@ -167,6 +172,7 @@ def api_public_status() -> dict:
 
 
 @router.get("/api/status/incidents")
+@handle_errors
 def api_public_status_incidents() -> dict:
     """Public: list recent status incidents with their updates."""
     incidents = db.list_status_incidents(limit=50, include_resolved=True)
@@ -178,6 +184,7 @@ def api_public_status_incidents() -> dict:
 
 # ── Status page admin endpoints ──────────────────────────────────────────────
 @router.post("/api/status/components")
+@handle_errors
 async def api_create_status_component(request: Request, auth=Depends(_require_admin)):
     """Admin: create a status page component."""
     username, _ = auth
@@ -198,6 +205,7 @@ async def api_create_status_component(request: Request, auth=Depends(_require_ad
 
 
 @router.put("/api/status/components/{comp_id}")
+@handle_errors
 async def api_update_status_component(comp_id: int, request: Request, auth=Depends(_require_admin)):
     """Admin: update a status page component."""
     username, _ = auth
@@ -213,6 +221,7 @@ async def api_update_status_component(comp_id: int, request: Request, auth=Depen
 
 
 @router.delete("/api/status/components/{comp_id}")
+@handle_errors
 def api_delete_status_component(comp_id: int, request: Request, auth=Depends(_require_admin)):
     """Admin: delete a status page component."""
     username, _ = auth
@@ -224,12 +233,14 @@ def api_delete_status_component(comp_id: int, request: Request, auth=Depends(_re
 
 
 @router.get("/api/status/components")
+@handle_errors
 def api_list_status_components(auth=Depends(_get_auth)):
     """Authenticated: list all status components (for admin UI)."""
     return {"components": db.list_status_components()}
 
 
 @router.post("/api/status/incidents/create")
+@handle_errors
 async def api_create_status_incident(request: Request, auth=Depends(_require_admin)):
     """Admin: create a status page incident."""
     username, _ = auth
@@ -251,6 +262,7 @@ async def api_create_status_incident(request: Request, auth=Depends(_require_adm
 
 
 @router.post("/api/status/incidents/{incident_id}/update")
+@handle_errors
 async def api_add_status_update(incident_id: int, request: Request, auth=Depends(_require_admin)):
     """Admin: add an update to a status incident."""
     username, _ = auth
@@ -271,6 +283,7 @@ async def api_add_status_update(incident_id: int, request: Request, auth=Depends
 
 
 @router.put("/api/status/incidents/{incident_id}/resolve")
+@handle_errors
 def api_resolve_status_incident(incident_id: int, request: Request, auth=Depends(_require_admin)):
     """Admin: resolve a status incident."""
     username, _ = auth
@@ -283,12 +296,14 @@ def api_resolve_status_incident(incident_id: int, request: Request, auth=Depends
 
 # ── Endpoint monitor endpoints ────────────────────────────────────────────────
 @router.get("/api/endpoints")
+@handle_errors
 def api_list_endpoints(auth=Depends(_get_auth)):
     """List all endpoint monitors with latest status."""
     return db.get_endpoint_monitors()
 
 
 @router.post("/api/endpoints")
+@handle_errors
 async def api_create_endpoint(request: Request, auth=Depends(_require_admin)):
     """Create a new endpoint monitor."""
     username, _ = auth
@@ -323,6 +338,7 @@ async def api_create_endpoint(request: Request, auth=Depends(_require_admin)):
 
 
 @router.put("/api/endpoints/{monitor_id}")
+@handle_errors
 async def api_update_endpoint(monitor_id: int, request: Request, auth=Depends(_require_admin)):
     """Update an endpoint monitor."""
     username, _ = auth
@@ -358,6 +374,7 @@ async def api_update_endpoint(monitor_id: int, request: Request, auth=Depends(_r
 
 
 @router.delete("/api/endpoints/{monitor_id}")
+@handle_errors
 async def api_delete_endpoint(monitor_id: int, request: Request, auth=Depends(_require_admin)):
     """Delete an endpoint monitor."""
     username, _ = auth
@@ -370,6 +387,7 @@ async def api_delete_endpoint(monitor_id: int, request: Request, auth=Depends(_r
 
 
 @router.post("/api/endpoints/{monitor_id}/check")
+@handle_errors
 async def api_check_endpoint_now(monitor_id: int, request: Request, auth=Depends(_require_operator)):
     """Trigger an immediate endpoint check."""
     username, _ = auth

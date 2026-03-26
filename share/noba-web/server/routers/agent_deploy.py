@@ -27,6 +27,7 @@ from ..constants import (
 from ..deps import (
     _client_ip, _read_body,
     _require_admin, _safe_int, db,
+    handle_errors,
 )
 from . import agents as _agents_mod
 from .agents import _validate_agent_key
@@ -41,6 +42,7 @@ router = APIRouter(tags=["agents"])
 # ── Uninstall / Delete endpoints ─────────────────────────────────────────────
 
 @router.post("/api/agents/{hostname}/uninstall")
+@handle_errors
 async def api_agent_uninstall(hostname: str, request: Request, auth=Depends(_require_admin)):
     """Queue uninstall command and mark agent for removal."""
     username, _ = auth
@@ -55,6 +57,7 @@ async def api_agent_uninstall(hostname: str, request: Request, auth=Depends(_req
 
 
 @router.delete("/api/agents/{hostname}")
+@handle_errors
 def api_agent_delete(hostname: str, request: Request, auth=Depends(_require_admin)):
     """Remove an agent from the dashboard (DB + in-memory). Admin only."""
     username, _ = auth
@@ -74,6 +77,7 @@ def api_agent_delete(hostname: str, request: Request, auth=Depends(_require_admi
 # ── Update / Install script endpoints ────────────────────────────────────────
 
 @router.get("/api/agent/update")
+@handle_errors
 def api_agent_update(request: Request) -> FileResponse:
     """Serve the latest agent.py for self-update. Auth via X-Agent-Key."""
     key = request.headers.get("X-Agent-Key", "")
@@ -90,6 +94,7 @@ def api_agent_update(request: Request) -> FileResponse:
 
 
 @router.get("/api/agent/install-script")
+@handle_errors
 def api_agent_install_script(request: Request) -> Response:
     """Generate a one-liner install script. Auth via X-Agent-Key."""
     key = request.headers.get("X-Agent-Key", "") or request.query_params.get("key", "")
@@ -153,6 +158,7 @@ echo "[noba] Agent installed and running on $HOSTNAME"
 # ── Deploy endpoint ──────────────────────────────────────────────────────────
 
 @router.post("/api/agents/deploy")
+@handle_errors
 async def api_agent_deploy(request: Request, auth=Depends(_require_admin)):
     """Remote deploy: SSH into a node and install the agent."""
     username, _ = auth
@@ -269,6 +275,7 @@ systemctl is-active noba-agent
 # ── File transfer endpoints (Phase 1c) ──────────────────────────────────────
 
 @router.post("/api/agent/file-upload")
+@handle_errors
 async def api_agent_file_upload(request: Request):
     """Receive a file chunk from an agent."""
     key = request.headers.get("X-Agent-Key", "")
@@ -360,6 +367,7 @@ async def api_agent_file_upload(request: Request):
 
 
 @router.get("/api/agent/file-download/{transfer_id}")
+@handle_errors
 async def api_agent_file_download(transfer_id: str, request: Request):
     """Serve a file to an agent for file_push command."""
     key = request.headers.get("X-Agent-Key", "")
@@ -386,6 +394,7 @@ async def api_agent_file_download(transfer_id: str, request: Request):
 
 
 @router.post("/api/agents/{hostname}/transfer")
+@handle_errors
 async def api_agent_transfer(hostname: str, request: Request, auth=Depends(_require_admin)):
     """Initiate a file push to an agent. Admin uploads the file first."""
     username, _ = auth

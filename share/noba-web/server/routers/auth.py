@@ -14,7 +14,7 @@ from ..auth import (
     rate_limiter, token_store, users, valid_username, verify_password,
 )
 from ..config import VALID_ROLES
-from ..deps import _client_ip, _get_auth, _read_body, _require_admin, db
+from ..deps import _client_ip, _get_auth, _read_body, _require_admin, db, handle_errors
 from ..yaml_config import read_yaml_settings
 
 logger = logging.getLogger("noba")
@@ -41,6 +41,7 @@ router = APIRouter()
 
 # ── /api/login ────────────────────────────────────────────────────────────────
 @router.post("/api/login")
+@handle_errors
 async def api_login(request: Request):
     ip = _client_ip(request)
     if rate_limiter.is_locked(ip):
@@ -99,6 +100,7 @@ async def api_login(request: Request):
 
 # ── /api/logout ───────────────────────────────────────────────────────────────
 @router.post("/api/logout")
+@handle_errors
 async def api_logout(request: Request):
     ip   = _client_ip(request)
     auth = request.headers.get("Authorization", "")
@@ -113,6 +115,7 @@ async def api_logout(request: Request):
 
 # ── TOTP 2FA routes ──────────────────────────────────────────────────────────
 @router.post("/api/auth/totp/setup")
+@handle_errors
 async def api_totp_setup(request: Request, auth=Depends(_get_auth)):
     from ..auth import generate_totp_secret
     username, _ = auth
@@ -121,6 +124,7 @@ async def api_totp_setup(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/auth/totp/enable")
+@handle_errors
 async def api_totp_enable(request: Request, auth=Depends(_get_auth)):
     from ..auth import verify_totp
     username, _ = auth
@@ -135,6 +139,7 @@ async def api_totp_enable(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/auth/totp/disable")
+@handle_errors
 async def api_totp_disable(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
@@ -220,6 +225,7 @@ def _resolve_provider(cfg: dict, provider_key: str = "") -> dict | None:
 
 
 @router.get("/api/auth/providers")
+@handle_errors
 def api_auth_providers() -> dict:
     """List available authentication providers (for login page buttons)."""
     cfg = read_yaml_settings()
@@ -245,6 +251,7 @@ def api_auth_providers() -> dict:
 
 # ── Social login routes (Google, Facebook, GitHub, Microsoft) ────────────────
 @router.get("/api/auth/social/{provider}/login")
+@handle_errors
 async def api_social_login(provider: str, request: Request):
     """Redirect to social provider for authentication."""
     _prune_oauth_states()
@@ -272,6 +279,7 @@ async def api_social_login(provider: str, request: Request):
 
 
 @router.get("/api/auth/social/{provider}/callback")
+@handle_errors
 async def api_social_callback(provider: str, request: Request):
     """Handle social provider callback — exchange code, create session."""
     state = request.query_params.get("state", "")
@@ -356,6 +364,7 @@ async def api_social_callback(provider: str, request: Request):
 
 
 @router.get("/api/auth/social/{provider}/link")
+@handle_errors
 async def api_social_link(provider: str, request: Request):
     """Initiate account linking — redirect to provider, come back to link callback."""
     _prune_oauth_states()
@@ -387,6 +396,7 @@ async def api_social_link(provider: str, request: Request):
 
 
 @router.get("/api/auth/social/{provider}/link/callback")
+@handle_errors
 async def api_social_link_callback(provider: str, request: Request):
     """Handle link callback — associate provider email with existing NOBA user."""
     state = request.query_params.get("state", "")
@@ -445,6 +455,7 @@ async def api_social_link_callback(provider: str, request: Request):
 
 
 @router.get("/api/auth/linked-providers")
+@handle_errors
 def api_linked_providers(auth=Depends(_get_auth)):
     """List providers linked to the current user's account."""
     username, _ = auth
@@ -456,6 +467,7 @@ def api_linked_providers(auth=Depends(_get_auth)):
 
 
 @router.delete("/api/auth/linked-providers/{provider}")
+@handle_errors
 def api_unlink_provider(provider: str, auth=Depends(_get_auth)):
     """Unlink a social provider from the current account."""
     username, _ = auth
@@ -467,6 +479,7 @@ def api_unlink_provider(provider: str, auth=Depends(_get_auth)):
 
 # ── Generic OIDC routes (backward compatible) ────────────────────────────────
 @router.get("/api/auth/oidc/login")
+@handle_errors
 async def api_oidc_login(request: Request):
     """Redirect to OIDC provider for authentication."""
     _prune_oauth_states()
@@ -490,6 +503,7 @@ async def api_oidc_login(request: Request):
 
 
 @router.get("/api/auth/oidc/callback")
+@handle_errors
 async def api_oidc_callback(request: Request):
     """Handle OIDC callback -- exchange code for token, create session."""
     state = request.query_params.get("state", "")
@@ -546,6 +560,7 @@ async def api_oidc_callback(request: Request):
 
 
 @router.post("/api/auth/oidc/exchange")
+@handle_errors
 async def api_oidc_exchange(request: Request):
     """Exchange a one-time OIDC code for a NOBA auth token."""
     body = await _read_body(request)
@@ -564,6 +579,7 @@ async def api_oidc_exchange(request: Request):
 
 # ── /api/profile ──────────────────────────────────────────────────────────────
 @router.get("/api/profile")
+@handle_errors
 def api_profile(auth=Depends(_get_auth)):
     """Get current user's profile with activity summary."""
     username, role = auth
@@ -584,6 +600,7 @@ def api_profile(auth=Depends(_get_auth)):
 
 
 @router.post("/api/profile/password")
+@handle_errors
 async def api_profile_password(request: Request, auth=Depends(_get_auth)):
     """Change own password (any authenticated user)."""
     username, _ = auth
@@ -603,6 +620,7 @@ async def api_profile_password(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/profile/sessions")
+@handle_errors
 def api_profile_sessions(auth=Depends(_get_auth)):
     """Get active sessions for the current user."""
     username, _ = auth
@@ -612,6 +630,7 @@ def api_profile_sessions(auth=Depends(_get_auth)):
 
 # ── /api/user/preferences (Feature 10: Multi-user Dashboard Views) ───────────
 @router.get("/api/user/preferences")
+@handle_errors
 def api_user_preferences_get(auth=Depends(_get_auth)):
     """Get current user's dashboard preferences."""
     username, _ = auth
@@ -622,6 +641,7 @@ def api_user_preferences_get(auth=Depends(_get_auth)):
 
 
 @router.put("/api/user/preferences")
+@handle_errors
 async def api_user_preferences_put(request: Request, auth=Depends(_get_auth)):
     """Save current user's dashboard preferences."""
     username, _ = auth
@@ -640,6 +660,7 @@ async def api_user_preferences_put(request: Request, auth=Depends(_get_auth)):
 
 
 @router.delete("/api/user/preferences")
+@handle_errors
 def api_user_preferences_delete(auth=Depends(_get_auth)):
     """Reset current user's preferences to defaults."""
     username, _ = auth
@@ -649,11 +670,13 @@ def api_user_preferences_delete(auth=Depends(_get_auth)):
 
 # ── /api/admin/users ──────────────────────────────────────────────────────────
 @router.get("/api/admin/users")
+@handle_errors
 def api_users_get(auth=Depends(_require_admin)):
     return users.list_users()
 
 
 @router.post("/api/admin/users")
+@handle_errors
 async def api_users_post(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     ip   = _client_ip(request)
@@ -703,11 +726,13 @@ async def api_users_post(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/admin/sessions ──────────────────────────────────────────────────────
 @router.get("/api/admin/sessions")
+@handle_errors
 def api_sessions_list(auth=Depends(_require_admin)):
     return token_store.list_sessions()
 
 
 @router.post("/api/admin/sessions/revoke")
+@handle_errors
 async def api_sessions_revoke(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
@@ -722,11 +747,13 @@ async def api_sessions_revoke(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/admin/api-keys ──────────────────────────────────────────────────────
 @router.get("/api/admin/api-keys")
+@handle_errors
 def api_keys_list(auth=Depends(_require_admin)):
     return db.list_api_keys()
 
 
 @router.post("/api/admin/api-keys")
+@handle_errors
 async def api_keys_create(request: Request, auth=Depends(_require_admin)):
     import hashlib
     username, _ = auth
@@ -748,6 +775,7 @@ async def api_keys_create(request: Request, auth=Depends(_require_admin)):
 
 
 @router.delete("/api/admin/api-keys/{key_id}")
+@handle_errors
 def api_keys_delete(key_id: str, request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     if not db.delete_api_key(key_id):
@@ -758,6 +786,7 @@ def api_keys_delete(key_id: str, request: Request, auth=Depends(_require_admin))
 
 # ── /api/admin/ssh-keys ──────────────────────────────────────────────────────
 @router.get("/api/admin/ssh-keys")
+@handle_errors
 def api_ssh_keys_list(auth=Depends(_require_admin)):
     """List authorized SSH keys."""
     import pathlib
@@ -780,6 +809,7 @@ def api_ssh_keys_list(auth=Depends(_require_admin)):
 
 
 @router.post("/api/admin/ssh-keys")
+@handle_errors
 async def api_ssh_keys_add(request: Request, auth=Depends(_require_admin)):
     """Add a new SSH authorized key."""
     import pathlib
@@ -801,6 +831,7 @@ async def api_ssh_keys_add(request: Request, auth=Depends(_require_admin)):
 
 
 @router.delete("/api/admin/ssh-keys/{key_id}")
+@handle_errors
 def api_ssh_keys_delete(key_id: int, request: Request, auth=Depends(_require_admin)):
     """Remove an SSH authorized key by line index."""
     import pathlib

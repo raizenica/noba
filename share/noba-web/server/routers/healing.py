@@ -10,7 +10,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..agent_store import _agent_cmd_lock, _agent_commands, _agent_data, _agent_data_lock
-from ..deps import _get_auth, _int_param, _require_admin, _require_operator, db
+from ..deps import _get_auth, _int_param, _require_admin, _require_operator, db, handle_errors
 
 logger = logging.getLogger("noba")
 
@@ -32,6 +32,7 @@ router = APIRouter()
 
 
 @router.get("/api/healing/ledger")
+@handle_errors
 def api_healing_ledger(request: Request, auth=Depends(_get_auth)):
     limit = _int_param(request, "limit", 50, 1, 1000)
     rule_id = request.query_params.get("rule_id")
@@ -40,6 +41,7 @@ def api_healing_ledger(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/healing/effectiveness")
+@handle_errors
 def api_healing_effectiveness(request: Request, auth=Depends(_get_auth)):
     action_type = request.query_params.get("action_type")
     condition = request.query_params.get("condition")
@@ -69,22 +71,26 @@ def api_healing_effectiveness(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/healing/suggestions")
+@handle_errors
 def api_healing_suggestions(auth=Depends(_get_auth)):
     return db.list_heal_suggestions()
 
 
 @router.post("/api/healing/suggestions/{suggestion_id}/dismiss")
+@handle_errors
 def api_dismiss_suggestion(suggestion_id: int, auth=Depends(_require_operator)):
     db.dismiss_heal_suggestion(suggestion_id)
     return {"success": True}
 
 
 @router.get("/api/healing/trust")
+@handle_errors
 def api_healing_trust(auth=Depends(_get_auth)):
     return db.list_trust_states()
 
 
 @router.put("/api/healing/trust/{rule_id}")
+@handle_errors
 async def api_set_trust(rule_id: str, request: Request, auth=Depends(_require_admin)):
     """Set (or create) trust state for a rule."""
     from ..deps import _read_body
@@ -101,6 +107,7 @@ async def api_set_trust(rule_id: str, request: Request, auth=Depends(_require_ad
 
 
 @router.post("/api/healing/trust/{rule_id}/promote")
+@handle_errors
 async def api_promote_trust(rule_id: str, request: Request, auth=Depends(_require_admin)):
     from ..deps import _read_body
     body = await _read_body(request)
@@ -117,6 +124,7 @@ async def api_promote_trust(rule_id: str, request: Request, auth=Depends(_requir
 
 
 @router.post("/api/healing/trust/{rule_id}/demote")
+@handle_errors
 async def api_demote_trust(rule_id: str, request: Request, auth=Depends(_require_admin)):
     from ..deps import _read_body
     body = await _read_body(request)
@@ -133,6 +141,7 @@ async def api_demote_trust(rule_id: str, request: Request, auth=Depends(_require
 
 
 @router.get("/api/healing/capabilities/{hostname}")
+@handle_errors
 def api_get_capabilities(hostname: str, auth=Depends(_get_auth)):
     """Return the capability manifest for a given agent hostname."""
     row = db.get_capability_manifest(hostname)
@@ -152,12 +161,14 @@ def api_get_capabilities(hostname: str, auth=Depends(_get_auth)):
 
 
 @router.get("/api/healing/dependencies")
+@handle_errors
 def api_list_dependencies(auth=Depends(_get_auth)):
     """Return all dependency graph nodes from the DB."""
     return db.list_dep_graph_nodes()
 
 
 @router.post("/api/healing/dependencies/validate")
+@handle_errors
 async def api_validate_dependencies(request: Request, auth=Depends(_get_auth)):
     """Validate a dependency config list for cycles and missing references."""
     from ..deps import _read_body
@@ -238,6 +249,7 @@ async def api_validate_dependencies(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/healing/capabilities/{hostname}/refresh")
+@handle_errors
 def api_refresh_capabilities(hostname: str, auth=Depends(_require_operator)):
     """Queue a refresh_capabilities command to the named agent."""
     with _agent_data_lock:
@@ -261,12 +273,14 @@ def api_refresh_capabilities(hostname: str, auth=Depends(_require_operator)):
 # ── Maintenance Windows ───────────────────────────────────────────────────────
 
 @router.get("/api/healing/maintenance")
+@handle_errors
 def api_list_maintenance(auth=Depends(_get_auth)):
     """Return all active maintenance windows."""
     return db.get_active_heal_maintenance_windows()
 
 
 @router.post("/api/healing/maintenance")
+@handle_errors
 async def api_create_maintenance(request: Request, auth=Depends(_require_operator)):
     """Create a maintenance window.
 
@@ -297,6 +311,7 @@ async def api_create_maintenance(request: Request, auth=Depends(_require_operato
 
 
 @router.delete("/api/healing/maintenance/{window_id}")
+@handle_errors
 def api_delete_maintenance(window_id: int, auth=Depends(_require_operator)):
     """End a maintenance window early."""
     found = db.end_heal_maintenance_window(window_id)
@@ -310,6 +325,7 @@ def api_delete_maintenance(window_id: int, auth=Depends(_require_operator)):
 # ── Rollback ──────────────────────────────────────────────────────────────────
 
 @router.post("/api/healing/rollback/{ledger_id}")
+@handle_errors
 def api_rollback(ledger_id: int, auth=Depends(_require_admin)):
     """Execute a rollback for a heal ledger entry using its pre-heal snapshot."""
     from ..healing.snapshots import execute_rollback, is_reversible
@@ -342,6 +358,7 @@ def api_rollback(ledger_id: int, auth=Depends(_require_admin)):
 # ── Dry-run / Chaos / Health ──────────────────────────────────────────────────
 
 @router.post("/api/healing/dry-run")
+@handle_errors
 async def api_dry_run(request: Request, auth=Depends(_require_operator)):
     """Run a heal event through the pipeline in simulation mode."""
     from ..deps import _read_body
@@ -371,6 +388,7 @@ async def api_dry_run(request: Request, auth=Depends(_require_operator)):
 
 
 @router.get("/api/healing/chaos/scenarios")
+@handle_errors
 def api_chaos_scenarios(auth=Depends(_get_auth)):
     """List available chaos test scenarios."""
     from ..healing.chaos import ChaosRunner
@@ -380,6 +398,7 @@ def api_chaos_scenarios(auth=Depends(_get_auth)):
 
 
 @router.post("/api/healing/chaos/run")
+@handle_errors
 async def api_chaos_run(request: Request, auth=Depends(_require_admin)):
     """Run a chaos test scenario."""
     from ..deps import _read_body
@@ -395,6 +414,7 @@ async def api_chaos_run(request: Request, auth=Depends(_require_admin)):
 
 
 @router.get("/api/healing/health")
+@handle_errors
 def api_healing_health(auth=Depends(_get_auth)):
     """Return component health summary from the watchdog."""
 

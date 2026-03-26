@@ -25,6 +25,7 @@ from ..agent_store import (
 from ..deps import (
     _client_ip, _get_auth, _int_param, _read_body,
     _require_operator, _safe_int, db,
+    handle_errors,
 )
 
 logger = __import__("logging").getLogger("noba")
@@ -57,6 +58,7 @@ def _store_interface_metrics(hostname: str, result: dict) -> None:
 # ── Command endpoints ────────────────────────────────────────────────────────
 
 @router.post("/api/agents/{hostname}/command")
+@handle_errors
 async def api_agent_command(hostname: str, request: Request, auth=Depends(_require_operator)):
     """Queue a command for an agent. Risk-tiered authorization."""
     username, role = auth
@@ -113,6 +115,7 @@ async def api_agent_command(hostname: str, request: Request, auth=Depends(_requi
 
 
 @router.get("/api/agents/{hostname}/results")
+@handle_errors
 def api_agent_results(hostname: str, auth=Depends(_get_auth)):
     """Get command execution results for an agent."""
     with _agent_cmd_lock:
@@ -120,6 +123,7 @@ def api_agent_results(hostname: str, auth=Depends(_get_auth)):
 
 
 @router.get("/api/agents/{hostname}/history")
+@handle_errors
 def api_agent_history(hostname: str, request: Request, auth=Depends(_get_auth)):
     """Get historical metrics for an agent (CPU, RAM, disk)."""
     hours = _int_param(request, "hours", 24, 1, 168)
@@ -131,6 +135,7 @@ def api_agent_history(hostname: str, request: Request, auth=Depends(_get_auth)):
 # ── Network traffic analysis endpoint ────────────────────────────────────────
 
 @router.post("/api/agents/{hostname}/network-stats")
+@handle_errors
 async def api_agent_network_stats(hostname: str, request: Request, auth=Depends(_require_operator)):
     """Trigger network_stats command on an agent and return the results.
 
@@ -199,6 +204,7 @@ async def api_agent_network_stats(hostname: str, request: Request, auth=Depends(
 # ── Agent log streaming endpoints ────────────────────────────────────────────
 
 @router.post("/api/agents/{hostname}/stream-logs")
+@handle_errors
 async def api_agent_stream_logs(hostname: str, request: Request, auth=Depends(_require_operator)):
     """Start a live log stream on a remote agent via follow_logs command."""
     username, _ = auth
@@ -222,6 +228,7 @@ async def api_agent_stream_logs(hostname: str, request: Request, auth=Depends(_r
 
 
 @router.delete("/api/agents/{hostname}/stream-logs/{cmd_id}")
+@handle_errors
 async def api_agent_stop_stream(hostname: str, cmd_id: str, auth=Depends(_require_operator)):
     """Stop a running log stream on a remote agent."""
     username, _ = auth
@@ -243,6 +250,7 @@ async def api_agent_stop_stream(hostname: str, cmd_id: str, auth=Depends(_requir
 
 
 @router.get("/api/agents/{hostname}/streams")
+@handle_errors
 def api_agent_active_streams(hostname: str, auth=Depends(_get_auth)):
     """List active log streams for an agent."""
     with _agent_streams_lock:
@@ -251,6 +259,7 @@ def api_agent_active_streams(hostname: str, auth=Depends(_get_auth)):
 
 
 @router.get("/api/agents/{hostname}/stream/{cmd_id}")
+@handle_errors
 def api_agent_stream(hostname: str, cmd_id: str, request: Request, auth=Depends(_require_operator)):
     """Poll for new log stream lines (or WebSocket stream output).
 
@@ -283,6 +292,7 @@ def api_agent_stream(hostname: str, cmd_id: str, request: Request, auth=Depends(
 
 
 @router.get("/api/agents/command-history")
+@handle_errors
 def api_command_history(request: Request, auth=Depends(_get_auth)):
     """Get command execution history, optionally filtered by hostname."""
     hostname = request.query_params.get("hostname", "")
@@ -291,6 +301,7 @@ def api_command_history(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/sla/summary")
+@handle_errors
 def api_sla_summary(request: Request, auth=Depends(_get_auth)):
     """SLA uptime summary across all agents and key services."""
     hours = _int_param(request, "hours", 720, 1, 8760)

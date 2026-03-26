@@ -15,6 +15,7 @@ from ..agent_store import (
 from ..deps import (
     _client_ip, _get_auth, _int_param, _read_body,
     _require_admin, _require_operator, db,
+    handle_errors,
 )
 from ..yaml_config import read_yaml_settings
 
@@ -42,12 +43,14 @@ def _build_ai_context() -> str:
 
 # ── Incident endpoints ───────────────────────────────────────────────────────
 @router.get("/api/incidents")
+@handle_errors
 def api_incidents(request: Request, auth=Depends(_get_auth)):
     hours = _int_param(request, "hours", 24, 1, 168)
     return db.get_incidents(limit=200, hours=hours)
 
 
 @router.post("/api/incidents/{incident_id}/resolve")
+@handle_errors
 def api_resolve_incident(incident_id: int, request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     db.resolve_incident(incident_id)
@@ -57,6 +60,7 @@ def api_resolve_incident(incident_id: int, request: Request, auth=Depends(_requi
 
 # ── Incident War Room endpoints ──────────────────────────────────────────────
 @router.get("/api/incidents/{incident_id}/messages")
+@handle_errors
 def api_get_incident_messages(incident_id: int, auth=Depends(_get_auth)):
     """Get the war room message thread for a status incident."""
     incident = db.get_status_incident(incident_id)
@@ -67,6 +71,7 @@ def api_get_incident_messages(incident_id: int, auth=Depends(_get_auth)):
 
 
 @router.post("/api/incidents/{incident_id}/messages")
+@handle_errors
 async def api_post_incident_message(
     incident_id: int, request: Request, auth=Depends(_require_operator),
 ):
@@ -90,6 +95,7 @@ async def api_post_incident_message(
 
 
 @router.put("/api/incidents/{incident_id}/assign")
+@handle_errors
 async def api_assign_incident(
     incident_id: int, request: Request, auth=Depends(_require_operator),
 ):
@@ -121,6 +127,7 @@ async def api_assign_incident(
 
 # ── Service dependency topology endpoints ──────────────────────────────────────
 @router.get("/api/dependencies")
+@handle_errors
 def api_list_dependencies(auth=Depends(_get_auth)):
     """List all service dependencies as graph data (nodes + edges)."""
     deps = db.list_dependencies()
@@ -161,6 +168,7 @@ def api_list_dependencies(auth=Depends(_get_auth)):
 
 
 @router.post("/api/dependencies")
+@handle_errors
 async def api_create_dependency(request: Request, auth=Depends(_require_admin)):
     """Create a manual service dependency."""
     username, _ = auth
@@ -184,6 +192,7 @@ async def api_create_dependency(request: Request, auth=Depends(_require_admin)):
 
 
 @router.delete("/api/dependencies/{dep_id}")
+@handle_errors
 def api_delete_dependency(dep_id: int, request: Request, auth=Depends(_require_admin)):
     """Delete a service dependency."""
     username, _ = auth
@@ -196,6 +205,7 @@ def api_delete_dependency(dep_id: int, request: Request, auth=Depends(_require_a
 
 
 @router.get("/api/dependencies/impact/{service}")
+@handle_errors
 def api_impact_analysis(service: str, auth=Depends(_get_auth)):
     """Return all services transitively dependent on the given service."""
     affected = db.get_impact_analysis(service)
@@ -203,6 +213,7 @@ def api_impact_analysis(service: str, auth=Depends(_get_auth)):
 
 
 @router.post("/api/dependencies/discover/{hostname}")
+@handle_errors
 async def api_discover_services(hostname: str, request: Request,
                                 auth=Depends(_require_operator)):
     """Trigger discover_services command on a remote agent."""
@@ -233,12 +244,14 @@ async def api_discover_services(hostname: str, request: Request,
 
 # ── Config drift / baseline endpoints ─────────────────────────────────────────
 @router.get("/api/baselines")
+@handle_errors
 def api_list_baselines(auth=Depends(_get_auth)):
     """List all config baselines with latest drift status summary."""
     return db.list_baselines()
 
 
 @router.post("/api/baselines")
+@handle_errors
 async def api_create_baseline(request: Request, auth=Depends(_require_admin)):
     """Create a new config baseline."""
     username, _ = auth
@@ -260,6 +273,7 @@ async def api_create_baseline(request: Request, auth=Depends(_require_admin)):
 
 
 @router.delete("/api/baselines/{baseline_id}")
+@handle_errors
 async def api_delete_baseline(baseline_id: int, request: Request,
                               auth=Depends(_require_admin)):
     """Delete a config baseline and all its drift check history."""
@@ -273,6 +287,7 @@ async def api_delete_baseline(baseline_id: int, request: Request,
 
 
 @router.post("/api/baselines/{baseline_id}/set-from/{hostname}")
+@handle_errors
 async def api_baseline_set_from_agent(baseline_id: int, hostname: str,
                                       request: Request,
                                       auth=Depends(_require_admin)):
@@ -339,6 +354,7 @@ async def api_baseline_set_from_agent(baseline_id: int, hostname: str,
 
 
 @router.post("/api/baselines/check")
+@handle_errors
 async def api_trigger_drift_check(request: Request, auth=Depends(_require_operator)):
     """Trigger an immediate drift check across all baselines."""
     username, _ = auth
@@ -353,6 +369,7 @@ async def api_trigger_drift_check(request: Request, auth=Depends(_require_operat
 
 
 @router.get("/api/baselines/{baseline_id}/results")
+@handle_errors
 def api_baseline_results(baseline_id: int, auth=Depends(_get_auth)):
     """Get drift check results per agent for a specific baseline."""
     baseline = db.get_baseline(baseline_id)
@@ -368,6 +385,7 @@ def api_baseline_results(baseline_id: int, auth=Depends(_get_auth)):
 # ── AI / LLM endpoints ────────────────────────────────────────────────────────
 
 @router.get("/api/ai/status")
+@handle_errors
 def api_ai_status(auth=Depends(_get_auth)):
     """Return AI/LLM configuration status."""
     cfg = read_yaml_settings()
@@ -379,6 +397,7 @@ def api_ai_status(auth=Depends(_get_auth)):
 
 
 @router.post("/api/ai/chat")
+@handle_errors
 async def api_ai_chat(request: Request, auth=Depends(_require_operator)):
     """Send a message to the AI assistant with optional conversation history."""
     from ..llm import extract_actions
@@ -411,6 +430,7 @@ async def api_ai_chat(request: Request, auth=Depends(_require_operator)):
 
 
 @router.post("/api/ai/analyze-alert/{alert_id}")
+@handle_errors
 async def api_ai_analyze_alert(alert_id: int, auth=Depends(_require_operator)):
     """Ask the AI to analyze a specific alert."""
     from ..llm import extract_actions
@@ -449,6 +469,7 @@ async def api_ai_analyze_alert(alert_id: int, auth=Depends(_require_operator)):
 
 
 @router.post("/api/ai/analyze-logs")
+@handle_errors
 async def api_ai_analyze_logs(request: Request, auth=Depends(_require_operator)):
     """Ask the AI to analyze a log excerpt."""
     from ..llm import extract_actions
@@ -480,6 +501,7 @@ async def api_ai_analyze_logs(request: Request, auth=Depends(_require_operator))
 
 
 @router.post("/api/ai/summarize-incident/{incident_id}")
+@handle_errors
 async def api_ai_summarize_incident(incident_id: int, auth=Depends(_require_operator)):
     """Generate an AI summary/report for an incident."""
     from ..llm import extract_actions
@@ -520,6 +542,7 @@ async def api_ai_summarize_incident(incident_id: int, auth=Depends(_require_oper
 # ── Prediction endpoints ──────────────────────────────────────────────────────
 
 @router.get("/api/predict/capacity")
+@handle_errors
 def api_predict_capacity(request: Request, auth=Depends(_get_auth)):
     """Multi-metric capacity prediction with confidence intervals."""
     from ..prediction import predict_capacity
@@ -530,6 +553,7 @@ def api_predict_capacity(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/ai/test")
+@handle_errors
 async def api_ai_test(auth=Depends(_require_admin)):
     """Test the LLM connection by sending a simple prompt."""
     client = _get_llm_client()

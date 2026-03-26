@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import _client_ip, _get_auth, _read_body, _require_operator, db
+from ..deps import _client_ip, _get_auth, _read_body, _require_operator, db, handle_errors
 
 logger = logging.getLogger("noba")
 
@@ -14,6 +14,7 @@ router = APIRouter(tags=["dashboards"])
 
 
 @router.get("/api/dashboards")
+@handle_errors
 def api_list_dashboards(auth=Depends(_get_auth)):
     """List dashboards visible to the current user (own + shared)."""
     username, _ = auth
@@ -21,6 +22,7 @@ def api_list_dashboards(auth=Depends(_get_auth)):
 
 
 @router.post("/api/dashboards")
+@handle_errors
 async def api_create_dashboard(request: Request, auth=Depends(_require_operator)):
     """Create a new custom dashboard."""
     username, _ = auth
@@ -48,6 +50,7 @@ async def api_create_dashboard(request: Request, auth=Depends(_require_operator)
 
 
 @router.put("/api/dashboards/{dashboard_id}")
+@handle_errors
 async def api_update_dashboard(dashboard_id: int, request: Request, auth=Depends(_require_operator)):
     """Update a custom dashboard (owner or admin only)."""
     username, role = auth
@@ -82,6 +85,7 @@ async def api_update_dashboard(dashboard_id: int, request: Request, auth=Depends
 
 
 @router.delete("/api/dashboards/{dashboard_id}")
+@handle_errors
 async def api_delete_dashboard(dashboard_id: int, request: Request, auth=Depends(_require_operator)):
     """Delete a custom dashboard (owner or admin only)."""
     username, role = auth

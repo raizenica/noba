@@ -29,6 +29,7 @@ from ..agent_store import (
 from ..deps import (
     _client_ip, _get_auth, _read_body,
     _require_operator, db,
+    handle_errors,
 )
 from ..yaml_config import read_yaml_settings
 
@@ -247,6 +248,7 @@ def _check_auto_update(hostname: str, body: dict, pending: list) -> None:
 
 # ── Agent endpoints ───────────────────────────────────────────────────────────
 @router.post("/api/agent/report")
+@handle_errors
 async def api_agent_report(request: Request):
     """Receive metrics from a NOBA agent.  Auth via X-Agent-Key header."""
     key = request.headers.get("X-Agent-Key", "")
@@ -446,6 +448,7 @@ async def agent_websocket(ws: WebSocket):
 
 
 @router.get("/api/agents")
+@handle_errors
 def api_agents(auth=Depends(_get_auth)):
     """List all reporting agents and their latest metrics."""
     now = time.time()
@@ -462,6 +465,7 @@ def api_agents(auth=Depends(_get_auth)):
 
 
 @router.get("/api/agents/{hostname}")
+@handle_errors
 def api_agent_detail(hostname: str, auth=Depends(_get_auth)):
     """Get detailed metrics for a specific agent."""
     with _agent_data_lock:
@@ -480,6 +484,7 @@ def api_agent_detail(hostname: str, auth=Depends(_get_auth)):
 
 
 @router.post("/api/agents/bulk-command")
+@handle_errors
 async def api_bulk_command(request: Request, auth=Depends(_require_operator)):
     """Send a command to multiple agents at once."""
     username, role = auth
