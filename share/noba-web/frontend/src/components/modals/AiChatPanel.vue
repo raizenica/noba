@@ -44,8 +44,9 @@ function formatMessage(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-  // Code blocks first (multi-line)
-  const withBlocks = escaped.replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre class="ai-code">$1</pre>')
+  // Code blocks first (multi-line); skip empty blocks the LLM sometimes emits
+  const withBlocks = escaped.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
+    code.trim() ? `<pre class="ai-code">${code}</pre>` : '')
   return withBlocks
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
