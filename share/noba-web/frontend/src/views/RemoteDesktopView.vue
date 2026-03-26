@@ -239,15 +239,13 @@ function onWheel(e) {
 }
 
 function onKeyDown(e) {
-  // Pass keyCode as the X11 keycode approximation.
-  // Browser keyCode ≈ X11 KeySym for common keys (A-Z, 0-9, arrows, etc.)
   e.preventDefault()
-  sendInput({ event: 'keydown', keycode: e.keyCode })
+  sendInput({ event: 'keydown', code: e.code, key: e.key })
 }
 
 function onKeyUp(e) {
   e.preventDefault()
-  sendInput({ event: 'keyup', keycode: e.keyCode })
+  sendInput({ event: 'keyup', code: e.code, key: e.key })
 }
 
 function onContextMenu(e) {

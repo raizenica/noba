@@ -39,6 +39,47 @@ _rdp_x11_lib = None
 _rdp_xtst_lib = None
 _rdp_x11_dpy = None
 
+# ── Browser e.code → X11 hardware keycode ────────────────────────────────────
+# X11 hardware keycode = Linux evdev scancode + 8.
+# W3C KeyboardEvent.code values (physical key names) map directly to evdev
+# scancodes, making this a reliable, keyboard-layout-independent translation.
+# Using e.code instead of e.keyCode avoids the A=65→spacebar mapping bug.
+_JS_CODE_TO_X11 = {
+    "Escape": 9, "F1": 67, "F2": 68, "F3": 69, "F4": 70, "F5": 71, "F6": 72,
+    "F7": 73, "F8": 74, "F9": 75, "F10": 76, "F11": 95, "F12": 96,
+    "Backquote": 49, "Digit1": 10, "Digit2": 11, "Digit3": 12, "Digit4": 13,
+    "Digit5": 14, "Digit6": 15, "Digit7": 16, "Digit8": 17, "Digit9": 18,
+    "Digit0": 19, "Minus": 20, "Equal": 21, "Backspace": 22,
+    "Tab": 23,
+    "KeyQ": 24, "KeyW": 25, "KeyE": 26, "KeyR": 27, "KeyT": 28,
+    "KeyY": 29, "KeyU": 30, "KeyI": 31, "KeyO": 32, "KeyP": 33,
+    "BracketLeft": 34, "BracketRight": 35, "Enter": 36,
+    "CapsLock": 66,
+    "KeyA": 38, "KeyS": 39, "KeyD": 40, "KeyF": 41, "KeyG": 42,
+    "KeyH": 43, "KeyJ": 44, "KeyK": 45, "KeyL": 46,
+    "Semicolon": 47, "Quote": 48, "Backslash": 51,
+    "ShiftLeft": 50, "IntlBackslash": 94,
+    "KeyZ": 52, "KeyX": 53, "KeyC": 54, "KeyV": 55, "KeyB": 56,
+    "KeyN": 57, "KeyM": 58,
+    "Comma": 59, "Period": 60, "Slash": 61, "ShiftRight": 62,
+    "ControlLeft": 37, "AltLeft": 64, "Space": 65, "AltRight": 108,
+    "ControlRight": 105, "MetaLeft": 133, "MetaRight": 134,
+    "Insert": 118, "Delete": 119, "Home": 110, "End": 115,
+    "PageUp": 112, "PageDown": 117,
+    "ArrowLeft": 113, "ArrowUp": 111, "ArrowRight": 114, "ArrowDown": 116,
+    "NumLock": 77, "NumpadDivide": 106, "NumpadMultiply": 63,
+    "Numpad7": 79, "Numpad8": 80, "Numpad9": 81, "NumpadSubtract": 82,
+    "Numpad4": 83, "Numpad5": 84, "Numpad6": 85, "NumpadAdd": 86,
+    "Numpad1": 87, "Numpad2": 88, "Numpad3": 89,
+    "Numpad0": 90, "NumpadDecimal": 91, "NumpadEnter": 104,
+    "PrintScreen": 107, "ScrollLock": 78, "Pause": 127,
+}
+
+
+def _js_code_to_x11_keycode(code: str) -> int:
+    """Translate a W3C KeyboardEvent.code string to an X11 hardware keycode."""
+    return _JS_CODE_TO_X11.get(code, 0)
+
 
 # ── X11 library loaders ──────────────────────────────────────────────────────
 
@@ -991,10 +1032,10 @@ def _rdp_clipboard_paste(text: str) -> None:
             pass
     # Inject Ctrl+V to trigger paste in the focused application
     for evt in (
-        {"event": "keydown", "keycode": 17},   # Ctrl press
-        {"event": "keydown", "keycode": 86},   # V press
-        {"event": "keyup",   "keycode": 86},   # V release
-        {"event": "keyup",   "keycode": 17},   # Ctrl release
+        {"event": "keydown", "code": "ControlLeft"},
+        {"event": "keydown", "code": "KeyV"},
+        {"event": "keyup",   "code": "KeyV"},
+        {"event": "keyup",   "code": "ControlLeft"},
     ):
         _rdp_inject_input(evt)
 
@@ -1031,6 +1072,12 @@ def _rdp_inject_x11(event: dict) -> None:
     with _mutter_proc_lock:
         proc = _mutter_proc
     if proc is not None and proc.poll() is None:
+        # Resolve e.code → X11 hardware keycode before sending to mutter subprocess
+        if event.get("event") in ("keydown", "keyup"):
+            code = event.get("code", "")
+            kc = _js_code_to_x11_keycode(code)
+            if kc:
+                event = {**event, "keycode": kc}
         _rdp_inject_mutter(event)
         return
     lib = _rdp_load_x11()
@@ -1060,9 +1107,11 @@ def _rdp_inject_x11(event: dict) -> None:
             xtst.XTestFakeButtonEvent(dpy, btn, 1, 0)
             xtst.XTestFakeButtonEvent(dpy, btn, 0, 0)
         elif evt == "keydown":
-            xtst.XTestFakeKeyEvent(dpy, int(event.get("keycode", 0)), 1, 0)
+            kc = _js_code_to_x11_keycode(event.get("code", "")) or int(event.get("keycode", 0))
+            xtst.XTestFakeKeyEvent(dpy, kc, 1, 0)
         elif evt == "keyup":
-            xtst.XTestFakeKeyEvent(dpy, int(event.get("keycode", 0)), 0, 0)
+            kc = _js_code_to_x11_keycode(event.get("code", "")) or int(event.get("keycode", 0))
+            xtst.XTestFakeKeyEvent(dpy, kc, 0, 0)
         lib.XFlush(dpy)
     except Exception as e:
         print(f"[agent-rdp] X11 input error: {e}", file=sys.stderr)
