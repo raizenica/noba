@@ -4,6 +4,9 @@ All notable changes to NOBA Command Center are documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **picomatch 4.0.4** — Updated transitive dependency picomatch from 4.0.3 to 4.0.4 in frontend lock file, fixing CVE method injection via POSIX bracket expressions (CWE-1321) that could cause incorrect glob matching in security-relevant filtering logic.
+
 ### Added
 - **`handle_errors` decorator** — New `@handle_errors` decorator in `server/deps.py` centralizes unhandled-exception handling across all HTTP route handlers. Applied to ~300 routes across all 17 routers; returns HTTP 500 with the exception message and logs the full traceback. WebSocket and SSE routes are excluded (decorator is not applied to them). Eliminates hundreds of lines of repetitive try/except boilerplate.
 - **db/core.py mixin split** — The 1,681-line `db/core.py` monolith is replaced by 22 co-located domain modules (`db/metrics.py`, `db/audit.py`, `db/healing.py`, etc.), each exposing an `init_schema(conn)` function and a `_XxxMixin` class. `db/core.py` is now a 177-line coordinator: imports all modules, runs `_run_alter_migrations`, and assembles `Database` from `DatabaseBase` + 21 mixins via multiple inheritance.
