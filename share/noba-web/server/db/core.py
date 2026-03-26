@@ -28,7 +28,6 @@ from .healing import _HealingMixin
 from .integrations import _IntegrationsMixin
 from .linked_providers import _LinkedProvidersMixin
 from .metrics import _MetricsMixin
-from .network import _NetworkMixin
 from .notifications import _NotificationsMixin
 from .security import _SecurityMixin
 from .status_page import _StatusPageMixin
@@ -170,8 +169,26 @@ class Database(
     _ApiKeysMixin, _TokensMixin, _NotificationsMixin, _UserDashboardsMixin,
     _UserPreferencesMixin, _AgentsMixin, _EndpointsMixin,
     _DashboardsMixin, _StatusPageMixin, _SecurityMixin, _DependenciesMixin,
-    _BaselinesMixin, _NetworkMixin, _WebhooksMixin, _BackupVerifyMixin,
+    _BaselinesMixin, _WebhooksMixin, _BackupVerifyMixin,
     _ApprovalsMixin, _HealingMixin, _IntegrationsMixin, _LinkedProvidersMixin,
 ):
     """Thread-safe SQLite database with all domain methods via mixins."""
-    pass
+
+    # Network delegation methods (no mixin per spec)
+    def upsert_network_device(self, ip: str, mac: str | None = None,
+                              hostname: str | None = None,
+                              vendor: str | None = None,
+                              open_ports: list[int] | None = None,
+                              discovered_by: str | None = None) -> int | None:
+        return network.upsert_device(self._get_conn(), self._lock, ip, mac=mac,
+                                     hostname=hostname, vendor=vendor,
+                                     open_ports=open_ports, discovered_by=discovered_by)
+
+    def list_network_devices(self) -> list[dict]:
+        return network.list_devices(self._get_read_conn(), self._read_lock)
+
+    def get_network_device(self, device_id: int) -> dict | None:
+        return network.get_device(self._get_read_conn(), self._read_lock, device_id)
+
+    def delete_network_device(self, device_id: int) -> bool:
+        return network.delete_device(self._get_conn(), self._lock, device_id)
