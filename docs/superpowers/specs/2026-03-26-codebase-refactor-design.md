@@ -22,8 +22,9 @@ are unchanged unless explicitly noted.
 ### Problem
 
 `db/core.py` is 1,681 lines split across three concerns:
-- ~220 lines: import block re-importing from 25 already-split domain modules
-- ~570 lines: `_init_schema()` — raw DDL SQL for every table in one method
+- ~220 lines: import block re-importing from 22 already-split domain modules
+- ~570 lines: `_init_schema()` — raw DDL SQL for every table in one method, including
+  three inline `ALTER TABLE` migration blocks for additive column migrations
 - ~900 lines: 184 delegation wrapper methods, each forwarding to a domain function
 
 The domain logic is already correctly split. The bulk comes from centralised DDL
@@ -31,14 +32,98 @@ and mechanical boilerplate wrappers.
 
 ### Design
 
-Each of the 25 domain modules gains two additions at the bottom of the file:
+**DDL extraction:** Each of the 22 domain modules that owns tables gains a
+`def init_schema(conn: sqlite3.Connection) -> None` function at the bottom of the
+file containing the `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`
+statements for its tables. The `executescript()` call is used inside each function.
 
-1. `def init_schema(conn: sqlite3.Connection) -> None` — the DDL `CREATE TABLE IF
-   NOT EXISTS` statements that belong to that domain, extracted verbatim from
-   `_init_schema`.
+`db/migrations.py` is not given an `init_schema` — it manages schema migrations
+separately and is excluded from the mixin plan.
 
-2. `class _XMixin` — the wrapper methods currently in `Database` that forward to
-   functions in that module. Example:
+`db/network.py` already has its table DDL but has no wrapper methods in the current
+`Database` class (it is not imported in `core.py`). It gets `init_schema()` only;
+no `_NetworkMixin` is created. Wrapping `network.py` functions is out of scope for
+this refactor.
+
+**Inline ALTER TABLE migrations:** The three `ALTER TABLE` blocks currently in
+`_init_schema` (adding `assigned_to` to `status_incidents`, `workflow_context` to
+`approval_queue`, `verify_ssl`/`ca_bundle` to `integration_instances`, and audit
+trail columns) **remain in `DatabaseBase._init_schema`**, executed after all
+`mod.init_schema()` calls. They are idempotent (swallow `OperationalError` on
+duplicate column) and must not be lost.
+
+```python
+def _run_alter_migrations(conn: sqlite3.Connection) -> None:
+    """Idempotent additive column migrations. Swallows OperationalError
+    ('duplicate column name') so they are safe to run on every startup."""
+    migrations = [
+        "ALTER TABLE status_incidents ADD COLUMN assigned_to TEXT",
+        "ALTER TABLE approval_queue ADD COLUMN workflow_context TEXT",
+        "ALTER TABLE integration_instances ADD COLUMN verify_ssl INTEGER DEFAULT 1",
+        "ALTER TABLE integration_instances ADD COLUMN ca_bundle TEXT",
+        "ALTER TABLE heal_ledger ADD COLUMN risk_level TEXT",
+        "ALTER TABLE heal_ledger ADD COLUMN snapshot_id INTEGER",
+        "ALTER TABLE heal_ledger ADD COLUMN rollback_status TEXT",
+        "ALTER TABLE heal_ledger ADD COLUMN dependency_root TEXT",
+        "ALTER TABLE heal_ledger ADD COLUMN suppressed_by TEXT",
+        "ALTER TABLE heal_ledger ADD COLUMN maintenance_window_id INTEGER",
+        "ALTER TABLE heal_ledger ADD COLUMN instance_id TEXT",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+def _init_schema(self):
+    with self._lock:
+        conn = self._get_conn()
+        for mod in _SCHEMA_MODULES:
+            mod.init_schema(conn)
+        # Inline additive migrations (idempotent ALTER TABLE blocks)
+        _run_alter_migrations(conn)
+        conn.commit()
+```
+
+**`_SCHEMA_MODULES`** is a module-level list defined explicitly in `core.py`.
+`automations.py` owns the DDL for both the `automations`/`job_runs` tables and the
+`approval_queue`/`workflow_approval_context` tables — there is no separate `approvals.py`
+module. Both groups of wrapper methods (`_AutomationsMixin` and `_ApprovalsMixin`)
+are therefore defined at the bottom of `automations.py`.
+
+```python
+from . import (
+    metrics, audit, automations, alerts, api_keys, tokens,
+    notifications, user_dashboards, user_preferences, agents,
+    endpoints, dashboards, status_page, security, dependencies,
+    baselines, network, webhooks, backup_verify, healing,
+    integrations, linked_providers,
+)
+
+# Both lists must be kept in sync — _SCHEMA_MODULES immediately follows the imports.
+_SCHEMA_MODULES = [
+    metrics, audit, automations, alerts, api_keys, tokens,
+    notifications, user_dashboards, user_preferences, agents,
+    endpoints, dashboards, status_page, security, dependencies,
+    baselines, network, webhooks, backup_verify, healing,
+    integrations, linked_providers,
+]
+# 22 modules: all own tables, including network (DDL only, no mixin).
+# automations covers approval_queue DDL (workflow_context is a column, not a table).
+```
+
+Order follows FK dependencies: `integrations` before `healing` (heal_snapshots
+references integration_instances); `status_page` before nothing (self-contained);
+`automations` before nothing. `CREATE TABLE IF NOT EXISTS` with FKs does not fail
+at DDL time even with forward references, but explicit ordering documents intent.
+
+**Wrapper mixins:** Each of the 21 modules that has wrapper methods in `Database`
+gains a `class _XMixin` at the bottom of the file containing those wrappers.
+`rollup_to_1m`, `rollup_to_1h`, `prune_rollups`, and `catchup_rollups` move into
+`_MetricsMixin` (not `DatabaseBase`), consistent with the architecture goal of
+keeping `DatabaseBase` to connection management only.
+
+Example pattern:
 
 ```python
 # db/metrics.py (bottom section, added during refactor)
@@ -47,7 +132,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS metrics (...);
         CREATE INDEX IF NOT EXISTS idx_metric_time ON metrics(metric, timestamp);
-        ...
+        CREATE TABLE IF NOT EXISTS metrics_1m (...);
+        CREATE TABLE IF NOT EXISTS metrics_1h (...);
     """)
 
 class _MetricsMixin:
@@ -56,39 +142,55 @@ class _MetricsMixin:
 
     def get_history(self, metric: str, range_hours: int = 24, ...) -> list[dict]:
         return get_history(self._get_read_conn(), self._read_lock, metric, ...)
-    ...
+
+    def rollup_to_1m(self) -> None:
+        from .metrics import rollup_to_1m as _r
+        _r(self._get_conn(), self._lock)
+
+    def rollup_to_1h(self) -> None:
+        from .metrics import rollup_to_1h as _r
+        _r(self._get_conn(), self._lock)
+
+    def prune_rollups(self) -> None:
+        from .metrics import prune_rollups as _r
+        _r(self._get_conn(), self._lock)
+
+    def catchup_rollups(self) -> None:
+        from .metrics import catchup_rollups as _r
+        _r(self._get_conn(), self._lock)
 ```
 
-`db/core.py` becomes:
+`db/core.py` final structure (~150 lines):
 
 ```python
-# db/core.py — ~150 lines total
+# db/core.py
+
+from . import metrics, audit, ...  # explicit _SCHEMA_MODULES list
+from .metrics import _MetricsMixin
+from .audit import _AuditMixin
+# ... all 21 mixin imports
+
+_SCHEMA_MODULES = [metrics, audit, ...]
 
 class DatabaseBase:
-    """Connection management only."""
+    """Connection management + schema init only."""
     def __init__(self, path): ...
     def _get_conn(self): ...
     def _get_read_conn(self): ...
     def execute_read(self, fn): ...
     def execute_write(self, fn): ...
     def transaction(self, fn): ...
-    def _init_schema(self):
-        conn = self._get_conn()
-        for mod in _SCHEMA_MODULES:
-            mod.init_schema(conn)
-        conn.commit()
-    def wal_checkpoint(self): ...
-    def rollup_to_1m(self): ...  # metrics-specific, stays here
-    ...
+    def _init_schema(self): ...   # calls _SCHEMA_MODULES + ALTER TABLE migrations
+    def wal_checkpoint(self): ... # kept here: infrastructure, not domain
 
 class Database(
     DatabaseBase,
     _MetricsMixin, _AuditMixin, _AutomationsMixin, _AlertsMixin,
     _ApiKeysMixin, _TokensMixin, _NotificationsMixin, _UserDashboardsMixin,
-    _UserPreferencesMixin, _IncidentsMixin, _AgentsMixin, _EndpointsMixin,
+    _UserPreferencesMixin, _AgentsMixin, _EndpointsMixin,
     _DashboardsMixin, _StatusPageMixin, _SecurityMixin, _DependenciesMixin,
-    _BaselinesMixin, _NetworkMixin, _WebhooksMixin, _BackupVerifyMixin,
-    _ApprovalsMixin, _HealingMixin, _IntegrationsMixin, _LinkedProvidersMixin,
+    _BaselinesMixin, _WebhooksMixin, _BackupVerifyMixin, _ApprovalsMixin,
+    _HealingMixin, _IntegrationsMixin, _LinkedProvidersMixin,
 ):
     pass
 ```
@@ -105,8 +207,7 @@ Total line count across `db/` is unchanged; distribution is dramatically better.
 ### Problem
 
 `integrations/simple.py` is 1,118 lines mixing integration handlers from six
-distinct functional categories (network, media, infrastructure, monitoring, IoT,
-communications) with no internal organisation.
+distinct functional categories with no internal organisation.
 
 ### Design
 
@@ -123,9 +224,11 @@ integrations/
                            graylog, influxdb (~150 lines)
   simple_iot.py          — hass, homebridge, z2m, esphome, pikvm,
                            unifi-protect, n8n (~150 lines)
-  simple_comms.py        — gotify, pushover, ntfy, authentik, speedtest (~100 lines)
+  simple_comms.py        — gotify, pushover, ntfy, authentik (~100 lines)
   simple.py              — imports and re-exports all of the above (~50 lines)
 ```
+
+`speedtest` belongs in `simple_monitoring.py` only (removed from `simple_comms.py`).
 
 **Caller impact:** Zero. All external imports of `from .integrations.simple import X`
 continue to resolve through `simple.py`'s re-exports.
@@ -194,19 +297,22 @@ node configuration panel, and connection rendering in one component.
 
 ### Design
 
+`WorkflowNode.vue` (302 lines) already exists as a separate component handling
+individual node rendering, drag-to-move, and connection port handles. It is kept
+as-is — no rename or replacement needed.
+
 ```
 frontend/src/components/automations/
-  WorkflowBuilder.vue                 — coordinator + canvas event handling, ~200 lines
+  WorkflowBuilder.vue                 — coordinator + canvas event handling + SVG
+                                        connection rendering, ~200 lines
   workflow/
-    WorkflowNodePalette.vue           — left sidebar: draggable node types (~150 lines)
+    WorkflowNodePalette.vue           — left sidebar: draggable node type tiles (~150 lines)
     WorkflowNodeConfig.vue            — right panel: selected node configuration form
                                         (step type, params, conditions) (~200 lines)
-    WorkflowNodeCard.vue              — individual node on the canvas: label, type icon,
-                                        connection handles (~100 lines)
 ```
 
-Canvas SVG connection rendering stays in `WorkflowBuilder.vue` as it is tightly
-coupled to the drag-and-drop state.
+Canvas SVG connection rendering stays in `WorkflowBuilder.vue` — tightly coupled
+to drag-and-drop state. `WorkflowNode.vue` stays in its current location unchanged.
 
 ---
 
@@ -225,42 +331,51 @@ except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
 ```
 
-This is copy-pasted boilerplate with no standardisation of error response format.
-
 ### Design
 
-Add `server/utils.py` (or extend `server/deps.py`) with a decorator:
+Add `handle_errors` to `server/deps.py` (already imported by all routers):
 
 ```python
+import asyncio, functools, logging
+_log = logging.getLogger("noba")
+
 def handle_errors(func):
-    """Wrap a FastAPI route handler to catch unhandled exceptions and return
-    a consistent 500 response. HTTPException passes through unchanged."""
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        try:
-            return await func(*args, **kwargs)
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("Unhandled error in %s", func.__name__)
-            raise HTTPException(status_code=500, detail=str(e))
-    return wrapper
+    """Catch unhandled exceptions in route handlers and return HTTP 500.
+    HTTPException and WebSocketDisconnect pass through unchanged.
+    Do NOT apply to WebSocket routes or routes returning StreamingResponse."""
+    if asyncio.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def _async_wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as e:
+                _log.exception("Unhandled error in %s", func.__name__)
+                raise HTTPException(status_code=500, detail=str(e))
+        return _async_wrapper
+    else:
+        @functools.wraps(func)
+        def _sync_wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as e:
+                _log.exception("Unhandled error in %s", func.__name__)
+                raise HTTPException(status_code=500, detail=str(e))
+        return _sync_wrapper
 ```
 
-Applied to all route handlers:
+**Exclusions — do NOT apply `@handle_errors` to:**
+- `@router.websocket` routes — `WebSocketDisconnect` must not be converted to
+  `HTTPException` on an already-upgraded connection
+- Routes returning `StreamingResponse` (SSE endpoints) — the outer coroutine
+  returns before the stream is consumed; exceptions inside the generator are
+  not catchable here
 
-```python
-@router.get("/agents")
-@handle_errors
-async def list_agents(...):
-    ...  # no try/except needed
-```
-
-**Sync route support:** The decorator detects sync vs async with
-`asyncio.iscoroutinefunction` and wraps appropriately.
-
-**Rollout:** Apply to all routers in one pass. Each router's try/except blocks
-are removed. Net change: ~200 lines removed across the codebase.
+**Rollout:** Apply to all non-WebSocket, non-SSE route handlers in one pass.
+Each router's try/except blocks are removed. Net change: ~200 lines removed.
 
 ---
 
@@ -278,9 +393,12 @@ subprocess script embedded as a Python string.
 
 #### Package structure
 
+The source is a flat directory (not a subpackage). All modules live at the zip root:
+
 ```
 share/noba-agent/
-  __main__.py          — argparse entry point, main() loop, _ws_thread() (~300 lines)
+  __main__.py          — argparse entry point, main() loop, _ws_thread(),
+                         VERSION = "3.0.0" (~300 lines)
   websocket.py         — custom RFC 6455 WebSocket client (~250 lines)
   metrics.py           — CPU/mem/disk/net/temp/process/uptime collection (~400 lines)
   commands.py          — all 42 _cmd_* handlers + execute_commands() (~800 lines)
@@ -293,22 +411,44 @@ share/noba-agent/
 
 #### `rdp_session.py` loading
 
-`rdp.py` loads the session script at runtime using `importlib.resources`,
-so it remains a real editable Python file but still runs as a subprocess string:
+The zipapp adds itself to `sys.path`, so all flat modules are importable.
+`rdp.py` loads the session script using `importlib.util.find_spec`, which
+resolves correctly from within a flat zipapp:
 
 ```python
 # rdp.py
-import importlib.resources
-_MUTTER_SESSION_SCRIPT = (
-    importlib.resources.files("noba_agent")
-    .joinpath("rdp_session.py")
-    .read_text(encoding="utf-8")
-)
+import importlib.util as _ilu
+
+def _load_mutter_script() -> str:
+    spec = _ilu.find_spec("rdp_session")
+    if spec is None:
+        raise RuntimeError("rdp_session module not found in agent package")
+    return spec.loader.get_data(spec.origin).decode("utf-8")
+
+_MUTTER_SESSION_SCRIPT = _load_mutter_script()
 ```
 
 This is identical in runtime behaviour to the current embedded string —
 the subprocess is still started with `python3 -c <script>` — but the
 source is now a real, syntax-highlighted, navigable Python file.
+
+**Development fallback:** When running from an unzipped source tree (e.g.
+`python3 share/noba-agent/__main__.py`), `find_spec("rdp_session")` still works
+because the source directory is on `sys.path`.
+
+#### Self-update path fix
+
+`commands.py` (the `_cmd_update_agent` handler) must resolve the agent path as:
+
+```python
+agent_path = os.path.abspath(sys.argv[0])  # resolves to agent.pyz
+```
+
+**Not** `os.path.abspath(__file__)`, which inside a zipapp resolves to a path
+inside the archive (e.g. `.../agent.pyz/__main__.py`) and cannot be opened for
+writing. `sys.argv[0]` always points to the `.pyz` file itself.
+
+The same fix applies to `_cmd_uninstall_agent` if it references `__file__`.
 
 #### Build step
 
@@ -323,36 +463,40 @@ python3 -m zipapp share/noba-agent \
 echo "Built share/noba-agent.pyz ($(du -sh share/noba-agent.pyz | cut -f1))"
 ```
 
-The `.pyz` file is a standard Python zipapp — `python3 agent.pyz` works on any
-Python 3.6+ system with no changes to how agents are invoked.
+The `.pyz` is a standard Python zipapp — `python3 agent.pyz` works on any
+Python 3.6+ system with no changes to invocation.
 
 #### VERSION
 
 `__main__.py` contains `VERSION = "3.0.0"`. The server reads it via zipfile
-inspection (already knows the path):
+inspection:
 
 ```python
 # routers/agents.py
 import zipfile, re
 with zipfile.ZipFile(agent_pyz_path) as zf:
     src = zf.read("__main__.py").decode()
-VERSION_RE = re.compile(r'^VERSION\s*=\s*["\']([^"\']+)["\']', re.M)
-server_version = VERSION_RE.search(src).group(1)
+_VER_RE = re.compile(r'^VERSION\s*=\s*["\']([^"\']+)["\']', re.M)
+server_version = _VER_RE.search(src).group(1)
 ```
 
 #### Update mechanism
 
-The server currently reads `agent.py` text and sends it to agents.
-With zipapp:
-
 - Server reads `agent.pyz` as **bytes** and base64-encodes for transport
-- Agent's `_cmd_update_agent` writes the decoded bytes to `agent.pyz` and restarts
+- Agent's `_cmd_update_agent` writes decoded bytes to `agent.pyz` (`sys.argv[0]`) and restarts
+- All five hardcoded `.py` path references in `routers/agent_deploy.py` (lines ~115,
+  138, 213, 221, 237) are updated to `.pyz`
+- The runtime-generated install script in `agent_deploy.py` is updated to deploy
+  `agent.pyz` and write the systemd unit pointing to `python3 agent.pyz`
 - `install.sh` installs `agent.pyz` to `~/.local/libexec/noba/noba-agent.pyz`
-- Systemd unit runs `python3 agent.pyz` instead of `python3 agent.py`
+- The server's version-check path in `routers/agents.py` switches from reading
+  `agent.py` text to reading `__main__.py` from inside the zipfile
 
-The binary transport is already supported — the existing update mechanism
-sends the file content as a string field. Switching to base64 bytes is a
-one-line change on both sides.
+**Backward compatibility with 2.x agents:** 2.x agents receiving a `.pyz` file
+via `update_agent` write it to `agent.py`. Python executes `.pyz` files correctly
+regardless of extension (zipapp format detection is by content, not filename).
+The shebang satisfies the existing `if not new_code.startswith(b"#!/")` validation.
+This transition path works transparently — 2.x agents upgrade to 3.0 in one step.
 
 #### Zero-dependency guarantee
 
@@ -362,9 +506,9 @@ dependency detected at runtime — unchanged.
 
 #### Test targets
 
-Proxmox VE nodes (pve01, pve02) — full agent functionality including
-metric reporting, command execution, and terminal. dnsa01 (Raspberry Pi 5) —
-RDP capture and input injection via Mutter D-Bus.
+Proxmox VE nodes (pve01, pve02) — full agent functionality including metric
+reporting, command execution, and terminal. dnsa01 (Raspberry Pi 5) — RDP
+capture and input injection via Mutter D-Bus.
 
 ---
 
