@@ -257,12 +257,12 @@ function onWheel(e) {
 
 function onKeyDown(e) {
   e.preventDefault()
-  sendInput({ event: 'keydown', code: e.code, key: e.key })
+  sendInput({ event: 'keydown', code: e.code, key: e.key, keycode: e.keyCode })
 }
 
 function onKeyUp(e) {
   e.preventDefault()
-  sendInput({ event: 'keyup', code: e.code, key: e.key })
+  sendInput({ event: 'keyup', code: e.code, key: e.key, keycode: e.keyCode })
 }
 
 function onContextMenu(e) {
