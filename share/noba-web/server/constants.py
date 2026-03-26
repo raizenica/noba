@@ -16,6 +16,7 @@ HISTORY_RESOLUTION_S = 3600                   # 1-hour resolution for reports
 WS_CLOSE_NORMAL = 1000                       # WebSocket normal close code
 STREAM_BUFFER_MAX = 500                       # max buffered stream messages per key
 TERMINAL_QUEUE_MAXSIZE = 100                  # asyncio.Queue maxsize for terminal
+RDP_QUEUE_MAXSIZE = 2                         # asyncio.Queue maxsize for RDP (drop old frames when slow)
 COMMAND_HISTORY_LIMIT = 200                   # max command history entries returned
 SLA_INCIDENT_LIMIT = 1000                     # max incidents for SLA calculation
 DEPLOY_OUTPUT_TRUNCATE = 1000                 # deploy stdout truncation

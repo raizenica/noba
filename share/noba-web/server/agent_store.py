@@ -32,7 +32,6 @@ _agent_ws_lock = threading.Lock()
 _terminal_subscribers: dict[str, list] = {}
 _terminal_sub_lock = threading.Lock()
 
-
 def notify_terminal_subscribers(hostname: str, msg: dict) -> None:
     """Push a message to all browser terminal WS subscribers for a hostname."""
     with _terminal_sub_lock:
@@ -41,6 +40,32 @@ def notify_terminal_subscribers(hostname: str, msg: dict) -> None:
         for q in subs:
             try:
                 q.put_nowait(msg)
+            except Exception:
+                dead.append(q)
+        for q in dead:
+            subs.remove(q)
+
+
+# Browser RDP WebSocket subscribers: {hostname: [asyncio.Queue, ...]}
+_rdp_subscribers: dict[str, list] = {}
+_rdp_sub_lock = threading.Lock()
+
+
+def notify_rdp_subscribers(hostname: str, msg: dict) -> None:
+    """Push an RDP frame to all browser RDP subscribers for a hostname.
+
+    Frames are dropped (not queued) when a subscriber's queue is full — this keeps
+    latency low by always delivering the freshest frame rather than buffering stale ones.
+    """
+    import asyncio as _asyncio
+    with _rdp_sub_lock:
+        subs = _rdp_subscribers.get(hostname, [])
+        dead: list = []
+        for q in subs:
+            try:
+                q.put_nowait(msg)
+            except _asyncio.QueueFull:
+                pass  # subscriber is slow — drop this frame, next will arrive soon
             except Exception:
                 dead.append(q)
         for q in dead:

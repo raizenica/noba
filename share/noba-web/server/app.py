@@ -360,4 +360,9 @@ async def spa_fallback(rest: str = ""):
     if rest.startswith("api/"):
         from fastapi import HTTPException
         raise HTTPException(404, "API route not found")
-    return FileResponse(_VUE_DIST / "index.html")
+    # index.html must never be cached: it contains hashed asset URLs and must
+    # always be fetched fresh so browsers pick up new deployments immediately.
+    return FileResponse(
+        _VUE_DIST / "index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )

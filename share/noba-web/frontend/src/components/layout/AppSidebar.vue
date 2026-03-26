@@ -95,6 +95,11 @@ function agentCounts() {
         <span class="nav-label">Security</span>
       </router-link>
 
+      <router-link class="sidebar-nav-item" :class="{ active: route.name === 'remote' || route.name === 'remote-desktop' }" to="/remote">
+        <i class="fas fa-desktop nav-icon"></i>
+        <span class="nav-label">Remote</span>
+      </router-link>
+
       <a
         v-if="authStore.isAdmin"
         class="sidebar-nav-item"

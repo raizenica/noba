@@ -23,6 +23,7 @@ from ..agent_store import (
     _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
     _agent_stream_lines, _agent_stream_lines_lock, _STREAM_LINES_MAX,
     _agent_websockets, _agent_ws_lock,
+    notify_rdp_subscribers,
     notify_terminal_subscribers,
 )
 from ..deps import (
@@ -422,6 +423,10 @@ async def agent_websocket(ws: WebSocket):
             elif msg_type in ("pty_output", "pty_exit", "pty_opened", "pty_error"):
                 # Forward PTY messages to browser terminal subscribers
                 notify_terminal_subscribers(hostname, msg)
+
+            elif msg_type in ("rdp_frame", "rdp_unavailable"):
+                # Fan out screen frames and unavailability notices to browser RDP subscribers
+                notify_rdp_subscribers(hostname, msg)
 
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})

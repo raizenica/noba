@@ -4,6 +4,10 @@ All notable changes to NOBA Command Center are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Headless GNOME Wayland screen capture** (agent v2.4.16) — New `_capture_screen_pipewire()` method enables RDP screen capture on fully headless GNOME Wayland systems (no physical displays, no `wl_output`). Uses Mutter's `RemoteDesktop` + `ScreenCast` D-Bus APIs to create a virtual screencast session, then links pipewiresrc via WirePlumber's `node.target` stream-property (bypassing the crashing `findDefaultLinkable` path). Captures a 1280×720 RGB frame via GStreamer appsink and encodes it as PNG. Root agent drops to display-owner uid/gid for the subprocess.
+- **Remote Desktop sortable host groups** — The Remote page now supports customizable tabs to group and sort hosts. Users can add named groups (+ button), rename by double-click, delete with ×, and drag rows to reorder within any tab. Custom group membership (+ Add / − Remove buttons) and sort order persist in `localStorage`. The built-in "All" tab always shows all agents with its own drag-reorderable order.
+
 ### Security
 - **XXE vulnerability patched** — RSS feed scheduler now uses `defusedxml.ElementTree` instead of `xml.etree.ElementTree` to prevent XML External Entity attacks and XML bombs.
 

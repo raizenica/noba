@@ -142,50 +142,6 @@ const cats = [
 
 <template>
   <div>
-    <!-- New: Managed Integration Instances -->
-    <div class="s-section" style="margin-bottom: 2rem;">
-      <div class="s-label" style="display:flex;align-items:center;justify-content:space-between">
-        <span>Managed Integrations</span>
-        <button v-if="!showSetup" class="btn btn-xs btn-primary" @click="showSetup = true">
-          <i class="fas fa-plus" style="margin-right:.3rem"></i> Add Integration
-        </button>
-      </div>
-
-      <!-- Setup wizard -->
-      <IntegrationSetup v-if="showSetup" :edit-instance="editingInstance" @saved="onInstanceSaved" @cancel="onSetupCancel" />
-
-      <!-- Instance list -->
-      <div v-if="!showSetup && instances.length" class="instance-list">
-        <div v-for="inst in instances" :key="inst.id" class="instance-row">
-          <span class="badge ba">{{ inst.platform }}</span>
-          <span class="instance-id">{{ inst.id }}</span>
-          <span class="text-muted">{{ inst.url }}</span>
-          <span v-if="inst.site" class="badge bs">{{ inst.site }}</span>
-          <span :class="['badge', inst.health_status === 'online' ? 'bs' : inst.health_status === 'offline' ? 'bd' : 'bw']">
-            {{ inst.health_status || 'unknown' }}
-          </span>
-          <div style="display:flex;gap:.25rem">
-            <button class="btn btn-xs" @click="editInstance(inst)" title="Edit integration">
-              <i class="fas fa-edit"></i>
-            </button>
-            <button class="btn btn-xs btn-danger" @click="deleteInstance(inst.id)" title="Delete integration">
-              <i class="fas fa-trash"></i>
-            </button>
-          </div>
-        </div>
-      </div>
-      <div v-if="!showSetup && !instances.length" class="empty-msg" style="padding:2rem;text-align:center;background:var(--surface);border:1px dashed var(--border);border-radius:6px">
-        <i class="fas fa-plug" style="font-size:2rem;display:block;margin-bottom:.75rem;opacity:.3"></i>
-        No managed integrations yet.
-        <br>
-        <button class="btn btn-primary" style="margin-top:1rem" @click="showSetup = true">
-          <i class="fas fa-plus"></i> Add First Integration
-        </button>
-      </div>
-    </div>
-
-    <hr style="border-color: var(--border); margin: 1.5rem 0;" />
-
     <!-- Category bar -->
     <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:1rem;border-bottom:1px solid var(--border);padding-bottom:.6rem">
       <button
@@ -1447,6 +1403,48 @@ const cats = [
       </button>
       <span v-if="saveMsg" style="font-size:.8rem;color:var(--text-muted)">{{ saveMsg }}</span>
       <span v-if="aiTestMsg" style="font-size:.8rem" :style="{ color: aiTestMsg.startsWith('✓') ? 'var(--success)' : 'var(--danger)' }">{{ aiTestMsg }}</span>
+    </div>
+
+    <hr style="border-color: var(--border); margin: 2rem 0;" />
+
+    <!-- Managed Integration Instances -->
+    <div class="s-section">
+      <div class="s-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Managed Integrations</span>
+        <button v-if="!showSetup" class="btn btn-xs btn-primary" @click="showSetup = true">
+          <i class="fas fa-plus" style="margin-right:.3rem"></i> Add Integration
+        </button>
+      </div>
+
+      <IntegrationSetup v-if="showSetup" :edit-instance="editingInstance" @saved="onInstanceSaved" @cancel="onSetupCancel" />
+
+      <div v-if="!showSetup && instances.length" class="instance-list">
+        <div v-for="inst in instances" :key="inst.id" class="instance-row">
+          <span class="badge ba">{{ inst.platform }}</span>
+          <span class="instance-id">{{ inst.id }}</span>
+          <span class="text-muted">{{ inst.url }}</span>
+          <span v-if="inst.site" class="badge bs">{{ inst.site }}</span>
+          <span :class="['badge', inst.health_status === 'online' ? 'bs' : inst.health_status === 'offline' ? 'bd' : 'bw']">
+            {{ inst.health_status || 'unknown' }}
+          </span>
+          <div style="display:flex;gap:.25rem">
+            <button class="btn btn-xs" @click="editInstance(inst)" title="Edit integration">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button class="btn btn-xs btn-danger" @click="deleteInstance(inst.id)" title="Delete integration">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div v-if="!showSetup && !instances.length" class="empty-msg" style="padding:2rem;text-align:center;background:var(--surface);border:1px dashed var(--border);border-radius:6px">
+        <i class="fas fa-plug" style="font-size:2rem;display:block;margin-bottom:.75rem;opacity:.3"></i>
+        No managed integrations yet.
+        <br>
+        <button class="btn btn-primary" style="margin-top:1rem" @click="showSetup = true">
+          <i class="fas fa-plus"></i> Add First Integration
+        </button>
+      </div>
     </div>
   </div>
 </template>

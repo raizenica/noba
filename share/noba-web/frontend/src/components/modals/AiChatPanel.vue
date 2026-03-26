@@ -174,15 +174,14 @@ function onKeydown(e) {
         <textarea
           ref="inputEl"
           v-model="input"
-          class="field-input ai-input"
+          class="ai-input"
           placeholder="Ask the AI Ops Assistant…"
-          rows="2"
-          style="resize:none;border-radius:6px;line-height:1.4"
+          rows="3"
           @keydown="onKeydown"
         />
         <button
           class="btn btn-primary"
-          style="height:52px;padding:0 .85rem;flex-shrink:0"
+          style="height:52px;padding:0 .85rem;flex-shrink:0;width:auto"
           :disabled="!input.trim() || sending"
           @click="send"
         >

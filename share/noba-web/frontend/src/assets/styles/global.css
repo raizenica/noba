@@ -1581,8 +1581,21 @@
 }
 .ai-input {
     flex: 1;
+    min-width: 0;
     font-size: .85rem;
+    font-family: var(--font-ui);
+    line-height: 1.45;
+    resize: none;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .5rem .75rem;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
 }
+.ai-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.ai-input::placeholder { color: var(--text-muted); }
 .ai-fab {
     position: fixed;
     bottom: 1.5rem;
