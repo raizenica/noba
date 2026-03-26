@@ -220,26 +220,30 @@ def _check_auto_update(hostname: str, body: dict, pending: list) -> None:
     if not agent_version or pending is None:
         return
     try:
-        server_agent_path = _WEB_DIR.parent / "noba-agent" / "agent.py"
+        import zipfile
+        server_agent_path = _WEB_DIR.parent / "noba-agent.pyz"
+        server_version = None
         if server_agent_path.exists():
-            with open(server_agent_path) as f:
-                for line in f:
-                    if line.startswith("VERSION"):
-                        server_version = line.split("=", 1)[1].strip().strip('"').strip("'")
-                        if server_version != agent_version:
-                            if not any(c.get("type") == "update_agent" for c in pending):
-                                pending.append({
-                                    "id": f"auto-update-{int(time.time())}",
-                                    "type": "update_agent",
-                                    "params": {},
-                                    "queued_by": "auto-update",
-                                    "queued_at": int(time.time()),
-                                })
-                                logger.info(
-                                    "Auto-update queued for %s: %s -> %s",
-                                    hostname, agent_version, server_version,
-                                )
-                        break
+            with zipfile.ZipFile(server_agent_path) as zf:
+                with zf.open("__main__.py") as f:
+                    for raw in f:
+                        line = raw.decode("utf-8", errors="replace")
+                        if line.startswith("VERSION"):
+                            server_version = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+        if server_version and server_version != agent_version:
+            if not any(c.get("type") == "update_agent" for c in pending):
+                pending.append({
+                    "id": f"auto-update-{int(time.time())}",
+                    "type": "update_agent",
+                    "params": {},
+                    "queued_by": "auto-update",
+                    "queued_at": int(time.time()),
+                })
+                logger.info(
+                    "Auto-update queued for %s: %s -> %s",
+                    hostname, agent_version, server_version,
+                )
     except HTTPException:
         raise
     except Exception:
