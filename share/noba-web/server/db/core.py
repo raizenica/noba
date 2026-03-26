@@ -66,8 +66,9 @@ def _run_alter_migrations(conn: sqlite3.Connection) -> None:
     for sql in migrations:
         try:
             conn.execute(sql)
-        except sqlite3.OperationalError:
-            pass  # column already exists
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                raise
 
 
 class DatabaseBase:

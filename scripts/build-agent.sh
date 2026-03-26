@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Build the NOBA agent zipapp (agent.pyz) from share/noba-agent/
-# Usage: bash scripts/build-agent.sh
+# Usage: bash scripts/build-agent.sh [--verbose]
 set -euo pipefail
+
+VERBOSE=false
+for arg in "$@"; do [[ "$arg" == "--verbose" ]] && VERBOSE=true; done
+_log() { [[ "$VERBOSE" == true ]] && echo "[build-agent] $*" || true; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -10,7 +14,7 @@ OUTPUT="$REPO_ROOT/share/noba-agent.pyz"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-echo "[build-agent] Building $OUTPUT from $AGENT_SRC ..."
+_log "Building $OUTPUT from $AGENT_SRC ..."
 
 # Verify __main__.py exists
 if [[ ! -f "$AGENT_SRC/__main__.py" ]]; then
@@ -28,5 +32,5 @@ python3 -m zipapp "$TMP_DIR" \
 chmod +x "$OUTPUT"
 # Also place a copy alongside install-agent.sh so manual installs work
 cp "$OUTPUT" "$AGENT_SRC/agent.pyz"
-echo "[build-agent] Done: $OUTPUT ($(du -sh "$OUTPUT" | cut -f1))"
-python3 "$OUTPUT" --version
+_log "Done: $OUTPUT ($(du -sh "$OUTPUT" | cut -f1))"
+_log "$(python3 "$OUTPUT" --version 2>&1)"
