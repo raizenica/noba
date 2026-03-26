@@ -26,5 +26,7 @@ python3 -m zipapp "$TMP_DIR" \
     -p "/usr/bin/env python3"
 
 chmod +x "$OUTPUT"
+# Also place a copy alongside install-agent.sh so manual installs work
+cp "$OUTPUT" "$AGENT_SRC/agent.pyz"
 echo "[build-agent] Done: $OUTPUT ($(du -sh "$OUTPUT" | cut -f1))"
 python3 "$OUTPUT" --version

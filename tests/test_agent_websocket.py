@@ -74,16 +74,18 @@ class TestWebSocketClient:
         )
         if agent_path not in sys.path:
             sys.path.insert(0, agent_path)
-        # Import the websocket module
-        if "websocket" in sys.modules:
-            mod = sys.modules["websocket"]
+        # Import the websocket module under a distinct key to avoid colliding
+        # with the websocket-client third-party package cached as "websocket".
+        MOD_KEY = "noba_agent_websocket"
+        if MOD_KEY in sys.modules:
+            mod = sys.modules[MOD_KEY]
         else:
             spec = importlib.util.spec_from_file_location(
-                "websocket",
+                MOD_KEY,
                 os.path.join(agent_path, "websocket.py"),
             )
             mod = importlib.util.module_from_spec(spec)
-            sys.modules["websocket"] = mod
+            sys.modules[MOD_KEY] = mod
             spec.loader.exec_module(mod)
         return mod._WebSocketClient
 
