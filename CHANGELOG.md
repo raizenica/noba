@@ -5,6 +5,8 @@ All notable changes to NOBA Command Center are documented in this file.
 ## [Unreleased]
 
 ### Security
+- **GitHub Actions least-privilege permissions** — All CI jobs in `test.yml` now declare `permissions: contents: read`; `update-repo.yml` declares `contents: write` (the minimum needed to push gh-pages). Eliminates broad default GITHUB_TOKEN scope on every workflow run.
+- **TLS 1.2 minimum enforced** — Four SSL contexts in `noba-agent/websocket.py`, `noba-agent/commands.py`, `server/scheduler.py`, and `server/metrics/network.py` now explicitly set `ctx.minimum_version = ssl.TLSVersion.TLSv1_2`, removing any platform-dependent TLS 1.0/1.1 fallback.
 - **picomatch 4.0.4** — Updated transitive dependency picomatch from 4.0.3 to 4.0.4 in frontend lock file, fixing CVE method injection via POSIX bracket expressions (CWE-1321) that could cause incorrect glob matching in security-relevant filtering logic.
 
 ### Added

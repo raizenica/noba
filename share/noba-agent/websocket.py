@@ -31,6 +31,7 @@ class _WebSocketClient:
         if parsed.scheme == "wss":
             import ssl
             ctx = ssl.create_default_context()
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             raw = ctx.wrap_socket(raw, server_hostname=host)
 
         ws_key = base64.b64encode(os.urandom(16)).decode()

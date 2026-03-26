@@ -1231,6 +1231,7 @@ def _cmd_endpoint_check(params: dict, _ctx: dict) -> dict:
             hostname = parsed.hostname or ""
             port = parsed.port or 443
             ctx_ssl = ssl.create_default_context()
+            ctx_ssl.minimum_version = ssl.TLSVersion.TLSv1_2
             with ctx_ssl.wrap_socket(
                 socket.socket(socket.AF_INET, socket.SOCK_STREAM),
                 server_hostname=hostname,

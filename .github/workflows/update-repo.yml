@@ -10,6 +10,8 @@ env:
 jobs:
   update-repo:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     concurrency:
       group: rpm-repository
       cancel-in-progress: false

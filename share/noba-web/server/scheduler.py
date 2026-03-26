@@ -523,6 +523,7 @@ def _run_endpoint_check(monitor: dict) -> dict:
             hostname = parsed.hostname or ""
             port = parsed.port or 443
             ctx = ssl.create_default_context()
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             with ctx.wrap_socket(
                 socket.socket(socket.AF_INET, socket.SOCK_STREAM),
                 server_hostname=hostname,

@@ -234,6 +234,7 @@ def check_cert_expiry(hosts: list[str]) -> list[dict]:
     for host in hosts:
         try:
             ctx = ssl.create_default_context()
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             with ctx.wrap_socket(_socket.socket(), server_hostname=host) as s:
                 s.settimeout(5)
                 s.connect((host, 443))
