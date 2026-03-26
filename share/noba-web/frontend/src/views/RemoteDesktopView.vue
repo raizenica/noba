@@ -366,8 +366,8 @@ onUnmounted(() => {
 }
 
 .rdp-canvas {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   outline: none;
   cursor: crosshair;
@@ -467,8 +467,4 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-/* Override global layout — remote desktop is fullscreen */
-:global(.app-content) {
-  padding: 0 !important;
-}
 </style>

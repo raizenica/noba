@@ -1,6 +1,6 @@
 <script setup>
-import { ref, provide, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useDashboardStore } from './stores/dashboard'
 import { useSettingsStore } from './stores/settings'
@@ -22,7 +22,10 @@ import AiChatPanel from './components/modals/AiChatPanel.vue'
 import AppModal from './components/ui/AppModal.vue'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
+
+const isStandalone = computed(() => !!route.meta?.standalone)
 const dashboard = useDashboardStore()
 const settings = useSettingsStore()
 const modals = useModalsStore()
@@ -117,7 +120,12 @@ watch(sidebarCollapsed, (val) => {
     :class="{ 'sidebar-collapsed': sidebarCollapsed, 'no-sidebar': !auth.authenticated }"
     :data-theme="settings.preferences.theme || 'default'"
   >
-    <template v-if="auth.authenticated">
+    <!-- Standalone routes (e.g. RDP viewer) — no chrome -->
+    <template v-if="isStandalone && auth.authenticated">
+      <router-view />
+    </template>
+
+    <template v-else-if="auth.authenticated">
       <AppSidebar />
       <AppHeader />
       <main class="app-content">
