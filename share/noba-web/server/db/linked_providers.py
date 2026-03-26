@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import sqlite3
 
 
 def _ensure_table(conn):
@@ -66,3 +67,35 @@ def find_user_by_provider(conn, lock, provider: str, email: str) -> str | None:
     except Exception:
         return None
     return row[0] if row else None
+
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS linked_providers (
+            username TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            provider_email TEXT NOT NULL,
+            provider_name TEXT DEFAULT '',
+            linked_at REAL NOT NULL,
+            PRIMARY KEY (username, provider)
+        );
+    """)
+
+
+class _LinkedProvidersMixin:
+    def get_linked_providers(self, username: str) -> dict:
+        return get_linked_providers(self._get_read_conn(), self._read_lock, username)
+
+    def link_provider(self, username: str, provider: str, email: str,
+                      name: str = "") -> None:
+        link_provider(self._get_conn(), self._lock, username, provider,
+                      email, name)
+
+    def unlink_provider(self, username: str, provider: str) -> bool:
+        return unlink_provider(self._get_conn(), self._lock, username,
+                               provider)
+
+    def find_user_by_provider(self, provider: str, email: str) -> str | None:
+        return find_user_by_provider(self._get_read_conn(), self._read_lock, provider,
+                                     email)

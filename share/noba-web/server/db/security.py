@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+import sqlite3
 
 
 def record_scan(conn, lock, hostname: str, score: int, findings: list[dict]) -> int | None:
@@ -143,3 +144,57 @@ def get_score_history(conn, lock, hostname: str | None = None,
     with lock:
         rows = conn.execute(sql, params).fetchall()
     return [{"hostname": r[0], "score": r[1], "scanned_at": r[2]} for r in rows]
+
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS security_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hostname TEXT NOT NULL,
+            category TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            description TEXT NOT NULL,
+            remediation TEXT,
+            score INTEGER,
+            found_at INTEGER,
+            resolved_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_findings_host
+            ON security_findings(hostname, found_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_sec_findings_sev
+            ON security_findings(severity);
+
+        CREATE TABLE IF NOT EXISTS security_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hostname TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            scanned_at INTEGER,
+            findings_json TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_scores_host
+            ON security_scores(hostname, scanned_at DESC);
+    """)
+
+
+class _SecurityMixin:
+    def record_security_scan(self, hostname: str, score: int,
+                             findings: list[dict]) -> int | None:
+        return record_scan(self._get_conn(), self._lock, hostname, score, findings)
+
+    def get_security_scores(self) -> list[dict]:
+        return get_latest_scores(self._get_read_conn(), self._read_lock)
+
+    def get_security_findings(self, hostname: str | None = None,
+                              severity: str | None = None,
+                              limit: int = 200) -> list[dict]:
+        return get_findings(self._get_read_conn(), self._read_lock,
+                            hostname=hostname, severity=severity, limit=limit)
+
+    def get_aggregate_security_score(self) -> dict:
+        return get_aggregate_score(self._get_read_conn(), self._read_lock)
+
+    def get_security_score_history(self, hostname: str | None = None,
+                                   limit: int = 50) -> list[dict]:
+        return get_score_history(self._get_read_conn(), self._read_lock,
+                                 hostname=hostname, limit=limit)

@@ -1096,3 +1096,254 @@ def _seed_default_playbooks(
             conn.commit()
     except Exception as e:
         logger.error("_seed_default_playbooks failed: %s", e)
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS automations (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            type       TEXT NOT NULL,
+            config     TEXT NOT NULL DEFAULT '{}',
+            schedule   TEXT,
+            enabled    INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS job_runs (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            automation_id TEXT,
+            trigger       TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'queued',
+            started_at    INTEGER,
+            finished_at   INTEGER,
+            exit_code     INTEGER,
+            output        TEXT,
+            triggered_by  TEXT,
+            error         TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_job_runs_auto
+            ON job_runs(automation_id, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_job_runs_status
+            ON job_runs(status);
+
+        CREATE TABLE IF NOT EXISTS approval_queue (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            automation_id   TEXT NOT NULL,
+            run_id          INTEGER,
+            trigger         TEXT NOT NULL,
+            trigger_source  TEXT,
+            action_type     TEXT NOT NULL,
+            action_params   TEXT NOT NULL DEFAULT '{}',
+            target          TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            requested_at    INTEGER NOT NULL,
+            requested_by    TEXT,
+            decided_at      INTEGER,
+            decided_by      TEXT,
+            auto_approve_at INTEGER,
+            result          TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_approval_queue_status
+            ON approval_queue(status, requested_at DESC);
+
+        CREATE TABLE IF NOT EXISTS maintenance_windows (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            name              TEXT NOT NULL,
+            schedule          TEXT,
+            duration_min      INTEGER NOT NULL DEFAULT 60,
+            one_off_start     INTEGER,
+            one_off_end       INTEGER,
+            suppress_alerts   INTEGER NOT NULL DEFAULT 1,
+            override_autonomy TEXT,
+            auto_close_alerts INTEGER NOT NULL DEFAULT 0,
+            enabled           INTEGER NOT NULL DEFAULT 1,
+            created_by        TEXT,
+            created_at        INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_maint_windows_enabled
+            ON maintenance_windows(enabled);
+
+        CREATE TABLE IF NOT EXISTS action_audit (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp       INTEGER NOT NULL,
+            trigger_type    TEXT NOT NULL,
+            trigger_id      TEXT,
+            action_type     TEXT NOT NULL,
+            action_params   TEXT,
+            target          TEXT,
+            outcome         TEXT NOT NULL,
+            duration_s      REAL,
+            output          TEXT,
+            approved_by     TEXT,
+            rollback_result TEXT,
+            error           TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_action_audit_ts
+            ON action_audit(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_action_audit_trigger_type
+            ON action_audit(trigger_type);
+        CREATE INDEX IF NOT EXISTS idx_action_audit_outcome
+            ON action_audit(outcome);
+
+        CREATE TABLE IF NOT EXISTS playbook_templates (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            description TEXT,
+            category    TEXT,
+            config      TEXT NOT NULL,
+            version     INTEGER NOT NULL DEFAULT 1
+        );
+    """)
+
+
+class _AutomationsMixin:
+    def insert_automation(self, auto_id: str, name: str, atype: str,
+                          config: dict, schedule: str | None = None,
+                          enabled: bool = True) -> bool:
+        return insert_automation(self._get_conn(), self._lock, auto_id, name, atype,
+                                 config, schedule=schedule, enabled=enabled)
+
+    def update_automation(self, auto_id: str, **kwargs) -> bool:
+        return update_automation(self._get_conn(), self._lock, auto_id, **kwargs)
+
+    def delete_automation(self, auto_id: str) -> bool:
+        return delete_automation(self._get_conn(), self._lock, auto_id)
+
+    def list_automations(self, type_filter: str | None = None) -> list[dict]:
+        return list_automations(self._get_read_conn(), self._read_lock, type_filter=type_filter)
+
+    def get_automation(self, auto_id: str) -> dict | None:
+        return get_automation(self._get_read_conn(), self._read_lock, auto_id)
+
+    def insert_job_run(self, automation_id: str | None, trigger: str,
+                       triggered_by: str) -> int | None:
+        return insert_job_run(self._get_conn(), self._lock, automation_id, trigger, triggered_by)
+
+    def update_job_run(self, run_id: int, status: str, output: str | None = None,
+                       exit_code: int | None = None, error: str | None = None) -> None:
+        update_job_run(self._get_conn(), self._lock, run_id, status,
+                       output=output, exit_code=exit_code, error=error)
+
+    def get_job_runs(self, automation_id: str | None = None, limit: int = 50,
+                     status: str | None = None, trigger_prefix: str | None = None) -> list[dict]:
+        return get_job_runs(self._get_read_conn(), self._read_lock, automation_id=automation_id,
+                            limit=limit, status=status, trigger_prefix=trigger_prefix)
+
+    def get_job_run(self, run_id: int) -> dict | None:
+        return get_job_run(self._get_read_conn(), self._read_lock, run_id)
+
+    def get_automation_stats(self) -> dict:
+        return get_automation_stats(self._get_read_conn(), self._read_lock)
+
+    def get_workflow_trace(self, workflow_auto_id: str, limit: int = 20) -> list[dict]:
+        return get_workflow_trace(self._get_read_conn(), self._read_lock, workflow_auto_id, limit=limit)
+
+    def prune_job_runs(self) -> None:
+        prune_job_runs(self._get_conn(), self._lock)
+
+    def mark_stale_jobs(self) -> None:
+        mark_stale_jobs(self._get_conn(), self._lock)
+
+    def insert_maintenance_window(self, **kwargs) -> int | None:
+        return _insert_maintenance_window(self._get_conn(), self._lock, **kwargs)
+
+    def list_maintenance_windows(self) -> list[dict]:
+        return _list_maintenance_windows(self._get_read_conn(), self._read_lock)
+
+    def update_maintenance_window(self, window_id: int, **kwargs) -> bool:
+        return _update_maintenance_window(self._get_conn(), self._lock, window_id, **kwargs)
+
+    def delete_maintenance_window(self, window_id: int) -> bool:
+        return _delete_maintenance_window(self._get_conn(), self._lock, window_id)
+
+    def get_active_maintenance_windows(self) -> list[dict]:
+        return _get_active_maintenance_windows(self._get_read_conn(), self._read_lock)
+
+    def insert_action_audit(
+        self,
+        trigger_type: str,
+        trigger_id: str | None,
+        action_type: str,
+        action_params: dict | None,
+        target: str | None,
+        outcome: str,
+        duration_s: float | None = None,
+        output: str | None = None,
+        approved_by: str | None = None,
+        rollback_result: str | None = None,
+        error: str | None = None,
+    ) -> int | None:
+        return _insert_action_audit(
+            self._get_conn(), self._lock,
+            trigger_type, trigger_id, action_type, action_params,
+            target, outcome, duration_s=duration_s, output=output,
+            approved_by=approved_by, rollback_result=rollback_result,
+            error=error,
+        )
+
+    def get_action_audit(
+        self,
+        limit: int = 100,
+        trigger_type: str | None = None,
+        outcome: str | None = None,
+    ) -> list[dict]:
+        return _get_action_audit(
+            self._get_read_conn(), self._read_lock,
+            limit=limit, trigger_type=trigger_type, outcome=outcome,
+        )
+
+    def list_playbook_templates(self) -> list[dict]:
+        return _list_playbook_templates(self._get_read_conn(), self._read_lock)
+
+    def get_playbook_template(self, template_id: str) -> dict | None:
+        return _get_playbook_template(self._get_read_conn(), self._read_lock, template_id)
+
+    def upsert_playbook_template(
+        self,
+        template_id: str,
+        name: str,
+        description: str | None,
+        category: str | None,
+        config: dict,
+        version: int = 1,
+    ) -> bool:
+        return _upsert_playbook_template(
+            self._get_conn(), self._lock,
+            template_id, name, description, category, config, version=version,
+        )
+
+    def init(self) -> None:
+        """No-op public alias kept for test compatibility (schema init runs in __init__)."""
+
+
+class _ApprovalsMixin:
+    def insert_approval(self, **kwargs) -> int | None:
+        return _insert_approval(self._get_conn(), self._lock, **kwargs)
+
+    def list_approvals(self, status: str = "pending") -> list[dict]:
+        return _list_approvals(self._get_read_conn(), self._read_lock, status)
+
+    def get_approval(self, approval_id: int) -> dict | None:
+        return _get_approval(self._get_read_conn(), self._read_lock, approval_id)
+
+    def decide_approval(self, approval_id: int, decision: str,
+                        decided_by: str) -> bool:
+        return _decide_approval(self._get_conn(), self._lock,
+                                approval_id, decision, decided_by)
+
+    def update_approval_result(self, approval_id: int, result: str) -> None:
+        _update_approval_result(self._get_conn(), self._lock, approval_id, result)
+
+    def auto_approve_expired(self) -> int:
+        return _auto_approve_expired(self._get_conn(), self._lock)
+
+    def count_pending_approvals(self) -> int:
+        return _count_pending_approvals(self._get_read_conn(), self._read_lock)
+
+    def save_workflow_context(self, approval_id: int, context: dict) -> bool:
+        return _save_workflow_context(self._get_conn(), self._lock, approval_id, context)
+
+    def get_workflow_context(self, approval_id: int) -> dict | None:
+        return _get_workflow_context(self._get_read_conn(), self._read_lock, approval_id)

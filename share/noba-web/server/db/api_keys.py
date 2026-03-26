@@ -98,3 +98,36 @@ def delete_api_key(
     except Exception as e:
         logger.error("delete_api_key failed: %s", e)
         return False
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            key_hash   TEXT NOT NULL,
+            role       TEXT NOT NULL DEFAULT 'viewer',
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            last_used  INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_keys_hash
+            ON api_keys(key_hash);
+    """)
+
+
+class _ApiKeysMixin:
+    def insert_api_key(self, key_id: str, name: str, key_hash: str,
+                       role: str, expires_at: int | None = None) -> None:
+        insert_api_key(self._get_conn(), self._lock, key_id, name, key_hash,
+                       role, expires_at=expires_at)
+
+    def get_api_key(self, key_hash: str) -> dict | None:
+        # NOTE: get_api_key updates last_used — it's a write operation
+        return get_api_key(self._get_conn(), self._lock, key_hash)
+
+    def list_api_keys(self) -> list[dict]:
+        return list_api_keys(self._get_read_conn(), self._read_lock)
+
+    def delete_api_key(self, key_id: str) -> bool:
+        return delete_api_key(self._get_conn(), self._lock, key_id)

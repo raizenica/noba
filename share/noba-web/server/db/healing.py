@@ -363,3 +363,69 @@ def dismiss_heal_suggestion(
             (now, suggestion_id),
         )
         conn.commit()
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS heal_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            correlation_key TEXT, rule_id TEXT, condition TEXT, target TEXT,
+            action_type TEXT, action_params TEXT, escalation_step INTEGER,
+            action_success INTEGER, verified INTEGER, duration_s REAL,
+            metrics_before TEXT, metrics_after TEXT, trust_level TEXT,
+            source TEXT, approval_id INTEGER, created_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_heal_ledger_lookup
+            ON heal_ledger(rule_id, condition, target, created_at);
+
+        CREATE TABLE IF NOT EXISTS trust_state (
+            rule_id TEXT PRIMARY KEY,
+            current_level TEXT DEFAULT 'notify', ceiling TEXT DEFAULT 'execute',
+            promoted_at INTEGER, demoted_at INTEGER,
+            promotion_count INTEGER DEFAULT 0, demotion_count INTEGER DEFAULT 0,
+            last_evaluated INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS heal_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT, severity TEXT, message TEXT, rule_id TEXT,
+            suggested_action TEXT, evidence TEXT,
+            dismissed INTEGER DEFAULT 0, created_at INTEGER, updated_at INTEGER,
+            UNIQUE(category, rule_id)
+        );
+    """)
+
+
+class _HealingMixin:
+    def insert_heal_outcome(self, **kw) -> int:
+        return insert_heal_outcome(self._get_conn(), self._lock, **kw)
+
+    def get_heal_outcomes(self, **kw) -> list[dict]:
+        return get_heal_outcomes(self._get_read_conn(), self._read_lock, **kw)
+
+    def get_heal_success_rate(self, action_type: str, condition: str, **kw) -> float:
+        return get_heal_success_rate(self._get_read_conn(), self._read_lock, action_type, condition, **kw)
+
+    def get_mean_time_to_resolve(self, condition: str, **kw) -> float | None:
+        return get_mean_time_to_resolve(self._get_read_conn(), self._read_lock, condition, **kw)
+
+    def get_escalation_frequency(self, rule_id: str, **kw) -> dict:
+        return get_escalation_frequency(self._get_read_conn(), self._read_lock, rule_id, **kw)
+
+    def upsert_trust_state(self, rule_id: str, current_level: str, ceiling: str) -> None:
+        upsert_trust_state(self._get_conn(), self._lock, rule_id, current_level, ceiling)
+
+    def get_trust_state(self, rule_id: str) -> dict | None:
+        return get_trust_state(self._get_read_conn(), self._read_lock, rule_id)
+
+    def list_trust_states(self) -> list[dict]:
+        return list_trust_states(self._get_read_conn(), self._read_lock)
+
+    def insert_heal_suggestion(self, **kw) -> int:
+        return insert_heal_suggestion(self._get_conn(), self._lock, **kw)
+
+    def list_heal_suggestions(self, **kw) -> list[dict]:
+        return list_heal_suggestions(self._get_read_conn(), self._read_lock, **kw)
+
+    def dismiss_heal_suggestion(self, suggestion_id: int) -> None:
+        dismiss_heal_suggestion(self._get_conn(), self._lock, suggestion_id)

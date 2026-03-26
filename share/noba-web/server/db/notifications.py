@@ -121,3 +121,39 @@ def get_unread_count(
     except Exception as e:
         logger.error("get_unread_count failed: %s", e)
         return 0
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp  INTEGER NOT NULL,
+            level      TEXT NOT NULL,
+            title      TEXT NOT NULL,
+            message    TEXT,
+            read       INTEGER NOT NULL DEFAULT 0,
+            username   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(username, read);
+    """)
+
+
+class _NotificationsMixin:
+    def insert_notification(self, level: str, title: str, message: str,
+                            username: str | None = None) -> None:
+        insert_notification(self._get_conn(), self._lock, level, title, message,
+                            username=username)
+
+    def get_notifications(self, username: str | None = None,
+                          unread_only: bool = False, limit: int = 50) -> list[dict]:
+        return get_notifications(self._get_read_conn(), self._read_lock, username=username,
+                                 unread_only=unread_only, limit=limit)
+
+    def mark_notification_read(self, notif_id: int, username: str) -> None:
+        mark_notification_read(self._get_conn(), self._lock, notif_id, username)
+
+    def mark_all_notifications_read(self, username: str) -> None:
+        mark_all_notifications_read(self._get_conn(), self._lock, username)
+
+    def get_unread_count(self, username: str) -> int:
+        return get_unread_count(self._get_read_conn(), self._read_lock, username)

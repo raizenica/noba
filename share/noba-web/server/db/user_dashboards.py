@@ -70,3 +70,26 @@ def get_user_dashboard(
     except Exception as e:
         logger.error("get_user_dashboard failed: %s", e)
         return None
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS user_dashboards (
+            username    TEXT PRIMARY KEY,
+            card_order  TEXT,
+            card_vis    TEXT,
+            card_theme  TEXT,
+            updated_at  INTEGER NOT NULL
+        );
+    """)
+
+
+class _UserDashboardsMixin:
+    def save_user_dashboard(self, username: str, card_order: list | None = None,
+                            card_vis: dict | None = None,
+                            card_theme: dict | None = None) -> None:
+        save_user_dashboard(self._get_conn(), self._lock, username,
+                            card_order=card_order, card_vis=card_vis, card_theme=card_theme)
+
+    def get_user_dashboard(self, username: str) -> dict | None:
+        return get_user_dashboard(self._get_read_conn(), self._read_lock, username)

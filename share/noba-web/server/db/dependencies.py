@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+import sqlite3
 
 logger = logging.getLogger("noba")
 
@@ -97,3 +98,39 @@ def get_impact_analysis(conn, lock, service_name: str) -> list[str]:
     except Exception as e:
         logger.error("get_impact_analysis failed: %s", e)
         return []
+
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS service_dependencies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_service TEXT NOT NULL,
+            target_service TEXT NOT NULL,
+            dependency_type TEXT DEFAULT 'requires',
+            auto_discovered INTEGER DEFAULT 0,
+            created_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_svc_deps_source
+            ON service_dependencies(source_service);
+        CREATE INDEX IF NOT EXISTS idx_svc_deps_target
+            ON service_dependencies(target_service);
+    """)
+
+
+class _DependenciesMixin:
+    def create_dependency(self, source: str, target: str, *,
+                          dependency_type: str = "requires",
+                          auto_discovered: bool = False) -> int | None:
+        return create_dependency(self._get_conn(), self._lock, source, target,
+                                 dependency_type=dependency_type,
+                                 auto_discovered=auto_discovered)
+
+    def list_dependencies(self) -> list[dict]:
+        return list_dependencies(self._get_read_conn(), self._read_lock)
+
+    def delete_dependency(self, dep_id: int) -> bool:
+        return delete_dependency(self._get_conn(), self._lock, dep_id)
+
+    def get_impact_analysis(self, service_name: str) -> list[str]:
+        return get_impact_analysis(self._get_read_conn(), self._read_lock, service_name)

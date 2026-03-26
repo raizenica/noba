@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+import sqlite3
 
 logger = logging.getLogger("noba")
 
@@ -117,3 +118,39 @@ def delete_dashboard(conn, lock, dashboard_id: int) -> bool:
     except Exception as e:
         logger.error("delete_dashboard failed: %s", e)
         return False
+
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS custom_dashboards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            shared INTEGER DEFAULT 0,
+            created_at INTEGER,
+            updated_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_custom_dashboards_owner
+            ON custom_dashboards(owner);
+    """)
+
+
+class _DashboardsMixin:
+    def create_dashboard(self, name: str, owner: str, config_json: str,
+                         *, shared: bool = False) -> int | None:
+        return create_dashboard(self._get_conn(), self._lock, name, owner,
+                                config_json, shared=shared)
+
+    def get_dashboards(self, owner: str | None = None) -> list[dict]:
+        return get_dashboards(self._get_read_conn(), self._read_lock, owner=owner)
+
+    def get_dashboard(self, dashboard_id: int) -> dict | None:
+        return get_dashboard(self._get_read_conn(), self._read_lock, dashboard_id)
+
+    def update_dashboard(self, dashboard_id: int, **kwargs) -> bool:
+        return update_dashboard(self._get_conn(), self._lock, dashboard_id, **kwargs)
+
+    def delete_dashboard(self, dashboard_id: int) -> bool:
+        return delete_dashboard(self._get_conn(), self._lock, dashboard_id)
