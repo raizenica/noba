@@ -975,8 +975,8 @@ def _rdp_clipboard_env() -> tuple:
 
 def _rdp_clipboard_get() -> str:
     """Read the active desktop clipboard and return as a string."""
-    env, preexec_fn = _rdp_clipboard_env()
     if _PLATFORM == "linux":
+        env, preexec_fn = _rdp_clipboard_env()
         for cmd in (["wl-paste", "--no-newline"], ["xclip", "-selection", "clipboard", "-o"],
                     ["xsel", "--clipboard", "--output"]):
             try:
@@ -1004,8 +1004,8 @@ def _rdp_clipboard_get() -> str:
 
 def _rdp_clipboard_paste(text: str) -> None:
     """Set the remote clipboard to text and inject Ctrl+V to paste it."""
-    env, preexec_fn = _rdp_clipboard_env()
     if _PLATFORM == "linux":
+        env, preexec_fn = _rdp_clipboard_env()
         for cmd, stdin in (
             (["wl-copy", "--"], None),
             (["xclip", "-selection", "clipboard"], text.encode()),
@@ -1020,9 +1020,13 @@ def _rdp_clipboard_paste(text: str) -> None:
                 continue
     elif _PLATFORM == "windows":
         try:
-            subprocess.run(["powershell", "-noprofile", "-c",
-                            f"Set-Clipboard -Value {repr(text)}"],
-                           timeout=3, check=False)
+            # Pass text via stdin to avoid PowerShell injection via repr(text)
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "[Console]::In.ReadToEnd() | Set-Clipboard"],
+                input=text.encode("utf-8", errors="replace"),
+                timeout=3, check=False,
+            )
         except Exception:
             pass
     elif _PLATFORM == "darwin":
