@@ -59,3 +59,18 @@ jobs:
 
       - name: ShellCheck
         run: shellcheck -S warning install.sh scripts/*.sh
+
+  tests:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, shellcheck]
+    if: always()
+    steps:
+      - name: All checks passed
+        run: |
+          if [ "${{ needs.backend.result }}" != "success" ] || \
+             [ "${{ needs.frontend.result }}" != "success" ] || \
+             [ "${{ needs.shellcheck.result }}" != "success" ]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+          echo "All checks passed"
