@@ -14,7 +14,7 @@ const routes = [
   { path: '/security', name: 'security', component: () => import('../views/SecurityView.vue') },
   { path: '/settings/:tab?', name: 'settings', component: () => import('../views/SettingsView.vue') },
   { path: '/remote', name: 'remote', component: () => import('../views/RemoteView.vue') },
-  { path: '/remote/:hostname', name: 'remote-desktop', component: () => import('../views/RemoteDesktopView.vue') },
+  { path: '/remote/:hostname', name: 'remote-desktop', component: () => import('../views/RemoteDesktopView.vue'), meta: { standalone: true } },
 ]
 
 const router = createRouter({

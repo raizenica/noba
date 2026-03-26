@@ -278,9 +278,14 @@ onMounted(() => {
         <div style="font-size:.7rem;color:var(--text-muted)">
           <div>{{ a.platform }} &middot; {{ a.arch || '' }}</div>
           <div v-if="a.uptime_s">Uptime: {{ Math.floor((a.uptime_s||0)/3600) }}h</div>
-          <div style="display:flex;justify-content:space-between">
+          <div style="display:flex;justify-content:space-between;align-items:center">
             <span>Last seen: {{ lastSeenLabel(a.last_seen_s) }}</span>
-            <span v-if="a.agent_version" style="opacity:.5">v{{ a.agent_version }}</span>
+            <span
+              v-if="a.agent_version"
+              class="badge bw"
+              style="font-size:.55rem;font-family:monospace;padding:.1rem .3rem"
+              title="Agent version"
+            >v{{ a.agent_version }}</span>
           </div>
         </div>
 

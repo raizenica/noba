@@ -149,7 +149,7 @@ SECURITY_HEADERS = {
         "default-src 'self'; "
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
-        "font-src 'self'; "
+        "font-src 'self' data:; "
         "img-src 'self' data: blob:; connect-src 'self' wss: ws:"
     ),
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",

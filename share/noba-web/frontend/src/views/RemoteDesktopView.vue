@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useNotificationsStore } from '../stores/notifications'
@@ -18,12 +18,19 @@ const frameCount = ref(0)
 const frameW = ref(0)
 const frameH = ref(0)
 const quality = ref(70)
-const fps = ref(5)
-const inputEnabled = ref(auth.isOperator)
+const fps = ref(10)
+// Writable computed so it stays reactive to auth role (role loads async in new tabs)
+const _inputToggle = ref(true)
+const inputEnabled = computed({
+  get: () => _inputToggle.value && auth.isOperator,
+  set: (v) => { _inputToggle.value = v },
+})
 const showToolbar = ref(true)
+const isPopup = !!window.opener
 
 let ws = null
 let toolbarTimeout = null
+let lastMoveTime = 0
 
 // ── WebSocket connection ──────────────────────────────────────────────────────
 
@@ -95,7 +102,9 @@ async function drawFrame(b64data) {
   const binary = atob(b64data)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  const blob = new Blob([bytes], { type: 'image/png' })
+  // Sniff format: JPEG starts with 0xFF 0xD8, everything else assumed PNG
+  const mime = bytes[0] === 0xFF ? 'image/jpeg' : 'image/png'
+  const blob = new Blob([bytes], { type: mime })
 
   try {
     const bitmap = await createImageBitmap(blob)
@@ -123,11 +132,15 @@ async function drawFrame(b64data) {
 
 function disconnect() {
   if (ws) {
-    ws.send(JSON.stringify({ type: 'rdp_stop' }))
+    try { ws.send(JSON.stringify({ type: 'rdp_stop' })) } catch { /* ignore */ }
     ws.close()
     ws = null
   }
-  router.push({ name: 'remote' })
+  if (window.opener) {
+    window.close()
+  } else {
+    router.push({ name: 'remote' })
+  }
 }
 
 // ── Input injection ───────────────────────────────────────────────────────────
@@ -136,9 +149,25 @@ function canvasCoords(e) {
   const canvas = canvasEl.value
   if (!canvas) return { x: 0, y: 0 }
   const rect = canvas.getBoundingClientRect()
+  // object-fit: contain letterboxes the canvas content inside the CSS box.
+  // Compute the actual content rect to get accurate coords.
+  const canvasAspect = canvas.width / canvas.height
+  const boxAspect = rect.width / rect.height
+  let contentW, contentH, offsetX, offsetY
+  if (canvasAspect > boxAspect) {
+    contentW = rect.width
+    contentH = rect.width / canvasAspect
+    offsetX = 0
+    offsetY = (rect.height - contentH) / 2
+  } else {
+    contentH = rect.height
+    contentW = rect.height * canvasAspect
+    offsetX = (rect.width - contentW) / 2
+    offsetY = 0
+  }
   return {
-    x: (e.clientX - rect.left) / rect.width,
-    y: (e.clientY - rect.top) / rect.height,
+    x: Math.max(0, Math.min(1, (e.clientX - rect.left - offsetX) / contentW)),
+    y: Math.max(0, Math.min(1, (e.clientY - rect.top - offsetY) / contentH)),
   }
 }
 
@@ -148,9 +177,12 @@ function sendInput(payload) {
 }
 
 function onMouseMove(e) {
+  showToolbarBriefly()
+  const now = Date.now()
+  if (now - lastMoveTime < 50) return  // ~20 Hz
+  lastMoveTime = now
   const { x, y } = canvasCoords(e)
   sendInput({ event: 'mousemove', x, y })
-  showToolbarBriefly()
 }
 
 function onMouseDown(e) {
@@ -264,8 +296,8 @@ onUnmounted(() => {
         <button v-if="status !== 'connecting'" class="btn btn-primary" style="margin-top:1rem" @click="connect">
           Reconnect
         </button>
-        <button class="btn" style="margin-top:.5rem" @click="router.push({ name: 'remote' })">
-          Back to list
+        <button class="btn" style="margin-top:.5rem" @click="disconnect()">
+          {{ isPopup ? 'Close window' : 'Back to list' }}
         </button>
       </div>
     </div>
@@ -361,8 +393,8 @@ onUnmounted(() => {
 }
 
 .rdp-canvas {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   outline: none;
   cursor: crosshair;
@@ -462,8 +494,4 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-/* Override global layout — remote desktop is fullscreen */
-:global(.app-content) {
-  padding: 0 !important;
-}
 </style>

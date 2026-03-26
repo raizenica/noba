@@ -146,7 +146,8 @@ function onDrop(targetHostname) {
 
 // ── Connect ───────────────────────────────────────────────────────────────────
 function connect(hostname) {
-  router.push({ name: 'remote-desktop', params: { hostname } })
+  const url = window.location.origin + window.location.pathname + '#/remote/' + encodeURIComponent(hostname)
+  window.open(url, `rdp_${hostname}`)
 }
 
 function platformIcon(platform) {

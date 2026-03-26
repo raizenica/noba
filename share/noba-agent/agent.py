@@ -33,7 +33,7 @@ import urllib.parse
 import urllib.request
 
 # ── Configuration ────────────────────────────────────────────────────────────
-VERSION = "2.4.16"
+VERSION = "2.4.28"
 DEFAULT_INTERVAL = 30
 DEFAULT_CONFIG = (
     os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"), "noba-agent", "agent.yaml")
@@ -2585,6 +2585,11 @@ _rdp_frame_queue: _queue.Queue = _queue.Queue(maxsize=2)
 _rdp_active = threading.Event()
 _rdp_lock = threading.Lock()
 _rdp_thread: threading.Thread | None = None
+_mutter_proc: "subprocess.Popen | None" = None
+_mutter_proc_lock = threading.Lock()
+# Serialises all writes to the subprocess stdin (and CAPTURE read cycles).
+# Without this, concurrent inject + capture writes corrupt the command stream.
+_mutter_io_lock = threading.Lock()
 
 # Cached ctypes state (loaded once per process)
 _rdp_x11_lib = None
@@ -3145,99 +3150,98 @@ def _capture_screen_gnome() -> tuple | None:
     return None
 
 
-def _capture_screen_pipewire() -> tuple | None:
-    """Capture via Mutter ScreenCast D-Bus + PipeWire + GStreamer.
-
-    Works on headless GNOME Wayland where grim/gnome-screenshot fail (no wl_output,
-    no physical displays). Creates a virtual screencast session, links pipewiresrc
-    via WirePlumber's node.target property, and grabs one RGB frame.
-    """
-    import subprocess
-    uid, gid, home, _, _ = _rdp_display_owner()
-    bus_path = f"/run/user/{uid}/bus"
-    pipewire_sock = f"/run/user/{uid}/pipewire-0"
-    if not os.path.exists(bus_path) or not os.path.exists(pipewire_sock):
-        return None
-    env = os.environ.copy()
-    env["HOME"] = home
-    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
-    env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
-    env["PIPEWIRE_RUNTIME_DIR"] = f"/run/user/{uid}"
-    preexec = None
-    if os.getuid() == 0 and uid != 0:
-        _uid, _gid = uid, gid
-        def preexec():
-            os.setgid(_gid)
-            os.setuid(_uid)
-    script = '''
-import sys, os, struct, zlib
-try:
-    import gi
-    gi.require_version("Gio", "2.0")
-    gi.require_version("GLib", "2.0")
-    gi.require_version("Gst", "1.0")
-    from gi.repository import Gio, GLib, Gst
-except Exception as e:
-    print("GI_UNAVAILABLE:" + str(e), file=sys.stderr)
-    sys.exit(1)
+_MUTTER_SESSION_SCRIPT = r'''
+import sys, os, json, threading, struct, gi
+gi.require_version("Gio", "2.0")
+gi.require_version("GLib", "2.0")
+gi.require_version("Gst", "1.0")
+from gi.repository import Gio, GLib, Gst
 Gst.init(None)
-if not Gst.ElementFactory.find("pipewiresrc"):
-    print("NO_PIPEWIRESRC", file=sys.stderr)
-    sys.exit(1)
-loop = GLib.MainLoop()
-state = {"frame": None, "pipeline": None}
+main_loop = GLib.MainLoop()
+state = {"rgb": None, "rd_path": None, "sc_stream": None, "ready": False, "width": 1920, "height": 1080}
+state_lock = threading.Lock()
 bus_addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
 try:
-    dbus = Gio.DBusConnection.new_for_address_sync(
+    dbus_conn = Gio.DBusConnection.new_for_address_sync(
         bus_addr,
         Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
         None, None)
-    rd = dbus.call_sync("org.gnome.Mutter.RemoteDesktop", "/org/gnome/Mutter/RemoteDesktop",
+    rd = dbus_conn.call_sync("org.gnome.Mutter.RemoteDesktop", "/org/gnome/Mutter/RemoteDesktop",
         "org.gnome.Mutter.RemoteDesktop", "CreateSession",
         None, GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, -1, None)
     rd_path = rd.get_child_value(0).get_string()
-    props = dbus.call_sync("org.gnome.Mutter.RemoteDesktop", rd_path,
+    state["rd_path"] = rd_path
+    props = dbus_conn.call_sync("org.gnome.Mutter.RemoteDesktop", rd_path,
         "org.freedesktop.DBus.Properties", "GetAll",
         GLib.Variant("(s)", ("org.gnome.Mutter.RemoteDesktop.Session",)),
         GLib.VariantType("(a{sv})"), Gio.DBusCallFlags.NONE, -1, None)
     sid = props.get_child_value(0).lookup_value("SessionId", None).get_string()
-    sc = dbus.call_sync("org.gnome.Mutter.ScreenCast", "/org/gnome/Mutter/ScreenCast",
+    sc = dbus_conn.call_sync("org.gnome.Mutter.ScreenCast", "/org/gnome/Mutter/ScreenCast",
         "org.gnome.Mutter.ScreenCast", "CreateSession",
         GLib.Variant("(a{sv})", ({"remote-desktop-session-id": GLib.Variant("s", sid)},)),
         GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, -1, None)
     sc_path = sc.get_child_value(0).get_string()
-    stream = dbus.call_sync("org.gnome.Mutter.ScreenCast", sc_path,
-        "org.gnome.Mutter.ScreenCast.Session", "RecordVirtual",
-        GLib.Variant("(a{sv})", ({"cursor-mode": GLib.Variant("u", 0), "is-recording": GLib.Variant("b", True)},)),
-        GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, -1, None)
-    stream_path = stream.get_child_value(0).get_string()
+    stream_path = None
+    try:
+        dcfg = dbus_conn.call_sync("org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
+            "org.gnome.Mutter.DisplayConfig", "GetCurrentState",
+            None, GLib.VariantType("(ua((ssss)a(siiddada{sv})a{sv})a(iiduba(ssss)a{sv})a{sv})"),
+            Gio.DBusCallFlags.NONE, -1, None)
+        monitors = dcfg.get_child_value(1)
+        for i in range(monitors.n_children()):
+            connector = monitors.get_child_value(i).get_child_value(0).get_child_value(0).get_string()
+            try:
+                s = dbus_conn.call_sync("org.gnome.Mutter.ScreenCast", sc_path,
+                    "org.gnome.Mutter.ScreenCast.Session", "RecordMonitor",
+                    GLib.Variant("(sa{sv})", (connector, {"cursor-mode": GLib.Variant("u", 1)})),
+                    GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, -1, None)
+                stream_path = s.get_child_value(0).get_string()
+                break
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if not stream_path:
+        s = dbus_conn.call_sync("org.gnome.Mutter.ScreenCast", sc_path,
+            "org.gnome.Mutter.ScreenCast.Session", "RecordVirtual",
+            GLib.Variant("(a{sv})", ({"cursor-mode": GLib.Variant("u", 0), "is-recording": GLib.Variant("b", True)},)),
+            GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, -1, None)
+        stream_path = s.get_child_value(0).get_string()
+    state["sc_stream"] = stream_path
 except Exception as e:
-    print("MUTTER_ERROR:" + str(e), file=sys.stderr)
+    print("MUTTER_ERROR:" + str(e), file=sys.stderr, flush=True)
     sys.exit(1)
-def _on_signal(conn, sender, obj_path, iface, sig, params, userdata):
-    if sig == "PipeWireStreamAdded":
-        nid = params.get_child_value(0).get_uint32()
-        GLib.idle_add(lambda: _start(nid) or False)
-dbus.signal_subscribe(None, None, "PipeWireStreamAdded", stream_path,
-    None, Gio.DBusSignalFlags.NONE, _on_signal, None)
-try:
-    dbus.call_sync("org.gnome.Mutter.RemoteDesktop", rd_path,
-        "org.gnome.Mutter.RemoteDesktop.Session", "Start",
-        None, None, Gio.DBusCallFlags.NONE, -1, None)
-except Exception as e:
-    print("START_ERROR:" + str(e), file=sys.stderr)
-    sys.exit(1)
-def _start(nid):
-    pipeline = Gst.Pipeline.new("cap")
+
+def _on_sample(sink):
+    sample = sink.emit("pull-sample")
+    buf = sample.get_buffer()
+    caps = sample.get_caps()
+    s = caps.get_structure(0)
+    w = s.get_int("width")[1]; h = s.get_int("height")[1]
+    data = buf.extract_dup(0, buf.get_size())
+    with state_lock:
+        state["rgb"] = bytes(data[:w * h * 3])
+        state["width"] = w
+        state["height"] = h
+        if not state["ready"]:
+            state["ready"] = True
+            print("READY", file=sys.stderr, flush=True)
+    return Gst.FlowReturn.OK
+
+def _on_gst_bus(bus, msg):
+    if msg.type == Gst.MessageType.ERROR:
+        err, _ = msg.parse_error()
+        print("GST_ERROR:" + str(err), file=sys.stderr, flush=True)
+
+def _start_pipeline(nid):
+    pipeline = Gst.Pipeline.new("rdp")
     src = Gst.ElementFactory.make("pipewiresrc", "src")
     conv = Gst.ElementFactory.make("videoconvert", "conv")
     sink = Gst.ElementFactory.make("appsink", "sink")
     sp, _ = Gst.Structure.from_string(
-        "props,node.target=(string)" + str(nid) + ","
-        "media.class=(string)Stream/Input/Video,"
-        "media.type=(string)Video,"
-        "media.category=(string)Capture"
-    )
+        "props,node.target=(string)" + str(nid) +
+        ",media.class=(string)Stream/Input/Video"
+        ",media.type=(string)Video,media.category=(string)Capture")
     src.set_property("stream-properties", sp)
     src.set_property("client-name", "noba-agent")
     sink.set_property("sync", False)
@@ -3248,61 +3252,253 @@ def _start(nid):
     pipeline.add(src); pipeline.add(conv); pipeline.add(sink)
     src.link(conv)
     conv.link_filtered(sink, Gst.Caps.from_string("video/x-raw,format=RGB"))
-    state["pipeline"] = pipeline
     gbus = pipeline.get_bus()
     gbus.add_signal_watch()
-    gbus.connect("message", _on_bus)
+    gbus.connect("message", _on_gst_bus)
     pipeline.set_state(Gst.State.PLAYING)
-def _on_bus(b, msg):
-    if msg.type == Gst.MessageType.ERROR:
-        loop.quit()
-def _on_sample(sink):
-    sample = sink.emit("pull-sample")
-    buf = sample.get_buffer()
-    caps = sample.get_caps()
-    s = caps.get_structure(0)
-    w = s.get_int("width")[1]; h = s.get_int("height")[1]
-    data = buf.extract_dup(0, buf.get_size())
-    _NUL = bytes([0])
-    raw = b"".join(_NUL + bytes(data[y*w*3:(y+1)*w*3]) for y in range(h))
-    def _chunk(t, d):
-        c = struct.pack(">I", len(d)) + t + d
-        return c + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
-    _PNG_SIG = bytes([137, 80, 78, 71, 13, 10, 26, 10])
-    state["frame"] = (
-        _PNG_SIG +
-        _chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) +
-        _chunk(b"IDAT", zlib.compress(raw, 1)) +
-        _chunk(b"IEND", b"")
-    )
-    loop.quit()
-    return Gst.FlowReturn.OK
-def _timeout():
-    loop.quit()
-    return False
-GLib.timeout_add_seconds(12, _timeout)
-loop.run()
-if state["frame"]:
-    sys.stdout.buffer.write(state["frame"])
-    sys.exit(0)
-sys.exit(1)
-'''
+    state["pipeline"] = pipeline
+
+def _on_dbus_signal(conn, sender, obj_path, iface, sig, params, ud):
+    if sig == "PipeWireStreamAdded":
+        nid = params.get_child_value(0).get_uint32()
+        GLib.idle_add(lambda: _start_pipeline(nid) or False)
+
+dbus_conn.signal_subscribe(None, None, "PipeWireStreamAdded", stream_path,
+    None, Gio.DBusSignalFlags.NONE, _on_dbus_signal, None)
+dbus_conn.call_sync("org.gnome.Mutter.RemoteDesktop", rd_path,
+    "org.gnome.Mutter.RemoteDesktop.Session", "Start",
+    None, None, Gio.DBusCallFlags.NONE, -1, None)
+
+def _inject(ev):
+    rd = state.get("rd_path")
+    sc = state.get("sc_stream")
+    if not rd:
+        return
+    evt = ev.get("event", "")
     try:
-        r = subprocess.run(
-            [sys.executable, "-c", script],
-            env=env, preexec_fn=preexec,
-            capture_output=True, timeout=15,
+        if evt == "mousemove" and sc:
+            with state_lock:
+                sw, sh = state["width"], state["height"]
+            x = float(ev.get("x", 0)) * sw
+            y = float(ev.get("y", 0)) * sh
+            dbus_conn.call_sync("org.gnome.Mutter.RemoteDesktop", rd,
+                "org.gnome.Mutter.RemoteDesktop.Session", "NotifyPointerMotionAbsolute",
+                GLib.Variant("(sdd)", (sc, x, y)),
+                None, Gio.DBusCallFlags.NONE, 100, None)
+        elif evt in ("mousedown", "mouseup"):
+            # Mutter uses Linux kernel button codes, not X11 button numbers
+            _btn_map = {1: 272, 2: 274, 3: 273}  # left, middle, right
+            btn = _btn_map.get(int(ev.get("button", 1)), 272)
+            dbus_conn.call_sync("org.gnome.Mutter.RemoteDesktop", rd,
+                "org.gnome.Mutter.RemoteDesktop.Session", "NotifyPointerButton",
+                GLib.Variant("(ib)", (btn, evt == "mousedown")),
+                None, Gio.DBusCallFlags.NONE, 100, None)
+        elif evt == "wheel":
+            steps = -1 if float(ev.get("delta_y", 0)) > 0 else 1
+            dbus_conn.call_sync("org.gnome.Mutter.RemoteDesktop", rd,
+                "org.gnome.Mutter.RemoteDesktop.Session", "NotifyPointerAxisDiscrete",
+                GLib.Variant("(ui)", (0, steps)),
+                None, Gio.DBusCallFlags.NONE, 100, None)
+        elif evt in ("keydown", "keyup"):
+            kc = int(ev.get("keycode", 0))
+            dbus_conn.call_sync("org.gnome.Mutter.RemoteDesktop", rd,
+                "org.gnome.Mutter.RemoteDesktop.Session", "NotifyKeyboardKeycode",
+                GLib.Variant("(ub)", (kc, evt == "keydown")),
+                None, Gio.DBusCallFlags.NONE, 100, None)
+    except Exception as e:
+        print("INJECT_ERR:" + str(e), file=sys.stderr, flush=True)
+
+def _cmd_loop():
+    import select as _sel2
+    for line in sys.stdin:
+        cmd = line.strip()
+        if cmd == "CAPTURE":
+            with state_lock:
+                rgb = state.get("rgb")
+                w, h = state["width"], state["height"]
+            if rgb:
+                # NOBR = NOBA Raw: 4-byte magic + 4-byte w + 4-byte h + raw RGB bytes
+                sys.stdout.buffer.write(b"NOBR" + struct.pack(">II", w, h) + rgb)
+            else:
+                sys.stdout.buffer.write(b"NONE")
+            sys.stdout.buffer.flush()
+        elif cmd == "STOP":
+            GLib.idle_add(main_loop.quit)
+            break
+        elif cmd:
+            try:
+                ev = json.loads(cmd)
+                # Coalesce stale mousemove events: drain all pending lines from
+                # stdin and keep only the last mousemove, then process it.
+                if ev.get("event") == "mousemove":
+                    while _sel2.select([sys.stdin], [], [], 0)[0]:
+                        peek = sys.stdin.readline().strip()
+                        if not peek:
+                            break
+                        try:
+                            pev = json.loads(peek)
+                            if pev.get("event") == "mousemove":
+                                ev = pev  # discard stale, keep newer
+                            else:
+                                _inject(ev)  # flush pending move first
+                                ev = pev
+                        except Exception:
+                            break
+                _inject(ev)
+            except Exception:
+                pass
+
+threading.Thread(target=_cmd_loop, daemon=True).start()
+main_loop.run()
+'''
+
+
+def _mutter_subprocess_start(uid: int, gid: int, home: str) -> "subprocess.Popen | None":
+    """Launch the persistent Mutter session subprocess. Returns proc if READY, else None."""
+    import select as _sel
+    env = os.environ.copy()
+    env["HOME"] = home
+    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{uid}/bus"
+    env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
+    env["PIPEWIRE_RUNTIME_DIR"] = f"/run/user/{uid}"
+    preexec_fn = None
+    if os.getuid() == 0 and uid != 0:
+        _uid, _gid = uid, gid
+        def preexec_fn():
+            os.setgid(_gid)
+            os.setuid(_uid)
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", _MUTTER_SESSION_SCRIPT],
+            env=env, preexec_fn=preexec_fn,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        if r.returncode == 0 and r.stdout:
-            result = _rdp_decode_png(r.stdout)
-            if result:
-                print(f"[agent-rdp] captured via pipewire/mutter {result[0]}x{result[1]}", file=sys.stderr)
-                return result
-        if r.stderr:
-            print(f"[agent-rdp] pipewire: {r.stderr[:200]!r}", file=sys.stderr)
+        deadline = time.monotonic() + 12.0
+        while time.monotonic() < deadline:
+            remaining = max(0.05, deadline - time.monotonic())
+            rlist = _sel.select([proc.stderr], [], [], min(remaining, 0.5))[0]
+            if rlist:
+                line = proc.stderr.readline()
+                if line:
+                    msg = line.decode("utf-8", errors="replace").strip()
+                    print(f"[agent-rdp] mutter: {msg}", file=sys.stderr)
+                    if msg == "READY":
+                        # Start a daemon thread to drain stderr so the buffer
+                        # never blocks and subprocess messages stay visible.
+                        def _drain(p: "subprocess.Popen") -> None:
+                            try:
+                                for ln in p.stderr:
+                                    print(f"[agent-rdp] mutter: {ln.decode('utf-8', errors='replace').rstrip()}", file=sys.stderr)
+                            except Exception:
+                                pass
+                        threading.Thread(target=_drain, args=(proc,), daemon=True).start()
+                        return proc
+                    if "ERROR" in msg:
+                        proc.kill()
+                        return None
+            if proc.poll() is not None:
+                return None
+        proc.kill()
+        return None
+    except Exception as e:
+        print(f"[agent-rdp] mutter start error: {e}", file=sys.stderr)
+        return None
+
+
+def _mutter_ensure(uid: int, gid: int, home: str) -> bool:
+    """Ensure the Mutter session subprocess is running. Returns True if ready."""
+    global _mutter_proc
+    with _mutter_proc_lock:
+        if _mutter_proc is not None and _mutter_proc.poll() is None:
+            return True
+    proc = _mutter_subprocess_start(uid, gid, home)
+    if proc is None:
+        return False
+    with _mutter_proc_lock:
+        if _mutter_proc is not None and _mutter_proc.poll() is None:
+            proc.kill()  # lost the race
+        else:
+            _mutter_proc = proc
+    return True
+
+
+def _mutter_stop() -> None:
+    """Stop the persistent Mutter session subprocess."""
+    global _mutter_proc
+    with _mutter_proc_lock:
+        proc = _mutter_proc
+        _mutter_proc = None
+    if proc is not None:
+        try:
+            proc.stdin.write(b"STOP\n")
+            proc.stdin.flush()
+        except Exception:
+            pass
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _capture_screen_pipewire() -> tuple | None:
+    """Capture via persistent Mutter ScreenCast D-Bus + PipeWire + GStreamer session.
+
+    Works on GNOME Wayland (headless or physical display). A long-lived subprocess
+    holds the RemoteDesktop+ScreenCast session for both capture and input injection.
+    """
+    import select as _sel
+    import struct
+    uid, gid, home, _, _ = _rdp_display_owner()
+    bus_path = f"/run/user/{uid}/bus"
+    pipewire_sock = f"/run/user/{uid}/pipewire-0"
+    if not os.path.exists(bus_path) or not os.path.exists(pipewire_sock):
+        return None
+    if not _mutter_ensure(uid, gid, home):
+        return None
+    with _mutter_proc_lock:
+        proc = _mutter_proc
+    if proc is None or proc.poll() is not None:
+        return None
+    try:
+        # Hold the lock only for the write — pipe writes ≤ PIPE_BUF are atomic,
+        # but we still serialise to prevent inject JSON landing before CAPTURE.
+        # The read happens outside the lock so inject writes aren't blocked while
+        # we wait for the PNG (up to 2 s).
+        with _mutter_io_lock:
+            proc.stdin.write(b"CAPTURE\n")
+            proc.stdin.flush()
+        ready = _sel.select([proc.stdout], [], [], 2.0)[0]
+        if not ready:
+            return None
+        magic = proc.stdout.read(4)
+        if magic == b"NONE":
+            return None
+        if magic == b"NOBR":
+            # Raw RGB: 4-byte w + 4-byte h + w*h*3 raw bytes
+            dims = proc.stdout.read(8)
+            if len(dims) < 8:
+                return None
+            w, h = struct.unpack(">II", dims)
+            size = w * h * 3
+            if size > 15_000_000:
+                return None
+            rgb = proc.stdout.read(size)
+            if len(rgb) < size:
+                return None
+            return (w, h, rgb)
+        if magic != b"NOBA":  # legacy PNG path (backward compat)
+            return None
+        size = struct.unpack(">I", proc.stdout.read(4))[0]
+        if size > 15_000_000:
+            return None
+        png = proc.stdout.read(size)
+        if len(png) < size:
+            return None
+        return _rdp_decode_png(png)
     except Exception as e:
         print(f"[agent-rdp] pipewire error: {e}", file=sys.stderr)
-    return None
+        _mutter_stop()
+        return None
 
 
 def _capture_screen_cmd() -> tuple | None:
@@ -3481,28 +3677,43 @@ def _rdp_scale_half(width: int, height: int, rgb_bytes: bytes) -> tuple:
     return new_w, new_h, b"".join(rows)
 
 
-def _rdp_encode_png(width: int, height: int, rgb_bytes: bytes) -> str:
-    """Encode RGB bytes as a minimal PNG and return as base64 string.
+_HAS_PILLOW: bool | None = None
 
-    Uses Python's built-in struct + zlib — zero external dependencies.
-    zlib level 1 (fastest) keeps CPU overhead low enough for 5 fps capture.
-    """
+
+def _rdp_encode_frame(width: int, height: int, rgb_bytes: bytes, quality: int = 70) -> str:
+    """Encode RGB bytes as JPEG (Pillow) or PNG fallback. Returns base64 string."""
+    global _HAS_PILLOW
+    import base64 as _b64
+    if _HAS_PILLOW is None:
+        try:
+            from PIL import Image as _Img  # noqa: F401
+            _HAS_PILLOW = True
+        except ImportError:
+            _HAS_PILLOW = False
+    if _HAS_PILLOW:
+        try:
+            from PIL import Image as _Img
+            import io as _io
+            img = _Img.frombytes("RGB", (width, height), rgb_bytes)
+            buf = _io.BytesIO()
+            img.save(buf, "JPEG", quality=quality, optimize=False)
+            return _b64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception:
+            pass  # fall through to PNG
+    # Pure-Python PNG fallback (no external deps)
     import struct
     import zlib
-    import base64 as _b64
 
     def _chunk(name: bytes, data: bytes) -> bytes:
         body = name + data
         return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
 
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)  # 8-bit, RGB color type
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     bpr = width * 3
-    # Prepend a filter-type byte (0 = None) to each scanline
     raw = bytearray(height * (1 + bpr))
     for y in range(height):
-        raw[y * (1 + bpr)] = 0  # filter byte
+        raw[y * (1 + bpr)] = 0
         raw[y * (1 + bpr) + 1:(y + 1) * (1 + bpr)] = rgb_bytes[y * bpr:(y + 1) * bpr]
-
     idat = zlib.compress(bytes(raw), 1)
     png = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
     return _b64.b64encode(png).decode("ascii")
@@ -3518,8 +3729,31 @@ def _rdp_inject_input(event: dict) -> None:
         _rdp_inject_macos(event)
 
 
+def _rdp_inject_mutter(event: dict) -> None:
+    """Send an input event to the persistent Mutter session subprocess via stdin."""
+    with _mutter_proc_lock:
+        proc = _mutter_proc
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        import json as _json
+        line = (_json.dumps(event) + "\n").encode()
+        print(f"[agent-rdp] inject→mutter: {event.get('event')} ({event.get('x','')},{event.get('y','')})", file=sys.stderr)
+        with _mutter_io_lock:
+            proc.stdin.write(line)
+            proc.stdin.flush()
+    except Exception as e:
+        print(f"[agent-rdp] mutter input error: {e}", file=sys.stderr)
+
+
 def _rdp_inject_x11(event: dict) -> None:
-    """Inject input via XTest (libXtst). Coordinates are normalized 0–1."""
+    """Inject input via XTest (libXtst) or Mutter D-Bus on Wayland. Coordinates are normalized 0–1."""
+    # On Wayland, route to the persistent Mutter session subprocess
+    with _mutter_proc_lock:
+        proc = _mutter_proc
+    if proc is not None and proc.poll() is None:
+        _rdp_inject_mutter(event)
+        return
     lib = _rdp_load_x11()
     xtst = _rdp_load_xtst()
     dpy = _rdp_get_x11_display()
@@ -3700,15 +3934,19 @@ def _rdp_capture_loop(quality: int, fps: int) -> None:
 
     print(f"[agent-rdp] Capture started at {fps}fps quality={quality} scale={scale:.2f}")
 
+    _consecutive_failures = 0
+    _MAX_FAILURES = 8  # tolerate ~8 cycles of subprocess restart before giving up
+
     while _rdp_active.is_set():
         t0 = time.monotonic()
         try:
             result = _capture_screen()
             if result:
+                _consecutive_failures = 0
                 w, h, rgb = result
                 if do_scale:
                     w, h, rgb = _rdp_scale_half(w, h, rgb)
-                frame_data = _rdp_encode_png(w, h, rgb)
+                frame_data = _rdp_encode_frame(w, h, rgb, quality)
                 frame = {"type": "rdp_frame", "w": w, "h": h, "data": frame_data}
                 try:
                     _rdp_frame_queue.put_nowait(frame)
@@ -3729,14 +3967,20 @@ def _rdp_capture_loop(quality: int, fps: int) -> None:
                 _rdp_active.clear()
                 break
         except RuntimeError as e:
-            # Propagate diagnostic message to browser (e.g. XOpenDisplay failure detail)
-            print(f"[agent-rdp] Display error: {e}", file=sys.stderr)
-            try:
-                _rdp_frame_queue.put_nowait({"type": "rdp_unavailable", "reason": str(e)})
-            except _queue.Full:
-                pass
-            _rdp_active.clear()
-            break
+            # Transient failures (subprocess restarting, Mutter session closing) are
+            # normal — tolerate a burst before notifying the browser.
+            _consecutive_failures += 1
+            print(f"[agent-rdp] Display error ({_consecutive_failures}/{_MAX_FAILURES}): {e}", file=sys.stderr)
+            if _consecutive_failures >= _MAX_FAILURES:
+                try:
+                    _rdp_frame_queue.put_nowait({"type": "rdp_unavailable", "reason": str(e)})
+                except _queue.Full:
+                    pass
+                _rdp_active.clear()
+                break
+            # Brief pause to let Mutter subprocess restart
+            _rdp_active.wait(timeout=0.5)
+            continue
         except Exception as e:
             print(f"[agent-rdp] Frame error: {e}", file=sys.stderr)
 
@@ -3766,9 +4010,10 @@ def _rdp_start(quality: int = 70, fps: int = 5) -> None:
 
 
 def _rdp_stop() -> None:
-    """Stop the RDP capture thread."""
+    """Stop the RDP capture thread and Mutter session subprocess."""
     global _rdp_thread
     _rdp_active.clear()
+    _mutter_stop()
     # Drain leftover frames
     while not _rdp_frame_queue.empty():
         try:

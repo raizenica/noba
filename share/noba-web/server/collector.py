@@ -414,6 +414,7 @@ def collect_stats(qs: dict) -> dict:
                     "disks": adata.get("disks", []),
                     "top_processes": adata.get("top_processes", []),
                     "arch": adata.get("arch", ""),
+                    "agent_version": adata.get("agent_version", ""),
                 })
             stats["agents"] = agent_list
     except ImportError:
