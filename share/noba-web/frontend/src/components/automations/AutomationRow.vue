@@ -1,6 +1,4 @@
 <script setup>
-import AutomationStatusBadge from './AutomationStatusBadge.vue'
-
 const props = defineProps({
   automation: Object,
   stat: Object,        // from autoStats[automation.id] — run counts
