@@ -18,30 +18,30 @@ class TestCmdNetworkStats:
     """Test _cmd_network_stats from agent.py."""
 
     def test_returns_ok_status(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         result = _cmd_network_stats({}, {})
         assert result["status"] == "ok"
 
     def test_has_interfaces_key(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         result = _cmd_network_stats({}, {})
         assert "interfaces" in result
         assert isinstance(result["interfaces"], list)
 
     def test_has_connections_key(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         result = _cmd_network_stats({}, {})
         assert "connections" in result
         assert isinstance(result["connections"], list)
 
     def test_has_top_talkers_key(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         result = _cmd_network_stats({}, {})
         assert "top_talkers" in result
         assert isinstance(result["top_talkers"], list)
 
     def test_interface_fields(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         result = _cmd_network_stats({}, {})
         for iface in result["interfaces"]:
             assert "name" in iface
@@ -56,14 +56,14 @@ class TestCmdNetworkStats:
             assert iface["tx_rate"] >= 0
 
     def test_lo_excluded(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         result = _cmd_network_stats({}, {})
         iface_names = [i["name"] for i in result["interfaces"]]
         assert "lo" not in iface_names
 
     def test_rate_calculation_on_second_call(self):
         """Second call should produce non-zero rates if traffic occurred."""
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         # First call sets the baseline
         _cmd_network_stats({}, {})
         # Small sleep to get a non-zero dt
@@ -76,12 +76,12 @@ class TestCmdNetworkStats:
             assert iface["tx_rate"] >= 0
 
     def test_connections_capped_at_200(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         result = _cmd_network_stats({}, {})
         assert len(result["connections"]) <= 200
 
     def test_top_talkers_capped_at_20(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         result = _cmd_network_stats({}, {})
         assert len(result["top_talkers"]) <= 20
 
@@ -90,7 +90,7 @@ class TestPrevNetReadingsThreadSafety:
     """Ensure the module-level _prev_net_readings is protected by its lock."""
 
     def test_concurrent_calls(self):
-        from agent import _cmd_network_stats
+        from commands import _cmd_network_stats
         errors = []
 
         def worker():
@@ -149,7 +149,7 @@ class TestNetworkStatsInHandlers:
     """Verify network_stats is in the execute_commands handler map."""
 
     def test_handler_registered(self):
-        from agent import execute_commands
+        from commands import execute_commands
         # Execute a network_stats command and check it doesn't return 'Unknown command'
         results = execute_commands(
             [{"type": "network_stats", "id": "test-1", "params": {}}],

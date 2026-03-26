@@ -25,6 +25,7 @@ from ..constants import (
 from ..deps import (
     _client_ip, _get_auth, _int_param, _read_body, _require_admin,
     _require_operator, _run_cmd, _safe_int, db,
+    handle_errors,
 )
 from ..metrics import _read_file, strip_ansi
 from ..plugins import plugin_manager
@@ -39,6 +40,7 @@ router = APIRouter()
 
 # ── /api/settings ─────────────────────────────────────────────────────────────
 @router.get("/api/settings")
+@handle_errors
 def api_settings_get(auth=Depends(_get_auth)):
     _, role = auth
     settings = read_yaml_settings()
@@ -47,6 +49,7 @@ def api_settings_get(auth=Depends(_get_auth)):
 
 
 @router.post("/api/settings")
+@handle_errors
 async def api_settings_post(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     ip = _client_ip(request)
@@ -74,6 +77,7 @@ async def api_settings_post(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/notifications/test ───────────────────────────────────────────────────
 @router.post("/api/notifications/test")
+@handle_errors
 def api_notif_test(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     cfg = read_yaml_settings()
@@ -91,6 +95,7 @@ def api_notif_test(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/config/changelog ────────────────────────────────────────────────────
 @router.get("/api/config/changelog")
+@handle_errors
 def api_config_changelog(auth=Depends(_require_admin)):
     entries = db.get_audit(limit=100, action_filter="settings_change")
     result = []
@@ -110,6 +115,7 @@ def api_config_changelog(auth=Depends(_require_admin)):
 
 # ── /api/audit ────────────────────────────────────────────────────────────────
 @router.get("/api/audit")
+@handle_errors
 def api_audit(request: Request, auth=Depends(_require_admin)):
     limit = _int_param(request, "limit", 100, 1, 1000)
     user_filter = request.query_params.get("user", "")
@@ -122,6 +128,7 @@ def api_audit(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/config/backup & /api/config/restore ─────────────────────────────────
 @router.get("/api/config/backup")
+@handle_errors
 def api_config_backup(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = b""
@@ -137,6 +144,7 @@ def api_config_backup(request: Request, auth=Depends(_require_admin)):
 
 
 @router.post("/api/config/restore")
+@handle_errors
 async def api_config_restore(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     raw = await request.body()
@@ -181,8 +189,6 @@ def _read_state_file(path: str) -> dict:
                     continue
                 key, _, val = line.partition("=")
                 result[key.strip()] = val.strip().strip('"').strip("'")
-    except HTTPException:
-        raise
     except Exception:
         pass
     return result
@@ -212,6 +218,7 @@ def _safe_snapshot_path(dest: str, name: str, subpath: str = "") -> str | None:
 
 # ── /api/backup/status ───────────────────────────────────────────────────────
 @router.get("/api/backup/status")
+@handle_errors
 def api_backup_status(auth=Depends(_get_auth)):
     from ..config import BACKUP_STATE_FILE, CLOUD_STATE_FILE
 
@@ -248,6 +255,7 @@ def api_backup_status(auth=Depends(_get_auth)):
 
 
 @router.post("/api/backup/report")
+@handle_errors
 def api_backup_report(request: Request, auth=Depends(_require_admin)):
     """Send an email summary of the last backup status."""
     username, _ = auth
@@ -284,6 +292,7 @@ def api_backup_report(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/backup/history ──────────────────────────────────────────────────────
 @router.get("/api/backup/history")
+@handle_errors
 def api_backup_history(auth=Depends(_get_auth)):
     dest = _get_backup_dest()
     if not dest:
@@ -314,6 +323,7 @@ def api_backup_history(auth=Depends(_get_auth)):
 
 # ── /api/backup/snapshots ────────────────────────────────────────────────────
 @router.get("/api/backup/snapshots/{name}/browse")
+@handle_errors
 def api_snapshot_browse(name: str, request: Request, auth=Depends(_get_auth)):
     dest = _get_backup_dest()
     if not dest:
@@ -347,6 +357,7 @@ def api_snapshot_browse(name: str, request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/backup/snapshots/diff")
+@handle_errors
 def api_snapshot_diff(request: Request, auth=Depends(_get_auth)):
     dest = _get_backup_dest()
     if not dest:
@@ -400,6 +411,7 @@ def api_snapshot_diff(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/backup/file-versions ────────────────────────────────────────────────
 @router.get("/api/backup/file-versions")
+@handle_errors
 def api_file_versions(request: Request, auth=Depends(_get_auth)):
     """List all versions of a file across snapshots."""
     dest = _get_backup_dest()
@@ -433,6 +445,7 @@ def api_file_versions(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/backup/restore ──────────────────────────────────────────────────────
 @router.post("/api/backup/restore")
+@handle_errors
 async def api_backup_restore(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     ip = _client_ip(request)
@@ -478,8 +491,6 @@ async def api_backup_restore(request: Request, auth=Depends(_require_admin)):
         import shutil
         os.makedirs(os.path.dirname(restore_to), exist_ok=True)
         shutil.copy2(resolved, restore_to)
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(500, f"Restore failed: {e}")
 
@@ -490,6 +501,7 @@ async def api_backup_restore(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/backup/config-history ───────────────────────────────────────────────
 @router.get("/api/backup/config-history")
+@handle_errors
 def api_config_history(auth=Depends(_require_admin)):
     import glob as glob_mod
     versions = []
@@ -523,6 +535,7 @@ def api_config_history(auth=Depends(_require_admin)):
 
 
 @router.get("/api/backup/config-history/{filename}")
+@handle_errors
 def api_config_history_download(filename: str, auth=Depends(_require_admin)):
     if filename == "config.yaml":
         path = NOBA_YAML
@@ -543,6 +556,7 @@ def api_config_history_download(filename: str, auth=Depends(_require_admin)):
 
 # ── /api/backup/restic ───────────────────────────────────────────────────────
 @router.get("/api/backup/restic")
+@handle_errors
 def api_restic_status(auth=Depends(_get_auth)):
     """Check restic repository status if configured."""
     import subprocess
@@ -571,14 +585,13 @@ def api_restic_status(auth=Depends(_get_auth)):
         }
     except FileNotFoundError:
         return {"configured": True, "error": "restic not installed"}
-    except HTTPException:
-        raise
     except Exception as e:
         return {"configured": True, "error": str(e)}
 
 
 # ── /api/backup/schedules ────────────────────────────────────────────────
 @router.get("/api/backup/schedules")
+@handle_errors
 def api_backup_schedules(auth=Depends(_get_auth)):
     """List backup-related automations (scheduled backup jobs)."""
     autos = db.list_automations()
@@ -587,6 +600,7 @@ def api_backup_schedules(auth=Depends(_get_auth)):
 
 
 @router.post("/api/backup/schedule")
+@handle_errors
 async def api_backup_schedule_create(request: Request, auth=Depends(_require_admin)):
     """Create a backup schedule with friendly parameters."""
     import uuid
@@ -607,6 +621,7 @@ async def api_backup_schedule_create(request: Request, auth=Depends(_require_adm
 
 # ── /api/backup/progress ────────────────────────────────────────────────
 @router.get("/api/backup/progress")
+@handle_errors
 def api_backup_progress(auth=Depends(_get_auth)):
     """Get progress of currently running backup jobs."""
     active_ids = job_runner.get_active_ids()
@@ -627,6 +642,7 @@ def api_backup_progress(auth=Depends(_get_auth)):
 
 # ── /api/backup/health ──────────────────────────────────────────────────
 @router.get("/api/backup/health")
+@handle_errors
 def api_backup_health(auth=Depends(_get_auth)):
     """Check backup destination accessibility and space."""
     cfg = read_yaml_settings()
@@ -647,14 +663,13 @@ def api_backup_health(auth=Depends(_get_auth)):
             "percent_used": round(used / total * 100, 1) if total else 0,
             "snapshot_count": snapshot_count,
         }
-    except HTTPException:
-        raise
     except Exception as e:
         return {"accessible": False, "error": str(e)}
 
 
 # ── /api/log-viewer ───────────────────────────────────────────────────────────
 @router.get("/api/log-viewer")
+@handle_errors
 def api_log_viewer(request: Request, auth=Depends(_require_operator)):
     log_type = request.query_params.get("type", "syserr")
     if log_type == "syserr":
@@ -672,12 +687,14 @@ def api_log_viewer(request: Request, auth=Depends(_require_operator)):
 
 # ── /api/action-log ───────────────────────────────────────────────────────────
 @router.get("/api/action-log")
+@handle_errors
 def api_action_log(auth=Depends(_require_operator)):
     return PlainTextResponse(strip_ansi(_read_file(ACTION_LOG, "Waiting for output\u2026")))
 
 
 # ── /api/reports ──────────────────────────────────────────────────────────────
 @router.get("/api/reports/bandwidth")
+@handle_errors
 def api_bandwidth_report(request: Request, auth=Depends(_get_auth)):
     """Bandwidth usage report per interface over configurable period."""
     range_h = _int_param(request, "range", 24, 1, 8760)
@@ -707,6 +724,7 @@ def api_bandwidth_report(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/reports/anomalies")
+@handle_errors
 def api_anomaly_report(request: Request, auth=Depends(_get_auth)):
     """Generate anomaly detection summary for the past week."""
     range_h = _int_param(request, "range", 168, 1, 8760)
@@ -729,6 +747,7 @@ def api_anomaly_report(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/reports/custom")
+@handle_errors
 async def api_custom_report(request: Request, auth=Depends(_require_operator)):
     """Generate a custom report from a template definition."""
     body = await _read_body(request)
@@ -761,6 +780,7 @@ async def api_custom_report(request: Request, auth=Depends(_require_operator)):
 
 
 @router.get("/api/grafana/dashboard")
+@handle_errors
 def api_grafana_template(auth=Depends(_get_auth)):
     """Return a Grafana dashboard JSON template for NOBA metrics."""
     return {
@@ -798,6 +818,7 @@ def api_grafana_template(auth=Depends(_get_auth)):
 
 # ── /api/plugins/available & install ──────────────────────────────────────────
 @router.get("/api/plugins/available")
+@handle_errors
 def api_plugins_available(auth=Depends(_require_admin)):
     cfg = read_yaml_settings()
     catalog_url = cfg.get("pluginCatalogUrl", "")
@@ -805,12 +826,14 @@ def api_plugins_available(auth=Depends(_require_admin)):
 
 
 @router.get("/api/plugins/bundled")
+@handle_errors
 def api_plugins_bundled(auth=Depends(_require_admin)):
     """List bundled catalog plugins shipped with NOBA."""
     return plugin_manager.get_bundled_catalog()
 
 
 @router.post("/api/plugins/install")
+@handle_errors
 async def api_plugins_install(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
@@ -834,6 +857,7 @@ async def api_plugins_install(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/plugins/{id}/config ─────────────────────────────────────────────────
 @router.get("/api/plugins/{plugin_id}/config")
+@handle_errors
 def api_plugin_config_get(plugin_id: str, auth=Depends(_require_admin)):
     """Return current config and schema for a plugin."""
     config, schema = plugin_manager.get_plugin_config(plugin_id)
@@ -843,6 +867,7 @@ def api_plugin_config_get(plugin_id: str, auth=Depends(_require_admin)):
 
 
 @router.post("/api/plugins/{plugin_id}/config")
+@handle_errors
 async def api_plugin_config_post(plugin_id: str, request: Request, auth=Depends(_require_admin)):
     """Validate and save plugin config."""
     username, _ = auth
@@ -856,12 +881,14 @@ async def api_plugin_config_post(plugin_id: str, request: Request, auth=Depends(
 
 # ── /api/plugins (managed list, enable/disable, reload) ──────────────────────
 @router.get("/api/plugins/managed")
+@handle_errors
 def api_plugins_managed(auth=Depends(_get_auth)):
     """List all plugins with management metadata (name, version, enabled)."""
     return plugin_manager.get_managed()
 
 
 @router.post("/api/plugins/{name}/enable")
+@handle_errors
 async def api_plugin_enable(name: str, request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     if not plugin_manager.enable_plugin(name):
@@ -871,6 +898,7 @@ async def api_plugin_enable(name: str, request: Request, auth=Depends(_require_a
 
 
 @router.post("/api/plugins/{name}/disable")
+@handle_errors
 async def api_plugin_disable(name: str, request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     if not plugin_manager.disable_plugin(name):
@@ -880,6 +908,7 @@ async def api_plugin_disable(name: str, request: Request, auth=Depends(_require_
 
 
 @router.post("/api/plugins/reload")
+@handle_errors
 async def api_plugins_reload(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     plugin_manager.reload()
@@ -889,6 +918,7 @@ async def api_plugins_reload(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/runbooks ─────────────────────────────────────────────────────────────
 @router.get("/api/runbooks")
+@handle_errors
 def api_runbooks(auth=Depends(_get_auth)):
     cfg = read_yaml_settings()
     runbooks = cfg.get("runbooks", [])
@@ -901,6 +931,7 @@ def api_runbooks(auth=Depends(_get_auth)):
 
 
 @router.get("/api/runbooks/{runbook_id}")
+@handle_errors
 def api_runbook_detail(runbook_id: str, auth=Depends(_get_auth)):
     cfg = read_yaml_settings()
     runbooks = cfg.get("runbooks", [])
@@ -917,6 +948,7 @@ def api_runbook_detail(runbook_id: str, auth=Depends(_get_auth)):
 
 # ── /api/graylog/search ──────────────────────────────────────────────────────
 @router.get("/api/graylog/search")
+@handle_errors
 def api_graylog_search(request: Request, auth=Depends(_require_operator)):
     cfg = read_yaml_settings()
     url = cfg.get("graylogUrl", "")

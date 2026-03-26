@@ -102,3 +102,36 @@ def _load_tokens(
     except Exception as e:
         logger.error("_load_tokens failed: %s", e)
         return []
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS tokens (
+            token_hash  TEXT PRIMARY KEY,
+            username    TEXT NOT NULL,
+            role        TEXT NOT NULL,
+            created_at  INTEGER NOT NULL,
+            expires_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tokens_expires
+            ON tokens(expires_at);
+    """)
+
+
+class _TokensMixin:
+    def insert_token(self, token_hash: str, username: str, role: str,
+                     created_at: int, expires_at: int) -> None:
+        _insert_token(self._get_conn(), self._lock, token_hash, username,
+                      role, created_at, expires_at)
+
+    def delete_token(self, token_hash: str) -> None:
+        _delete_token(self._get_conn(), self._lock, token_hash)
+
+    def get_token(self, token_hash: str) -> dict | None:
+        return _get_token(self._get_read_conn(), self._read_lock, token_hash)
+
+    def cleanup_tokens(self) -> None:
+        _cleanup_tokens(self._get_conn(), self._lock)
+
+    def load_tokens(self) -> list[dict]:
+        return _load_tokens(self._get_read_conn(), self._read_lock)

@@ -193,3 +193,55 @@ def resolve_incident(
         return True
     except Exception:
         return False
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS alert_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id     TEXT NOT NULL,
+            timestamp   INTEGER NOT NULL,
+            severity    TEXT NOT NULL,
+            message     TEXT,
+            resolved_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_alert_hist ON alert_history(rule_id, timestamp);
+
+        CREATE TABLE IF NOT EXISTS incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'info',
+            source TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL,
+            details TEXT DEFAULT '',
+            resolved_at INTEGER DEFAULT 0,
+            auto_generated INTEGER DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_incidents_time ON incidents(timestamp DESC);
+    """)
+
+
+class _AlertsMixin:
+    def insert_alert_history(self, rule_id: str, severity: str, message: str) -> None:
+        insert_alert_history(self._get_conn(), self._lock, rule_id, severity, message)
+
+    def get_alert_history(self, limit: int = 100, rule_id: str | None = None,
+                          from_ts: int = 0, to_ts: int = 0) -> list[dict]:
+        return get_alert_history(self._get_read_conn(), self._read_lock, limit=limit,
+                                 rule_id=rule_id, from_ts=from_ts, to_ts=to_ts)
+
+    def resolve_alert(self, rule_id: str) -> None:
+        resolve_alert(self._get_conn(), self._lock, rule_id)
+
+    def get_sla(self, rule_id: str, window_hours: int = 720) -> float:
+        return get_sla(self._get_read_conn(), self._read_lock, rule_id, window_hours=window_hours)
+
+    def insert_incident(self, severity: str, source: str, title: str, details: str = "") -> int:
+        return insert_incident(self._get_conn(), self._lock, severity, source, title,
+                               details=details)
+
+    def get_incidents(self, limit: int = 100, hours: int = 24) -> list[dict]:
+        return get_incidents(self._get_read_conn(), self._read_lock, limit=limit, hours=hours)
+
+    def resolve_incident(self, incident_id: int) -> bool:
+        return resolve_incident(self._get_conn(), self._lock, incident_id)

@@ -395,3 +395,112 @@ def assign_incident(
     except Exception as e:
         logger.error("assign_incident failed: %s", e)
         return False
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS status_components (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            group_name TEXT DEFAULT 'Default',
+            service_key TEXT,
+            display_order INTEGER DEFAULT 0,
+            enabled INTEGER DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS status_incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            severity TEXT DEFAULT 'minor',
+            status TEXT DEFAULT 'investigating',
+            created_at INTEGER,
+            resolved_at INTEGER,
+            created_by TEXT,
+            assigned_to TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS status_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL REFERENCES status_incidents(id),
+            message TEXT NOT NULL,
+            status TEXT DEFAULT 'investigating',
+            created_at INTEGER,
+            created_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_status_updates_incident
+            ON status_updates(incident_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS incident_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL,
+            author TEXT NOT NULL,
+            message TEXT NOT NULL,
+            msg_type TEXT DEFAULT 'comment',
+            created_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_incident_messages_incident
+            ON incident_messages(incident_id, created_at ASC);
+    """)
+
+
+class _StatusPageMixin:
+    def create_status_component(self, name: str, group_name: str = "Default",
+                                service_key: str | None = None,
+                                display_order: int = 0) -> int:
+        return create_status_component(self._get_conn(), self._lock, name,
+                                       group_name=group_name, service_key=service_key,
+                                       display_order=display_order)
+
+    def list_status_components(self) -> list[dict]:
+        return list_status_components(self._get_read_conn(), self._read_lock)
+
+    def update_status_component(self, comp_id: int, **kwargs) -> bool:
+        return update_status_component(self._get_conn(), self._lock, comp_id, **kwargs)
+
+    def delete_status_component(self, comp_id: int) -> bool:
+        return delete_status_component(self._get_conn(), self._lock, comp_id)
+
+    def create_status_incident(self, title: str, severity: str = "minor",
+                               message: str = "", created_by: str = "") -> int:
+        return create_status_incident(self._get_conn(), self._lock, title,
+                                      severity=severity, message=message,
+                                      created_by=created_by)
+
+    def list_status_incidents(self, limit: int = 50,
+                              include_resolved: bool = True) -> list[dict]:
+        return list_status_incidents(self._get_read_conn(), self._read_lock, limit=limit,
+                                     include_resolved=include_resolved)
+
+    def get_status_incident(self, incident_id: int) -> dict | None:
+        return get_status_incident(self._get_read_conn(), self._read_lock, incident_id)
+
+    def update_status_incident(self, incident_id: int, **kwargs) -> bool:
+        return update_status_incident(self._get_conn(), self._lock, incident_id, **kwargs)
+
+    def add_status_update(self, incident_id: int, message: str,
+                          status: str = "investigating",
+                          created_by: str = "") -> int:
+        return add_status_update(self._get_conn(), self._lock, incident_id,
+                                 message, status=status, created_by=created_by)
+
+    def resolve_status_incident(self, incident_id: int,
+                                created_by: str = "") -> bool:
+        return resolve_status_incident(self._get_conn(), self._lock, incident_id,
+                                       created_by=created_by)
+
+    def get_status_uptime_history(self, days: int = 90) -> list[dict]:
+        return get_status_uptime_history(self._get_read_conn(), self._read_lock, days=days)
+
+    def add_incident_message(self, incident_id: int, author: str,
+                             message: str, msg_type: str = "comment") -> int:
+        return add_incident_message(self._get_conn(), self._lock, incident_id,
+                                    author, message, msg_type=msg_type)
+
+    def get_incident_messages(self, incident_id: int,
+                              limit: int = 200) -> list[dict]:
+        return get_incident_messages(self._get_read_conn(), self._read_lock, incident_id,
+                                     limit=limit)
+
+    def assign_incident(self, incident_id: int, assigned_to: str) -> bool:
+        return assign_incident(self._get_conn(), self._lock, incident_id,
+                               assigned_to)

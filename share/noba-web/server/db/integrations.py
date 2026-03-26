@@ -502,3 +502,120 @@ def get_snapshot_by_ledger_id(
             return None
         cols = [d[0] for d in cur.description]
     return dict(zip(cols, row))
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    """Initialize all integration-related tables (idempotent)."""
+    create_tables(conn)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS dependency_graph (
+            id INTEGER PRIMARY KEY,
+            target TEXT NOT NULL UNIQUE,
+            depends_on TEXT,
+            node_type TEXT NOT NULL,
+            health_check TEXT,
+            site TEXT,
+            auto_discovered INTEGER DEFAULT 0,
+            confirmed INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS heal_maintenance_windows (
+            id         INTEGER PRIMARY KEY,
+            target     TEXT NOT NULL,
+            cron_expr  TEXT,
+            duration_s INTEGER NOT NULL,
+            reason     TEXT,
+            action     TEXT NOT NULL DEFAULT 'suppress',
+            active     INTEGER NOT NULL DEFAULT 1,
+            created_by TEXT,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_heal_maint_active
+            ON heal_maintenance_windows(active, expires_at);
+
+        CREATE TABLE IF NOT EXISTS heal_snapshots (
+            id INTEGER PRIMARY KEY,
+            ledger_id INTEGER,
+            target TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            state TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_heal_snapshots_ledger
+            ON heal_snapshots(ledger_id);
+    """)
+
+
+class _IntegrationsMixin:
+    def insert_integration_instance(self, **kw) -> None:
+        insert_instance(self._get_conn(), self._lock, **kw)
+
+    def get_integration_instance(self, instance_id: str) -> dict | None:
+        return get_instance(self._get_read_conn(), self._read_lock, instance_id)
+
+    def list_integration_instances(
+        self, *, category: str | None = None, site: str | None = None
+    ) -> list[dict]:
+        return list_instances(self._get_read_conn(), self._read_lock, category=category, site=site)
+
+    def update_integration_health(self, instance_id: str, health_status: str) -> None:
+        update_health(self._get_conn(), self._lock, instance_id, health_status)
+
+    def delete_integration_instance(self, instance_id: str) -> None:
+        delete_instance(self._get_conn(), self._lock, instance_id)
+
+    def add_to_integration_group(self, group_name: str, instance_id: str) -> None:
+        add_to_group(self._get_conn(), self._lock, group_name, instance_id)
+
+    def remove_from_integration_group(self, group_name: str, instance_id: str) -> None:
+        remove_from_group(self._get_conn(), self._lock, group_name, instance_id)
+
+    def list_integration_group(self, group_name: str) -> list[dict]:
+        return list_group(self._get_read_conn(), self._read_lock, group_name)
+
+    def list_integration_groups(self) -> list[str]:
+        return list_groups(self._get_read_conn(), self._read_lock)
+
+    def upsert_capability_manifest(self, hostname: str, manifest: str) -> None:
+        upsert_manifest(self._get_conn(), self._lock, hostname, manifest)
+
+    def get_capability_manifest(self, hostname: str) -> dict | None:
+        return get_manifest(self._get_read_conn(), self._read_lock, hostname)
+
+    def mark_capability_degraded(self, hostname: str, tool_name: str) -> None:
+        mark_capability_degraded(self._get_conn(), self._lock, hostname, tool_name)
+
+    def insert_dep_graph_node(self, **kw) -> None:
+        insert_dependency(self._get_conn(), self._lock, **kw)
+
+    def list_dep_graph_nodes(self) -> list[dict]:
+        return list_dependencies(self._get_read_conn(), self._read_lock)
+
+    def get_dep_graph_node(self, target: str) -> dict | None:
+        return get_dependency(self._get_read_conn(), self._read_lock, target)
+
+    def delete_dep_graph_node(self, target: str) -> None:
+        delete_dependency(self._get_conn(), self._lock, target)
+
+    def upsert_dep_graph_node(self, **kw) -> None:
+        upsert_dependency(self._get_conn(), self._lock, **kw)
+
+    def insert_heal_maintenance_window(self, **kw) -> int:
+        return insert_heal_maintenance_window(self._get_conn(), self._lock, **kw)
+
+    def get_active_heal_maintenance_windows(self) -> list[dict]:
+        return get_active_heal_maintenance_windows(self._get_read_conn(), self._read_lock)
+
+    def end_heal_maintenance_window(self, window_id: int) -> bool:
+        return end_heal_maintenance_window(self._get_conn(), self._lock, window_id)
+
+    def insert_snapshot(self, **kw) -> int:
+        return insert_snapshot(self._get_conn(), self._lock, **kw)
+
+    def get_snapshot_row(self, snap_id: int) -> dict | None:
+        return get_snapshot_row(self._get_read_conn(), self._read_lock, snap_id)
+
+    def get_snapshot_by_ledger_id(self, ledger_id: int) -> dict | None:
+        return get_snapshot_by_ledger_id(self._get_read_conn(), self._read_lock, ledger_id)

@@ -73,3 +73,24 @@ def delete_user_preferences(
     except Exception as e:
         logger.error("delete_user_preferences failed: %s", e)
         return False
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            username TEXT PRIMARY KEY,
+            preferences_json TEXT DEFAULT '{}',
+            updated_at INTEGER
+        );
+    """)
+
+
+class _UserPreferencesMixin:
+    def get_user_preferences(self, username: str) -> dict | None:
+        return get_user_preferences(self._get_read_conn(), self._read_lock, username)
+
+    def save_user_preferences(self, username: str, preferences: dict) -> bool:
+        return save_user_preferences(self._get_conn(), self._lock, username, preferences)
+
+    def delete_user_preferences(self, username: str) -> bool:
+        return delete_user_preferences(self._get_conn(), self._lock, username)

@@ -192,17 +192,17 @@ class TestScoreHistory:
 
 class TestScoreCalculation:
     def test_perfect_score(self):
-        from agent import _calculate_security_score
+        from commands import _calculate_security_score
         assert _calculate_security_score([]) == 100
 
     def test_single_high_finding(self):
-        from agent import _calculate_security_score
+        from commands import _calculate_security_score
         findings = [{"severity": "high", "category": "ssh", "description": "x"}]
         score = _calculate_security_score(findings)
         assert score == 80  # 100 - 20
 
     def test_mixed_findings(self):
-        from agent import _calculate_security_score
+        from commands import _calculate_security_score
         findings = [
             {"severity": "high", "category": "ssh", "description": "x"},
             {"severity": "medium", "category": "firewall", "description": "x"},
@@ -213,21 +213,21 @@ class TestScoreCalculation:
         assert score == 65
 
     def test_cap_high_deductions(self):
-        from agent import _calculate_security_score
+        from commands import _calculate_security_score
         # 4 high findings = 80 but capped at 60
         findings = [{"severity": "high", "category": f"cat{i}", "description": "x"} for i in range(4)]
         score = _calculate_security_score(findings)
         assert score == 40  # 100 - 60 (capped)
 
     def test_cap_medium_deductions(self):
-        from agent import _calculate_security_score
+        from commands import _calculate_security_score
         # 5 medium findings = 50 but capped at 30
         findings = [{"severity": "medium", "category": f"cat{i}", "description": "x"} for i in range(5)]
         score = _calculate_security_score(findings)
         assert score == 70  # 100 - 30 (capped)
 
     def test_floor_at_zero(self):
-        from agent import _calculate_security_score
+        from commands import _calculate_security_score
         # 3 high + 3 medium + 3 low = min(60,60) + min(30,30) + min(15,15) = 105 -> capped to 0
         findings = (
             [{"severity": "high", "category": f"h{i}", "description": "x"} for i in range(3)]

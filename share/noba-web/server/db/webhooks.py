@@ -122,3 +122,38 @@ def record_trigger(
             conn.commit()
     except Exception as e:
         logger.error("record_trigger failed: %s", e)
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS webhook_endpoints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            hook_id TEXT UNIQUE NOT NULL,
+            secret TEXT NOT NULL,
+            automation_id TEXT,
+            enabled INTEGER DEFAULT 1,
+            last_triggered INTEGER,
+            trigger_count INTEGER DEFAULT 0,
+            created_at INTEGER
+        );
+    """)
+
+
+class _WebhooksMixin:
+    def create_webhook(self, name: str, hook_id: str, secret: str,
+                       automation_id: str | None = None) -> int | None:
+        return create_webhook(self._get_conn(), self._lock, name, hook_id, secret,
+                              automation_id=automation_id)
+
+    def list_webhooks(self) -> list[dict]:
+        return list_webhooks(self._get_read_conn(), self._read_lock)
+
+    def get_webhook_by_hook_id(self, hook_id: str) -> dict | None:
+        return get_webhook_by_hook_id(self._get_read_conn(), self._read_lock, hook_id)
+
+    def delete_webhook(self, webhook_id: int) -> bool:
+        return delete_webhook(self._get_conn(), self._lock, webhook_id)
+
+    def record_webhook_trigger(self, webhook_id: int) -> None:
+        record_trigger(self._get_conn(), self._lock, webhook_id)

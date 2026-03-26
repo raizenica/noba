@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..deps import (
     _client_ip, _get_auth, _read_body, _require_admin, _require_operator, db,
+    handle_errors,
 )
 from ..metrics import get_rclone_remotes
 from ..yaml_config import read_yaml_settings
@@ -18,6 +19,7 @@ router = APIRouter()
 
 # ── /api/cameras/snapshot ────────────────────────────────────────────────────
 @router.get("/api/cameras/snapshot/{cam}")
+@handle_errors
 def api_camera_snapshot(cam: str, auth=Depends(_get_auth)):
     cfg = read_yaml_settings()
     frigate_url = cfg.get("frigateUrl", "")
@@ -39,6 +41,7 @@ def api_camera_snapshot(cam: str, auth=Depends(_get_auth)):
 
 # ── /api/cameras ──────────────────────────────────────────────────────────
 @router.get("/api/cameras")
+@handle_errors
 def api_cameras(auth=Depends(_get_auth)):
     """Return configured camera feed URLs."""
     cfg = read_yaml_settings()
@@ -51,6 +54,7 @@ def api_cameras(auth=Depends(_get_auth)):
 
 # ── /api/tailscale/status ────────────────────────────────────────────────────
 @router.get("/api/tailscale/status")
+@handle_errors
 def api_tailscale_status(auth=Depends(_get_auth)):
     from ..metrics import get_tailscale_status  # noqa: PLC0415
     return get_tailscale_status() or {"error": "Tailscale not available"}
@@ -62,6 +66,7 @@ _SCRUTINY_TTL = 300  # 5 min — SMART data doesn't change often
 
 
 @router.get("/api/disks/intelligence")
+@handle_errors
 def api_disk_intelligence(auth=Depends(_get_auth)):
     import time as _time
 
@@ -82,6 +87,7 @@ def api_disk_intelligence(auth=Depends(_get_auth)):
 
 # ── /api/services/dependencies/blast-radius ──────────────────────────────────
 @router.get("/api/services/dependencies/blast-radius")
+@handle_errors
 def api_blast_radius(node: str, auth=Depends(_get_auth)):
     cfg = read_yaml_settings()
     deps_str = cfg.get("serviceDependencies", "")
@@ -116,6 +122,7 @@ def api_blast_radius(node: str, auth=Depends(_get_auth)):
 
 # ── /api/hass (Home Assistant) ────────────────────────────────────────────────
 @router.post("/api/hass/services/{domain}/{service}")
+@handle_errors
 async def api_hass_proxy(domain: str, service: str, request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     cfg = read_yaml_settings()
@@ -139,6 +146,7 @@ async def api_hass_proxy(domain: str, service: str, request: Request, auth=Depen
 
 
 @router.get("/api/hass/entities")
+@handle_errors
 def api_hass_entities(request: Request, auth=Depends(_get_auth)):
     """List HA entities with full state details."""
     from ..integrations import get_hass_entities
@@ -155,6 +163,7 @@ def api_hass_entities(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/hass/services")
+@handle_errors
 def api_hass_services(auth=Depends(_get_auth)):
     """List available HA services."""
     from ..integrations import get_hass_services
@@ -170,6 +179,7 @@ def api_hass_services(auth=Depends(_get_auth)):
 
 
 @router.post("/api/hass/toggle/{entity_id:path}")
+@handle_errors
 async def api_hass_toggle(entity_id: str, request: Request, auth=Depends(_require_operator)):
     """Toggle a Home Assistant entity."""
     username, _ = auth
@@ -196,6 +206,7 @@ async def api_hass_toggle(entity_id: str, request: Request, auth=Depends(_requir
 
 
 @router.post("/api/hass/scene/{entity_id:path}")
+@handle_errors
 async def api_hass_scene(entity_id: str, request: Request, auth=Depends(_require_operator)):
     """Activate a Home Assistant scene."""
     username, _ = auth
@@ -219,6 +230,7 @@ async def api_hass_scene(entity_id: str, request: Request, auth=Depends(_require
 
 # ── /api/pihole/toggle ───────────────────────────────────────────────────────
 @router.post("/api/pihole/toggle")
+@handle_errors
 async def api_pihole_toggle(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     body = await _read_body(request)
@@ -250,6 +262,7 @@ async def api_pihole_toggle(request: Request, auth=Depends(_require_operator)):
 
 # ── /api/game-servers ─────────────────────────────────────────────────────────
 @router.get("/api/game-servers")
+@handle_errors
 def api_game_servers(auth=Depends(_get_auth)):
     from ..metrics import probe_game_server, query_source_server
     cfg = read_yaml_settings()
@@ -272,6 +285,7 @@ def api_game_servers(auth=Depends(_get_auth)):
 
 # ── /api/wol ──────────────────────────────────────────────────────────────────
 @router.post("/api/wol")
+@handle_errors
 async def api_wol(request: Request, auth=Depends(_require_operator)):
     from ..metrics import send_wol
     username, _ = auth
@@ -286,11 +300,13 @@ async def api_wol(request: Request, auth=Depends(_require_operator)):
 
 # ── /api/cloud-remotes ────────────────────────────────────────────────────────
 @router.get("/api/cloud-remotes")
+@handle_errors
 def api_cloud_remotes(auth=Depends(_get_auth)):
     return get_rclone_remotes()
 
 
 @router.post("/api/cloud-remotes/create")
+@handle_errors
 async def api_cloud_remote_create(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
@@ -322,6 +338,7 @@ async def api_cloud_remote_create(request: Request, auth=Depends(_require_admin)
 
 
 @router.delete("/api/cloud-remotes/{name}")
+@handle_errors
 def api_cloud_remote_delete(name: str, request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$', name):
@@ -339,6 +356,7 @@ def api_cloud_remote_delete(name: str, request: Request, auth=Depends(_require_a
 
 # ── /api/cloud-test ───────────────────────────────────────────────────────────
 @router.post("/api/cloud-test")
+@handle_errors
 async def api_cloud_test(request: Request, auth=Depends(_require_operator)):
     import logging as _logging
     username, _ = auth
@@ -373,6 +391,7 @@ async def api_cloud_test(request: Request, auth=Depends(_require_operator)):
 
 # ── /api/influxdb/query ──────────────────────────────────────────────────────
 @router.post("/api/influxdb/query")
+@handle_errors
 async def api_influxdb_query(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     ip = _client_ip(request)

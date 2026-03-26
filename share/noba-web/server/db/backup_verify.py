@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+import sqlite3
 
 
 def record_verification(
@@ -147,3 +148,64 @@ def update_321_status(
                 return cur.lastrowid
     except Exception:
         return None
+
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS backup_verifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            backup_path TEXT NOT NULL,
+            hostname TEXT NOT NULL,
+            verification_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            details TEXT,
+            verified_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_verif_host
+            ON backup_verifications(hostname, verified_at DESC);
+
+        CREATE TABLE IF NOT EXISTS backup_321_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            backup_name TEXT NOT NULL UNIQUE,
+            copies INTEGER DEFAULT 0,
+            media_types TEXT DEFAULT '[]',
+            has_offsite INTEGER DEFAULT 0,
+            last_verified INTEGER,
+            updated_at INTEGER
+        );
+    """)
+
+
+class _BackupVerifyMixin:
+    def record_backup_verification(
+        self, backup_path: str, hostname: str, verification_type: str,
+        status: str, details: str | None = None,
+    ) -> int | None:
+        return record_verification(
+            self._get_conn(), self._lock, backup_path, hostname,
+            verification_type, status, details=details,
+        )
+
+    def list_backup_verifications(
+        self, hostname: str | None = None, limit: int = 100,
+    ) -> list[dict]:
+        return list_verifications(
+            self._get_read_conn(), self._read_lock, hostname=hostname, limit=limit,
+        )
+
+    def get_backup_321_status(self) -> list[dict]:
+        return get_321_status(self._get_read_conn(), self._read_lock)
+
+    def update_backup_321_status(
+        self, backup_name: str, *,
+        copies: int | None = None,
+        media_types: list[str] | None = None,
+        has_offsite: bool | None = None,
+        last_verified: int | None = None,
+    ) -> int | None:
+        return update_321_status(
+            self._get_conn(), self._lock, backup_name,
+            copies=copies, media_types=media_types,
+            has_offsite=has_offsite, last_verified=last_verified,
+        )

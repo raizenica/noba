@@ -330,7 +330,7 @@ class TestPlex:
         from server.integrations.simple import get_plex
         assert get_plex("http://plex:32400", "") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_plex
         mock_get.side_effect = [
@@ -342,7 +342,7 @@ class TestPlex:
         assert result["sessions"] == 3
         assert result["activities"] == 1
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_offline_on_error(self, mock_get):
         from server.integrations.simple import get_plex
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -356,7 +356,7 @@ class TestKuma:
         from server.integrations.simple import get_kuma
         assert get_kuma("") == []
 
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_monitoring._client")
     def test_parses_metrics(self, mock_client):
         from server.integrations.simple import get_kuma
         metrics_text = (
@@ -375,7 +375,7 @@ class TestKuma:
         assert result[1] == {"name": "API", "status": "Down"}
         assert result[2] == {"name": "DB", "status": "Pending"}
 
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_monitoring._client")
     def test_returns_error_on_error(self, mock_client):
         from server.integrations.simple import get_kuma
         mock_client.get.side_effect = httpx.HTTPError("fail")
@@ -395,7 +395,7 @@ class TestTruenasRest:
         from server.integrations.simple import get_truenas
         assert get_truenas("http://truenas:443", "") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_infra._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_truenas
         mock_get.side_effect = [
@@ -410,7 +410,7 @@ class TestTruenasRest:
         assert len(result["alerts"]) == 1
         assert len(result["vms"]) == 1
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_infra._http_get")
     def test_dismissed_alerts_excluded(self, mock_get):
         from server.integrations.simple import get_truenas
         mock_get.side_effect = [
@@ -421,7 +421,7 @@ class TestTruenasRest:
         result = get_truenas("http://truenas:443", "apikey")
         assert result["alerts"] == []
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_infra._http_get")
     def test_returns_offline_on_error(self, mock_get):
         from server.integrations.simple import get_truenas
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -438,7 +438,7 @@ class TestServarr:
         from server.integrations.simple import get_servarr
         assert get_servarr("http://radarr:7878", "") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_servarr
         mock_get.return_value = {"totalRecords": 7}
@@ -446,7 +446,7 @@ class TestServarr:
         assert result["status"] == "online"
         assert result["queue_count"] == 7
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_offline_on_error(self, mock_get):
         from server.integrations.simple import get_servarr
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -460,7 +460,7 @@ class TestSpeedtest:
         from server.integrations.simple import get_speedtest
         assert get_speedtest("") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_speedtest
         mock_get.return_value = {
@@ -478,13 +478,13 @@ class TestSpeedtest:
         assert result["ping"] == 12.5
         assert result["server"] == "TestServer"
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_none_when_no_data(self, mock_get):
         from server.integrations.simple import get_speedtest
         mock_get.return_value = {"data": None}
         assert get_speedtest("http://speedtest:8080") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_none_on_error(self, mock_get):
         from server.integrations.simple import get_speedtest
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -497,7 +497,7 @@ class TestAdguard:
         from server.integrations.simple import get_adguard
         assert get_adguard("", "", "") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_network._http_get")
     def test_returns_data_with_auth(self, mock_get):
         from server.integrations.simple import get_adguard
         mock_get.return_value = {"num_dns_queries": 1000, "num_blocked_filtering": 200}
@@ -507,14 +507,14 @@ class TestAdguard:
         assert result["blocked"] == 200
         assert result["percent"] == 20.0
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_network._http_get")
     def test_returns_data_without_auth(self, mock_get):
         from server.integrations.simple import get_adguard
         mock_get.return_value = {"num_dns_queries": 500, "num_blocked_filtering": 0}
         result = get_adguard("http://adguard:3000", "", "")
         assert result["percent"] == 0
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_network._http_get")
     def test_returns_none_on_error(self, mock_get):
         from server.integrations.simple import get_adguard
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -531,7 +531,7 @@ class TestJellyfin:
         from server.integrations.simple import get_jellyfin
         assert get_jellyfin("http://jf:8096", "") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_jellyfin
         mock_get.side_effect = [
@@ -545,7 +545,7 @@ class TestJellyfin:
         assert result["series"] == 10
         assert result["episodes"] == 200
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_offline_on_error(self, mock_get):
         from server.integrations.simple import get_jellyfin
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -555,7 +555,7 @@ class TestJellyfin:
 
 
 class TestEnergyShelly:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_gen2_success(self, mock_get):
         from server.integrations.simple import get_energy_shelly
         mock_get.return_value = {
@@ -568,7 +568,7 @@ class TestEnergyShelly:
         assert result[0]["status"] == "online"
         assert result[0]["power_w"] == 125.3
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_gen1_fallback(self, mock_get):
         from server.integrations.simple import get_energy_shelly
         # Gen2 fails, Gen1 succeeds
@@ -582,7 +582,7 @@ class TestEnergyShelly:
         assert result[0]["status"] == "online"
         assert result[0]["power_w"] == 80.0
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_both_fail_offline(self, mock_get):
         from server.integrations.simple import get_energy_shelly
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -600,7 +600,7 @@ class TestScrutiny:
         from server.integrations.simple import get_scrutiny
         assert get_scrutiny("") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_scrutiny
         mock_get.return_value = {
@@ -631,13 +631,13 @@ class TestScrutiny:
         assert result["failed"] == 1
         assert result["maxTemp"] == 42
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_none_on_empty_summary(self, mock_get):
         from server.integrations.simple import get_scrutiny
         mock_get.return_value = {"data": {"summary": {}}}
         assert get_scrutiny("http://scrutiny:8080") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_none_on_error(self, mock_get):
         from server.integrations.simple import get_scrutiny
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -650,7 +650,7 @@ class TestFrigate:
         from server.integrations.simple import get_frigate
         assert get_frigate("") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_frigate
         mock_get.side_effect = [
@@ -674,7 +674,7 @@ class TestFrigate:
         assert result["onlineCount"] == 1
         assert result["version"] == "0.14.0"
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_none_on_error(self, mock_get):
         from server.integrations.simple import get_frigate
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -691,7 +691,7 @@ class TestGraylog:
         from server.integrations.simple import get_graylog
         assert get_graylog("http://graylog:9000", "") is None
 
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_monitoring._client")
     def test_returns_data_on_success(self, mock_client):
         from server.integrations.simple import get_graylog
         resp = _mock_response(json_data={
@@ -707,7 +707,7 @@ class TestGraylog:
         assert result["total"] == 42
         assert len(result["messages"]) == 1
 
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_monitoring._client")
     def test_returns_none_on_error(self, mock_client):
         from server.integrations.simple import get_graylog
         mock_client.get.side_effect = httpx.HTTPError("fail")
@@ -724,7 +724,7 @@ class TestInfluxdb:
         from server.integrations.simple import query_influxdb
         assert query_influxdb("http://influx:8086", "token", "org", "") is None
 
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_monitoring._client")
     def test_returns_parsed_csv(self, mock_client):
         from server.integrations.simple import query_influxdb
         csv = "_time,_value,_field\n2026-03-24T00:00:00Z,42.5,temperature"
@@ -736,7 +736,7 @@ class TestInfluxdb:
         assert len(result) == 1
         assert result[0]["_value"] == "42.5"
 
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_monitoring._client")
     def test_returns_none_on_error(self, mock_client):
         from server.integrations.simple import query_influxdb
         mock_client.post.side_effect = httpx.HTTPError("fail")
@@ -760,7 +760,7 @@ class TestTautulli:
         from server.integrations.simple import get_tautulli
         assert get_tautulli("http://tautulli:8181", "") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_tautulli
         mock_get.side_effect = [
@@ -779,7 +779,7 @@ class TestTautulli:
         assert result["streams"] == 2
         assert len(result["top_users"]) == 2
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_none_on_error(self, mock_get):
         from server.integrations.simple import get_tautulli
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -796,7 +796,7 @@ class TestOverseerr:
         from server.integrations.simple import get_overseerr
         assert get_overseerr("http://overseerr:5055", "") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_overseerr
         mock_get.return_value = {"pending": 3, "approved": 10, "available": 8, "total": 21}
@@ -805,7 +805,7 @@ class TestOverseerr:
         assert result["pending"] == 3
         assert result["total"] == 21
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_none_on_error(self, mock_get):
         from server.integrations.simple import get_overseerr
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -818,14 +818,14 @@ class TestProwlarr:
         from server.integrations.simple import get_prowlarr
         assert get_prowlarr("", "key") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_prowlarr
         mock_get.return_value = [{"id": 1}, {"id": 2}]
         result = get_prowlarr("http://prowlarr:9696", "key")
         assert result["indexer_count"] == 2
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_none_on_error(self, mock_get):
         from server.integrations.simple import get_prowlarr
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -834,7 +834,7 @@ class TestProwlarr:
 
 
 class TestServarrExtended:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_servarr_extended
         mock_get.side_effect = [
@@ -849,7 +849,7 @@ class TestServarrExtended:
 
 
 class TestServarrCalendar:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_episodes(self, mock_get):
         from server.integrations.simple import get_servarr_calendar
         mock_get.return_value = [
@@ -863,7 +863,7 @@ class TestServarrCalendar:
 
 
 class TestNextcloud:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_returns_data_on_success(self, mock_get):
         from server.integrations.simple import get_nextcloud
         mock_get.return_value = {
@@ -881,7 +881,7 @@ class TestNextcloud:
 
 
 class TestTraefik:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_network._http_get")
     def test_counts_errors(self, mock_get):
         from server.integrations.simple import get_traefik
         mock_get.side_effect = [
@@ -895,7 +895,7 @@ class TestTraefik:
 
 
 class TestNpm:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_network._http_get")
     def test_returns_proxy_host_count(self, mock_get):
         from server.integrations.simple import get_npm
         mock_get.return_value = [{"id": 1}, {"id": 2}, {"id": 3}]
@@ -904,7 +904,7 @@ class TestNpm:
 
 
 class TestAuthentik:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_comms._http_get")
     def test_returns_user_and_login_counts(self, mock_get):
         from server.integrations.simple import get_authentik
         mock_get.side_effect = [
@@ -917,7 +917,7 @@ class TestAuthentik:
 
 
 class TestCloudflare:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_network._http_get")
     def test_returns_analytics(self, mock_get):
         from server.integrations.simple import get_cloudflare
         mock_get.return_value = {
@@ -933,7 +933,7 @@ class TestCloudflare:
 
 
 class TestOmv:
-    @patch("server.integrations.simple.httpx.Client")
+    @patch("server.integrations.simple_infra.httpx.Client")
     def test_returns_filesystems(self, mock_client_cls):
         from server.integrations.simple import get_omv
         mock_client = _mock_client_ctx(mock_client_cls)
@@ -948,7 +948,7 @@ class TestOmv:
 
 
 class TestXcpng:
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_infra._client")
     def test_filters_control_domains(self, mock_client):
         from server.integrations.simple import get_xcpng
         login_resp = _mock_response(json_data={"result": "session-id"})
@@ -965,7 +965,7 @@ class TestXcpng:
 
 
 class TestHomebridge:
-    @patch("server.integrations.simple.httpx.Client")
+    @patch("server.integrations.simple_iot.httpx.Client")
     def test_detects_battery_devices(self, mock_client_cls):
         from server.integrations.simple import get_homebridge
         mock_client = _mock_client_ctx(mock_client_cls)
@@ -983,7 +983,7 @@ class TestHomebridge:
 
 
 class TestZ2m:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_iot._http_get")
     def test_detects_offline_and_low_battery(self, mock_get):
         from server.integrations.simple import get_z2m
         mock_get.return_value = [
@@ -998,7 +998,7 @@ class TestZ2m:
 
 
 class TestEsphome:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_iot._http_get")
     def test_counts_online_nodes(self, mock_get):
         from server.integrations.simple import get_esphome
         mock_get.return_value = [
@@ -1032,7 +1032,7 @@ class TestUnifiProtect:
 
 
 class TestPikvm:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_iot._http_get")
     def test_online(self, mock_get):
         from server.integrations.simple import get_pikvm
         mock_get.return_value = {"result": {}}
@@ -1041,7 +1041,7 @@ class TestPikvm:
 
 
 class TestK8s:
-    @patch("server.integrations.simple.httpx.get")
+    @patch("server.integrations.simple_infra.httpx.get")
     def test_counts_pods_and_namespaces(self, mock_get):
         from server.integrations.simple import get_k8s
         mock_get.return_value = _mock_response(json_data={"items": [
@@ -1055,7 +1055,7 @@ class TestK8s:
 
 
 class TestGitea:
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_infra._client")
     def test_uses_x_total_count_header(self, mock_client):
         from server.integrations.simple import get_gitea
         resp = _mock_response(json_data={"data": []}, headers={"x-total-count": "42"})
@@ -1063,7 +1063,7 @@ class TestGitea:
         result = get_gitea("http://gitea:3000", "token")
         assert result["repos"] == 42
 
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_infra._client")
     def test_falls_back_to_body(self, mock_client):
         from server.integrations.simple import get_gitea
         resp = _mock_response(json_data={"data": [{"id": 1}, {"id": 2}]}, headers={})
@@ -1073,7 +1073,7 @@ class TestGitea:
 
 
 class TestGitlab:
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_infra._client")
     def test_uses_x_total_header(self, mock_client):
         from server.integrations.simple import get_gitlab
         resp = _mock_response(json_data=[], headers={"x-total": "55"})
@@ -1083,7 +1083,7 @@ class TestGitlab:
 
 
 class TestGithub:
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_infra._client")
     def test_returns_repo_count(self, mock_client):
         from server.integrations.simple import get_github
         resp = _mock_response(json_data=[{"id": 1}, {"id": 2}])
@@ -1093,7 +1093,7 @@ class TestGithub:
 
 
 class TestPaperless:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_infra._http_get")
     def test_returns_document_count(self, mock_get):
         from server.integrations.simple import get_paperless
         mock_get.return_value = {"count": 1234}
@@ -1102,7 +1102,7 @@ class TestPaperless:
 
 
 class TestVaultwarden:
-    @patch("server.integrations.simple._client")
+    @patch("server.integrations.simple_infra._client")
     def test_returns_online(self, mock_client):
         from server.integrations.simple import get_vaultwarden
         mock_client.get.return_value = _mock_response()
@@ -1111,7 +1111,7 @@ class TestVaultwarden:
 
 
 class TestWeather:
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_weather_data(self, mock_get):
         from server.integrations.simple import get_weather
         mock_get.return_value = {
@@ -1129,7 +1129,7 @@ class TestScrutinyIntelligence:
         from server.integrations.simple import get_scrutiny_intelligence
         assert get_scrutiny_intelligence("") is None
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_predictions(self, mock_get):
         from server.integrations.simple import get_scrutiny_intelligence
         mock_get.side_effect = [
@@ -1149,7 +1149,7 @@ class TestScrutinyIntelligence:
         assert len(result) == 1
         assert result[0]["wwn"] == "wwn1"
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_returns_none_on_error(self, mock_get):
         from server.integrations.simple import get_scrutiny_intelligence
         mock_get.side_effect = httpx.HTTPError("fail")
@@ -1844,7 +1844,7 @@ class TestTruenasWsCleanup:
 class TestEdgeCases:
     """Cross-cutting edge cases for integration drivers."""
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_plex_malformed_response(self, mock_get):
         """Missing MediaContainer key should not crash."""
         from server.integrations.simple import get_plex
@@ -1852,7 +1852,7 @@ class TestEdgeCases:
         result = get_plex("http://plex:32400", "token")
         assert result["sessions"] == 0
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_speedtest_malformed_data(self, mock_get):
         """Malformed data block should not crash."""
         from server.integrations.simple import get_speedtest
@@ -1861,7 +1861,7 @@ class TestEdgeCases:
         result = get_speedtest("http://st:8080")
         assert result["status"] == "offline"
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_media._http_get")
     def test_jellyfin_null_sessions(self, mock_get):
         """None sessions list should not crash."""
         from server.integrations.simple import get_jellyfin
@@ -1872,11 +1872,11 @@ class TestEdgeCases:
         result = get_jellyfin("http://jf:8096", "key")
         assert result["streams"] == 0
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_kuma_no_monitor_lines(self, mock_get):
         """Metrics endpoint with no monitor_status lines."""
         from server.integrations.simple import get_kuma
-        with patch("server.integrations.simple._client") as mock_client:
+        with patch("server.integrations.simple_monitoring._client") as mock_client:
             resp = MagicMock()
             resp.text = "# HELP uptime\n# TYPE uptime gauge\nuptime 12345\n"
             resp.raise_for_status.return_value = None
@@ -1884,7 +1884,7 @@ class TestEdgeCases:
             result = get_kuma("http://kuma:3001")
             assert result == []
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_network._http_get")
     def test_adguard_zero_queries(self, mock_get):
         """Zero queries should not cause ZeroDivisionError."""
         from server.integrations.simple import get_adguard
@@ -1892,7 +1892,7 @@ class TestEdgeCases:
         result = get_adguard("http://adguard:3000", "", "")
         assert result["percent"] == 0
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_network._http_get")
     def test_cloudflare_zero_bandwidth(self, mock_get):
         """Zero bandwidth should not cause ZeroDivisionError."""
         from server.integrations.simple import get_cloudflare
@@ -1909,7 +1909,7 @@ class TestEdgeCases:
     def test_trailing_slash_stripping(self):
         """All drivers should handle trailing slashes gracefully."""
         from server.integrations.simple import get_plex
-        with patch("server.integrations.simple._http_get") as mock_get:
+        with patch("server.integrations.simple_media._http_get") as mock_get:
             mock_get.side_effect = [
                 {"MediaContainer": {"size": 0}},
                 {"MediaContainer": {"size": 0}},
@@ -1933,7 +1933,7 @@ class TestEdgeCases:
         # Should not crash; mem_percent should be 0 due to `or 1` guard
         assert result["nodes"][0]["mem_percent"] == 0.0
 
-    @patch("server.integrations.simple._http_get")
+    @patch("server.integrations.simple_monitoring._http_get")
     def test_hass_entities_capped_at_500(self, mock_get):
         """Entity list should be capped at 500."""
         from server.integrations.hass import get_hass_entities

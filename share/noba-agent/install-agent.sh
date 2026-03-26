@@ -60,8 +60,8 @@ fi
 
 # Deploy
 sudo mkdir -p "$INSTALL_DIR"
-sudo cp "$SCRIPT_DIR/agent.py" "$INSTALL_DIR/agent.py"
-sudo chmod +x "$INSTALL_DIR/agent.py"
+sudo cp "$SCRIPT_DIR/agent.pyz" "$INSTALL_DIR/agent.pyz"
+sudo chmod +x "$INSTALL_DIR/agent.pyz"
 _ok "Agent deployed to $INSTALL_DIR"
 
 # Config
@@ -83,7 +83,7 @@ _ok "Config: $CONFIG (mode 600)"
 
 # Test
 echo ""
-if $PYTHON "$INSTALL_DIR/agent.py" --config "$CONFIG" --once 2>&1; then
+if $PYTHON "$INSTALL_DIR/agent.pyz" --config "$CONFIG" --once 2>&1; then
     _ok "Test report successful!"
 else
     _warn "Test failed — agent will retry with backoff"
@@ -98,7 +98,7 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
-ExecStart=$PYTHON $INSTALL_DIR/agent.py --config $CONFIG
+ExecStart=$PYTHON $INSTALL_DIR/agent.pyz --config $CONFIG
 Restart=always
 RestartSec=30
 StandardOutput=journal
@@ -111,7 +111,7 @@ EOF
     sudo systemctl enable --now "$SERVICE"
     _ok "Service enabled and running"
 else
-    _warn "No systemd — run manually: $PYTHON $INSTALL_DIR/agent.py --config $CONFIG"
+    _warn "No systemd — run manually: $PYTHON $INSTALL_DIR/agent.pyz --config $CONFIG"
 fi
 
 echo ""

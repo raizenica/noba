@@ -634,15 +634,26 @@ if [[ -d "$_plugins_src" ]]; then
     fi
 fi
 
-# Deploy agent script (served via /api/agent/update for remote agent self-update)
-_agent_src="$SCRIPT_DIR/share/noba-agent/agent.py"
-_agent_dst="$LIBEXEC_DIR/noba-agent/agent.py"
-if [[ -f "$_agent_src" ]]; then
+# Deploy agent zipapp (served via /api/agent/update for remote agent self-update)
+_agent_pyz_src="$SCRIPT_DIR/share/noba-agent.pyz"
+_agent_pyz_dst="$LIBEXEC_DIR/noba-agent.pyz"
+if [[ -f "$_agent_pyz_src" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
-        dry "install $_agent_src → $_agent_dst"
+        dry "install $_agent_pyz_src → $_agent_pyz_dst"
     else
-        install_file "$_agent_src" "$_agent_dst" 755
-        say_ok "Agent script (for remote update)"
+        install_file "$_agent_pyz_src" "$_agent_pyz_dst" 755
+        say_ok "Agent zipapp (for remote update)"
+    fi
+elif [[ -d "$SCRIPT_DIR/share/noba-agent" ]]; then
+    # Build the zipapp on the fly if not pre-built
+    if [[ "$DRY_RUN" == true ]]; then
+        dry "build agent.pyz from share/noba-agent → $_agent_pyz_dst"
+    else
+        python3 -m zipapp "$SCRIPT_DIR/share/noba-agent" \
+            --output "$_agent_pyz_dst" \
+            --python "/usr/bin/env python3"
+        chmod 755 "$_agent_pyz_dst"
+        say_ok "Agent zipapp (built + deployed for remote update)"
     fi
 fi
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import sqlite3
 
 logger = logging.getLogger("noba")
 
@@ -103,3 +104,23 @@ def delete_device(conn, lock, device_id: int) -> bool:
     except Exception as e:
         logger.error("delete_device failed: %s", e)
         return False
+
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS network_devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            mac TEXT,
+            hostname TEXT,
+            vendor TEXT,
+            open_ports TEXT,
+            discovered_by TEXT,
+            first_seen INTEGER,
+            last_seen INTEGER,
+            UNIQUE(ip, mac)
+        );
+        CREATE INDEX IF NOT EXISTS idx_network_devices_ip
+            ON network_devices(ip);
+    """)

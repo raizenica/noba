@@ -74,7 +74,7 @@ async function generateScript(os) {
     if (os === 'linux') {
       installCmd.value = `curl -sf "${server}/api/agent/install-script?key=${key}" | sudo bash`
     } else {
-      installCmd.value = `irm "${server}/api/agent/update" -Headers @{"X-Agent-Key"="${key}"} -OutFile agent.py; python agent.py --server ${server} --key ${key} --once`
+      installCmd.value = `irm "${server}/api/agent/update" -Headers @{"X-Agent-Key"="${key}"} -OutFile agent.pyz; python agent.pyz --server ${server} --key ${key} --once`
     }
   } catch {
     installCmd.value = '# Could not generate script'

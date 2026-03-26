@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from .. import deps as _deps
+from ..deps import handle_errors
 from ..agent_config import RISK_LEVELS, check_role_permission
 from ..agent_store import (
     _agent_cmd_lock, _agent_commands,
@@ -35,6 +36,7 @@ router = APIRouter(tags=["operations"])
 
 # ── /api/recovery ─────────────────────────────────────────────────────────────
 @router.post("/api/recovery/tailscale-reconnect")
+@handle_errors
 async def api_recovery_tailscale(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip = _client_ip(request)
@@ -46,13 +48,12 @@ async def api_recovery_tailscale(request: Request, auth=Depends(_require_operato
         db.audit_log("recovery_tailscale", username, f"exit={result.returncode}", ip)
         return {"status": "ok" if result.returncode == 0 else "error",
                 "output": result.stdout[:500], "error": result.stderr[:500]}
-    except HTTPException:
-        raise
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
 
 @router.post("/api/recovery/dns-flush")
+@handle_errors
 async def api_recovery_dns(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip = _client_ip(request)
@@ -68,13 +69,12 @@ async def api_recovery_dns(request: Request, auth=Depends(_require_operator)):
         db.audit_log("recovery_dns_flush", username, f"exit={result.returncode}", ip)
         return {"status": "ok" if result.returncode == 0 else "error",
                 "output": result.stdout[:500], "error": result.stderr[:500]}
-    except HTTPException:
-        raise
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
 
 @router.post("/api/recovery/service-restart")
+@handle_errors
 async def api_recovery_service(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip = _client_ip(request)
@@ -91,14 +91,13 @@ async def api_recovery_service(request: Request, auth=Depends(_require_operator)
         db.audit_log("recovery_service_restart", username, f"service={service} exit={result.returncode}", ip)
         return {"status": "ok" if result.returncode == 0 else "error",
                 "service": service, "output": result.stdout[:500]}
-    except HTTPException:
-        raise
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
 
 # ── /api/sites/sync-status ───────────────────────────────────────────────────
 @router.get("/api/sites/sync-status")
+@handle_errors
 def api_sync_status(auth=Depends(_get_auth)):
     cfg = read_yaml_settings()
     site_map = cfg.get("siteMap", {})
@@ -123,12 +122,14 @@ def api_sync_status(auth=Depends(_get_auth)):
 
 # ── /api/smart ────────────────────────────────────────────────────────────────
 @router.get("/api/smart")
+@handle_errors
 def api_smart(auth=Depends(_get_auth)):
     return collect_smart()
 
 
 # ── Systemd journal viewer ───────────────────────────────────────────────────
 @router.get("/api/journal")
+@handle_errors
 def api_journal(request: Request, auth=Depends(_require_operator)):
     """Query systemd journal with filters."""
     unit = request.query_params.get("unit", "")
@@ -171,6 +172,7 @@ def api_journal(request: Request, auth=Depends(_require_operator)):
 
 
 @router.get("/api/journal/units")
+@handle_errors
 def api_journal_units(auth=Depends(_require_operator)):
     """List systemd units for the journal filter."""
     try:
@@ -184,14 +186,13 @@ def api_journal_units(auth=Depends(_require_operator)):
             if parts:
                 units.append({"name": parts[0], "status": parts[3] if len(parts) > 3 else ""})
         return units[:200]
-    except HTTPException:
-        raise
     except Exception:
         return []
 
 
 # ── Extended system info ─────────────────────────────────────────────────────
 @router.get("/api/system/info")
+@handle_errors
 def api_system_info(auth=Depends(_get_auth)):
     """Extended system information."""
     import platform
@@ -222,14 +223,13 @@ def api_system_info(auth=Depends(_get_auth)):
         info["ram_available_gb"] = round(vm.available / (1024**3), 1)
         info["swap_total_gb"] = round(sw.total / (1024**3), 1)
         info["swap_used_gb"] = round(sw.used / (1024**3), 1)
-    except HTTPException:
-        raise
     except Exception:
         pass
     return info
 
 
 @router.get("/api/system/health")
+@handle_errors
 def api_system_health(auth=Depends(_get_auth)):
     """Comprehensive system health overview with score."""
     stats = _deps.bg_collector.get() or {}
@@ -314,6 +314,7 @@ def api_system_health(auth=Depends(_get_auth)):
 
 
 @router.post("/api/system/cpu-governor")
+@handle_errors
 async def api_cpu_governor(request: Request, auth=Depends(_require_admin)):
     username, _ = auth
     body = await _read_body(request)
@@ -325,8 +326,6 @@ async def api_cpu_governor(request: Request, auth=Depends(_require_admin)):
         r = await asyncio.to_thread(subprocess.run, ["sudo", "-n", "cpupower", "frequency-set", "-g", governor],
                           capture_output=True, timeout=10)
         ok = r.returncode == 0
-    except HTTPException:
-        raise
     except Exception:
         ok = False
     db.audit_log("cpu_governor", username, f"Set {governor} -> {ok}", _client_ip(request))
@@ -335,6 +334,7 @@ async def api_cpu_governor(request: Request, auth=Depends(_require_admin)):
 
 # ── /api/processes ────────────────────────────────────────────────────────────
 @router.get("/api/processes/history")
+@handle_errors
 def api_process_history(auth=Depends(_get_auth)):
     """Get rolling history of top CPU and memory consumers."""
     from ..metrics import get_process_history
@@ -342,6 +342,7 @@ def api_process_history(auth=Depends(_get_auth)):
 
 
 @router.get("/api/processes/current")
+@handle_errors
 def api_processes_current(auth=Depends(_get_auth)):
     """Get current process list with details."""
     import psutil as _psutil
@@ -358,8 +359,6 @@ def api_processes_current(auth=Depends(_get_auth)):
                     "status": info.get("status", ""),
                     "user": (info.get("username") or "")[:20],
                 })
-        except HTTPException:
-            raise
         except Exception:
             continue
     procs.sort(key=lambda x: x["cpu"], reverse=True)
@@ -400,8 +399,6 @@ async def _ensure_agent_discovery(hostname: str, timeout: float = 15.0) -> str |
             await ws.send_json({"type": "command", "id": cmd_id,
                                 "cmd": cmd_type, "params": {}})
             cmd_ids[cmd_id] = cmd_type
-        except HTTPException:
-            raise
         except Exception:
             pass
 
@@ -441,6 +438,7 @@ async def _ensure_agent_discovery(hostname: str, timeout: float = 15.0) -> str |
 
 
 @router.get("/api/export/ansible")
+@handle_errors
 async def api_export_ansible(request: Request, auth=Depends(_require_operator)):
     """Generate an Ansible playbook from live agent data."""
     from ..iac_export import generate_ansible
@@ -471,6 +469,7 @@ async def api_export_ansible(request: Request, auth=Depends(_require_operator)):
 
 
 @router.get("/api/export/docker-compose")
+@handle_errors
 async def api_export_docker_compose(request: Request, auth=Depends(_require_operator)):
     """Generate a docker-compose.yml from live agent container data."""
     from ..iac_export import generate_docker_compose
@@ -493,6 +492,7 @@ async def api_export_docker_compose(request: Request, auth=Depends(_require_oper
 
 
 @router.get("/api/export/shell")
+@handle_errors
 async def api_export_shell(request: Request, auth=Depends(_require_operator)):
     """Generate a bash setup script from live agent data."""
     from ..iac_export import generate_shell_script
@@ -517,6 +517,7 @@ async def api_export_shell(request: Request, auth=Depends(_require_operator)):
 # ── Backup Verification (Feature 4) ───────────────────────────────────────
 
 @router.get("/api/backup/verifications")
+@handle_errors
 def api_backup_verifications(request: Request, auth=Depends(_get_auth)):
     """Return backup verification history."""
     hostname = request.query_params.get("hostname", "") or None
@@ -525,6 +526,7 @@ def api_backup_verifications(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/backup/verify")
+@handle_errors
 async def api_backup_verify(request: Request, auth=Depends(_require_operator)):
     """Trigger a backup verification on a specific agent."""
     username, role = auth
@@ -566,8 +568,6 @@ async def api_backup_verify(request: Request, auth=Depends(_require_operator)):
             await ws.send_json({"type": "command", "id": cmd_id,
                                 "cmd": cmd_type, "params": params})
             delivered = True
-        except HTTPException:
-            raise
         except Exception:
             with _agent_ws_lock:
                 _agent_websockets.pop(hostname, None)
@@ -584,12 +584,14 @@ async def api_backup_verify(request: Request, auth=Depends(_require_operator)):
 
 
 @router.get("/api/backup/321-status")
+@handle_errors
 def api_backup_321_status(auth=Depends(_get_auth)):
     """Return 3-2-1 backup compliance status."""
     return db.get_backup_321_status()
 
 
 @router.put("/api/backup/321-status")
+@handle_errors
 async def api_backup_321_update(request: Request, auth=Depends(_require_operator)):
     """Update 3-2-1 backup compliance tracking for a backup."""
     username, _ = auth
@@ -643,6 +645,7 @@ def _is_docker() -> bool:
 
 
 @router.get("/api/system/update/check")
+@handle_errors
 async def api_update_check(auth=Depends(_require_operator)):
     """Check if a newer version is available on the remote."""
     # Docker containers can't self-update via git — return instructions instead
@@ -658,8 +661,6 @@ async def api_update_check(auth=Depends(_require_operator)):
             if r.status_code == 200:
                 data = r.json()
                 latest = data.get("tag_name", "").lstrip("v")
-        except HTTPException:
-            raise
         except Exception:
             pass
         return {
@@ -736,8 +737,6 @@ async def api_update_check(auth=Depends(_require_operator)):
             "current_version": VERSION,
             "error": "Update check timed out",
         }
-    except HTTPException:
-        raise
     except Exception as exc:
         logger.error("Update check failed: %s", exc)
         return {
@@ -748,6 +747,7 @@ async def api_update_check(auth=Depends(_require_operator)):
 
 
 @router.post("/api/system/update/apply")
+@handle_errors
 async def api_update_apply(request: Request, auth=Depends(_require_admin)):
     """Pull latest code, re-install, and schedule a service restart."""
     username, _ = auth
@@ -811,8 +811,6 @@ async def api_update_apply(request: Request, auth=Depends(_require_admin)):
                     ["systemctl", "--user", "restart", "noba-web.service"],
                     timeout=10,
                 )
-            except HTTPException:
-                raise
             except Exception as exc:
                 logger.error("Service restart failed: %s", exc)
 
@@ -824,12 +822,8 @@ async def api_update_apply(request: Request, auth=Depends(_require_admin)):
             "steps": steps,
         }
 
-    except HTTPException:
-        raise
     except subprocess.TimeoutExpired:
         raise HTTPException(500, "Update step timed out")
-    except HTTPException:
-        raise
     except Exception as exc:
         logger.exception("Update apply failed: %s", exc)
         raise HTTPException(500, f"Update failed: {exc}")

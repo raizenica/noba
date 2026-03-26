@@ -13,7 +13,7 @@ from ..agent_store import (
     _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
     _agent_websockets, _agent_ws_lock,
 )
-from ..deps import _client_ip, _get_auth, _read_body, _require_admin, _require_operator, _safe_int, db
+from ..deps import _client_ip, _get_auth, _read_body, _require_admin, _require_operator, _safe_int, db, handle_errors
 
 logger = logging.getLogger("noba")
 
@@ -21,12 +21,14 @@ router = APIRouter(tags=["security"])
 
 
 @router.get("/api/security/score")
+@handle_errors
 def api_security_score(auth=Depends(_get_auth)):
     """Return aggregate security score + per-agent scores."""
     return db.get_aggregate_security_score()
 
 
 @router.get("/api/security/findings")
+@handle_errors
 def api_security_findings(request: Request, auth=Depends(_get_auth)):
     """Return security findings with optional hostname/severity filters."""
     hostname = request.query_params.get("hostname", "") or None
@@ -36,6 +38,7 @@ def api_security_findings(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/security/history")
+@handle_errors
 def api_security_history(request: Request, auth=Depends(_get_auth)):
     """Return historical security scores for charting."""
     hostname = request.query_params.get("hostname", "") or None
@@ -44,6 +47,7 @@ def api_security_history(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/security/scan/{hostname}")
+@handle_errors
 async def api_security_scan(hostname: str, request: Request, auth=Depends(_require_operator)):
     """Trigger a security scan on a specific agent."""
     username, role = auth
@@ -87,6 +91,7 @@ async def api_security_scan(hostname: str, request: Request, auth=Depends(_requi
 
 
 @router.post("/api/security/scan-all")
+@handle_errors
 async def api_security_scan_all(request: Request, auth=Depends(_require_operator)):
     """Trigger security scan on all online agents."""
     username, role = auth
@@ -136,6 +141,7 @@ async def api_security_scan_all(request: Request, auth=Depends(_require_operator
 
 
 @router.post("/api/security/record")
+@handle_errors
 async def api_security_record(request: Request, auth=Depends(_require_admin)):
     """Record security scan results from an agent (called internally after scan completes)."""
     body = await _read_body(request)

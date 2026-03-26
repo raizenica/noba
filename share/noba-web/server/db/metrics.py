@@ -252,3 +252,61 @@ def catchup_rollups(conn: sqlite3.Connection, lock: threading.Lock) -> None:
                 HAVING COUNT(*) > 0
             """, (ts, ts, ts + 3600))
         conn.commit()
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS metrics (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            metric    TEXT NOT NULL,
+            value     REAL,
+            tags      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_metric_time ON metrics(metric, timestamp);
+
+        CREATE TABLE IF NOT EXISTS metrics_1m (
+            ts    INTEGER NOT NULL,
+            key   TEXT NOT NULL,
+            value REAL,
+            PRIMARY KEY (ts, key)
+        );
+        CREATE TABLE IF NOT EXISTS metrics_1h (
+            ts    INTEGER NOT NULL,
+            key   TEXT NOT NULL,
+            value REAL,
+            PRIMARY KEY (ts, key)
+        );
+    """)
+
+
+class _MetricsMixin:
+    def insert_metrics(self, metrics: list[tuple]) -> None:
+        insert_metrics(self._get_conn(), self._lock, metrics)
+
+    def get_history(self, metric: str, range_hours: int = 24,
+                    resolution: int = 60, anomaly: bool = False,
+                    raw: bool = False) -> list[dict]:
+        return get_history(self._get_read_conn(), self._read_lock, metric,
+                           range_hours=range_hours, resolution=resolution,
+                           anomaly=anomaly, raw=raw)
+
+    def prune_history(self) -> None:
+        prune_history(self._get_conn(), self._lock)
+
+    def get_trend(self, metric: str, range_hours: int = 168,
+                  projection_hours: int = 168) -> dict:
+        return get_trend(self._get_read_conn(), self._read_lock, metric,
+                         range_hours=range_hours, projection_hours=projection_hours)
+
+    def rollup_to_1m(self) -> None:
+        rollup_to_1m(self._get_conn(), self._lock)
+
+    def rollup_to_1h(self) -> None:
+        rollup_to_1h(self._get_conn(), self._lock)
+
+    def prune_rollups(self) -> None:
+        prune_rollups(self._get_conn(), self._lock)
+
+    def catchup_rollups(self) -> None:
+        catchup_rollups(self._get_conn(), self._lock)

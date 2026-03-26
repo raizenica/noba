@@ -179,7 +179,7 @@ class TestBackup321Status:
 
 class TestAgentVerifyBackup:
     def test_checksum_valid_file(self):
-        from agent import _cmd_verify_backup
+        from commands import _cmd_verify_backup
 
         fd, fpath = tempfile.mkstemp(prefix="noba_test_bv_")
         try:
@@ -205,7 +205,7 @@ class TestAgentVerifyBackup:
                 pass
 
     def test_checksum_missing_file(self):
-        from agent import _cmd_verify_backup
+        from commands import _cmd_verify_backup
 
         result = _cmd_verify_backup(
             {"path": "/nonexistent/backup.tar.gz", "verification_type": "checksum"}, {}
@@ -213,7 +213,7 @@ class TestAgentVerifyBackup:
         assert result["status"] == "error"
 
     def test_restore_test_valid_tar(self):
-        from agent import _cmd_verify_backup
+        from commands import _cmd_verify_backup
 
         fd, fpath = tempfile.mkstemp(suffix=".tar.gz", prefix="noba_test_bv_")
         os.close(fd)
@@ -237,7 +237,7 @@ class TestAgentVerifyBackup:
             os.unlink(fpath)
 
     def test_restore_test_not_a_tar(self):
-        from agent import _cmd_verify_backup
+        from commands import _cmd_verify_backup
 
         fd, fpath = tempfile.mkstemp(prefix="noba_test_bv_")
         os.write(fd, b"not a tar file")
@@ -251,7 +251,7 @@ class TestAgentVerifyBackup:
             os.unlink(fpath)
 
     def test_db_integrity_valid_db(self):
-        from agent import _cmd_verify_backup
+        from commands import _cmd_verify_backup
 
         fd, fpath = tempfile.mkstemp(suffix=".db", prefix="noba_test_bv_")
         os.close(fd)
@@ -272,7 +272,7 @@ class TestAgentVerifyBackup:
             os.unlink(fpath)
 
     def test_db_integrity_not_a_db(self):
-        from agent import _cmd_verify_backup
+        from commands import _cmd_verify_backup
 
         fd, fpath = tempfile.mkstemp(prefix="noba_test_bv_")
         os.write(fd, b"not a database file at all")
@@ -287,14 +287,14 @@ class TestAgentVerifyBackup:
             os.unlink(fpath)
 
     def test_missing_path_parameter(self):
-        from agent import _cmd_verify_backup
+        from commands import _cmd_verify_backup
 
         result = _cmd_verify_backup({}, {})
         assert result["status"] == "error"
         assert "path" in result["error"].lower()
 
     def test_unknown_verification_type(self):
-        from agent import _cmd_verify_backup
+        from commands import _cmd_verify_backup
 
         fd, fpath = tempfile.mkstemp(prefix="noba_test_bv_")
         os.write(fd, b"data")

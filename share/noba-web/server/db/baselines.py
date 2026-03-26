@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+import sqlite3
 
 logger = logging.getLogger("noba")
 
@@ -183,3 +184,57 @@ def get_drift_results(conn, lock, baseline_id: int | None = None) -> list[dict]:
     except Exception as e:
         logger.error("get_drift_results failed: %s", e)
         return []
+
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS config_baselines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL,
+            expected_hash TEXT NOT NULL,
+            agent_group TEXT DEFAULT '__all__',
+            created_at INTEGER,
+            updated_at INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS drift_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            baseline_id INTEGER NOT NULL REFERENCES config_baselines(id),
+            hostname TEXT NOT NULL,
+            actual_hash TEXT,
+            status TEXT DEFAULT 'match',
+            checked_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_drift_checks_baseline
+            ON drift_checks(baseline_id, checked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_drift_checks_hostname
+            ON drift_checks(hostname, checked_at DESC);
+    """)
+
+
+class _BaselinesMixin:
+    def create_baseline(self, path: str, expected_hash: str,
+                        agent_group: str = "__all__") -> int | None:
+        return create_baseline(self._get_conn(), self._lock, path, expected_hash,
+                               agent_group=agent_group)
+
+    def list_baselines(self) -> list[dict]:
+        return list_baselines(self._get_read_conn(), self._read_lock)
+
+    def get_baseline(self, baseline_id: int) -> dict | None:
+        return get_baseline(self._get_read_conn(), self._read_lock, baseline_id)
+
+    def delete_baseline(self, baseline_id: int) -> bool:
+        return delete_baseline(self._get_conn(), self._lock, baseline_id)
+
+    def update_baseline(self, baseline_id: int, expected_hash: str) -> bool:
+        return update_baseline(self._get_conn(), self._lock, baseline_id, expected_hash)
+
+    def record_drift_check(self, baseline_id: int, hostname: str,
+                           actual_hash: str | None, status: str = "match") -> int | None:
+        return record_drift_check(self._get_conn(), self._lock, baseline_id,
+                                  hostname, actual_hash, status=status)
+
+    def get_drift_results(self, baseline_id: int | None = None) -> list[dict]:
+        return get_drift_results(self._get_read_conn(), self._read_lock, baseline_id=baseline_id)

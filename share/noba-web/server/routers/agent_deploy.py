@@ -27,6 +27,7 @@ from ..constants import (
 from ..deps import (
     _client_ip, _read_body,
     _require_admin, _safe_int, db,
+    handle_errors,
 )
 from . import agents as _agents_mod
 from .agents import _validate_agent_key
@@ -41,6 +42,7 @@ router = APIRouter(tags=["agents"])
 # ── Uninstall / Delete endpoints ─────────────────────────────────────────────
 
 @router.post("/api/agents/{hostname}/uninstall")
+@handle_errors
 async def api_agent_uninstall(hostname: str, request: Request, auth=Depends(_require_admin)):
     """Queue uninstall command and mark agent for removal."""
     username, _ = auth
@@ -55,6 +57,7 @@ async def api_agent_uninstall(hostname: str, request: Request, auth=Depends(_req
 
 
 @router.delete("/api/agents/{hostname}")
+@handle_errors
 def api_agent_delete(hostname: str, request: Request, auth=Depends(_require_admin)):
     """Remove an agent from the dashboard (DB + in-memory). Admin only."""
     username, _ = auth
@@ -74,8 +77,9 @@ def api_agent_delete(hostname: str, request: Request, auth=Depends(_require_admi
 # ── Update / Install script endpoints ────────────────────────────────────────
 
 @router.get("/api/agent/update")
+@handle_errors
 def api_agent_update(request: Request) -> FileResponse:
-    """Serve the latest agent.py for self-update. Auth via X-Agent-Key."""
+    """Serve the latest agent.pyz for self-update. Auth via X-Agent-Key."""
     key = request.headers.get("X-Agent-Key", "")
     if not key:
         raise HTTPException(401, "Missing X-Agent-Key")
@@ -83,13 +87,14 @@ def api_agent_update(request: Request) -> FileResponse:
     valid_keys = [k.strip() for k in cfg.get("agentKeys", "").split(",") if k.strip()]
     if not valid_keys or key not in valid_keys:
         raise HTTPException(403, "Invalid agent key")
-    agent_path = _WEB_DIR.parent / "noba-agent" / "agent.py"
+    agent_path = _WEB_DIR.parent / "noba-agent.pyz"
     if not agent_path.exists():
         raise HTTPException(404, "Agent file not found")
-    return FileResponse(agent_path, media_type="text/x-python")
+    return FileResponse(agent_path, media_type="application/zip")
 
 
 @router.get("/api/agent/install-script")
+@handle_errors
 def api_agent_install_script(request: Request) -> Response:
     """Generate a one-liner install script. Auth via X-Agent-Key."""
     key = request.headers.get("X-Agent-Key", "") or request.query_params.get("key", "")
@@ -112,8 +117,8 @@ HOSTNAME="$(hostname)"
 
 echo "[noba] Installing agent on $HOSTNAME..."
 sudo mkdir -p "$INSTALL_DIR"
-curl -sf "$SERVER/api/agent/update" -H "X-Agent-Key: $KEY" -o "$INSTALL_DIR/agent.py"
-sudo chmod +x "$INSTALL_DIR/agent.py"
+curl -sf "$SERVER/api/agent/update" -H "X-Agent-Key: $KEY" -o "$INSTALL_DIR/agent.pyz"
+sudo chmod +x "$INSTALL_DIR/agent.pyz"
 
 # Install psutil if possible
 command -v apt-get &>/dev/null && sudo apt-get install -y python3-psutil 2>/dev/null || true
@@ -135,7 +140,7 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
-ExecStart=$(command -v python3) $INSTALL_DIR/agent.py --config /etc/noba-agent.yaml
+ExecStart=$(command -v python3) $INSTALL_DIR/agent.pyz --config /etc/noba-agent.yaml
 Restart=always
 RestartSec=30
 [Install]
@@ -153,6 +158,7 @@ echo "[noba] Agent installed and running on $HOSTNAME"
 # ── Deploy endpoint ──────────────────────────────────────────────────────────
 
 @router.post("/api/agents/deploy")
+@handle_errors
 async def api_agent_deploy(request: Request, auth=Depends(_require_admin)):
     """Remote deploy: SSH into a node and install the agent."""
     username, _ = auth
@@ -187,7 +193,7 @@ async def api_agent_deploy(request: Request, auth=Depends(_require_admin)):
     if not re.match(r'^https?://[a-zA-Z0-9._:/-]+$', server_url):
         raise HTTPException(400, "Invalid serverUrl configuration")
 
-    agent_path = _WEB_DIR.parent / "noba-agent" / "agent.py"
+    agent_path = _WEB_DIR.parent / "noba-agent.pyz"
     if not agent_path.exists():
         raise HTTPException(500, "Agent file not found on server")
 
@@ -210,7 +216,7 @@ async def api_agent_deploy(request: Request, auth=Depends(_require_admin)):
     try:
         result = await asyncio.to_thread(
             subprocess.run,
-            scp_cmd + [str(agent_path), f"{target}:/tmp/noba-agent.py"],
+            scp_cmd + [str(agent_path), f"{target}:/tmp/noba-agent.pyz"],
             capture_output=True, text=True, timeout=30, env=env,
         )
         if result.returncode != 0:
@@ -218,8 +224,8 @@ async def api_agent_deploy(request: Request, auth=Depends(_require_admin)):
 
         install_cmds = f"""
 sudo mkdir -p /opt/noba-agent
-sudo cp /tmp/noba-agent.py /opt/noba-agent/agent.py
-sudo chmod +x /opt/noba-agent/agent.py
+sudo cp /tmp/noba-agent.pyz /opt/noba-agent/agent.pyz
+sudo chmod +x /opt/noba-agent/agent.pyz
 command -v apt-get >/dev/null && sudo apt-get install -y python3-psutil 2>/dev/null || true
 command -v dnf >/dev/null && sudo dnf install -y python3-psutil 2>/dev/null || true
 sudo tee /etc/noba-agent.yaml > /dev/null <<AGENTCFG
@@ -234,7 +240,7 @@ Description=NOBA Agent
 After=network-online.target
 [Service]
 Type=simple
-ExecStart=$(command -v python3 || echo /usr/bin/python3) /opt/noba-agent/agent.py --config /etc/noba-agent.yaml
+ExecStart=$(command -v python3 || echo /usr/bin/python3) /opt/noba-agent/agent.pyz --config /etc/noba-agent.yaml
 Restart=always
 RestartSec=30
 [Install]
@@ -269,6 +275,7 @@ systemctl is-active noba-agent
 # ── File transfer endpoints (Phase 1c) ──────────────────────────────────────
 
 @router.post("/api/agent/file-upload")
+@handle_errors
 async def api_agent_file_upload(request: Request):
     """Receive a file chunk from an agent."""
     key = request.headers.get("X-Agent-Key", "")
@@ -360,6 +367,7 @@ async def api_agent_file_upload(request: Request):
 
 
 @router.get("/api/agent/file-download/{transfer_id}")
+@handle_errors
 async def api_agent_file_download(transfer_id: str, request: Request):
     """Serve a file to an agent for file_push command."""
     key = request.headers.get("X-Agent-Key", "")
@@ -386,6 +394,7 @@ async def api_agent_file_download(transfer_id: str, request: Request):
 
 
 @router.post("/api/agents/{hostname}/transfer")
+@handle_errors
 async def api_agent_transfer(hostname: str, request: Request, auth=Depends(_require_admin)):
     """Initiate a file push to an agent. Admin uploads the file first."""
     username, _ = auth

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+import sqlite3
 
 logger = logging.getLogger("noba")
 
@@ -272,3 +273,86 @@ def get_due_monitors(conn, lock) -> list[dict]:
     except Exception as e:
         logger.error("get_due_monitors failed: %s", e)
         return []
+
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS endpoint_monitors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            method TEXT DEFAULT 'GET',
+            expected_status INTEGER DEFAULT 200,
+            check_interval INTEGER DEFAULT 300,
+            timeout INTEGER DEFAULT 10,
+            agent_hostname TEXT,
+            enabled INTEGER DEFAULT 1,
+            created_at INTEGER,
+            last_checked INTEGER,
+            last_status TEXT,
+            last_response_ms INTEGER,
+            cert_expiry_days INTEGER,
+            notify_cert_days INTEGER DEFAULT 14
+        );
+        CREATE INDEX IF NOT EXISTS idx_endpoint_monitors_enabled
+            ON endpoint_monitors(enabled);
+
+        CREATE TABLE IF NOT EXISTS endpoint_check_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            monitor_id  INTEGER NOT NULL,
+            timestamp   INTEGER NOT NULL,
+            status      TEXT NOT NULL,
+            response_ms INTEGER,
+            error       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ech_monitor_ts
+            ON endpoint_check_history(monitor_id, timestamp);
+    """)
+
+
+class _EndpointsMixin:
+    def create_endpoint_monitor(self, name: str, url: str, **kwargs) -> int | None:
+        return create_monitor(self._get_conn(), self._lock, name, url, **kwargs)
+
+    def get_endpoint_monitors(self, *, enabled_only: bool = False) -> list[dict]:
+        return get_monitors(self._get_read_conn(), self._read_lock, enabled_only=enabled_only)
+
+    def get_endpoint_monitor(self, monitor_id: int) -> dict | None:
+        return get_monitor(self._get_read_conn(), self._read_lock, monitor_id)
+
+    def update_endpoint_monitor(self, monitor_id: int, **kwargs) -> bool:
+        return update_monitor(self._get_conn(), self._lock, monitor_id, **kwargs)
+
+    def delete_endpoint_monitor(self, monitor_id: int) -> bool:
+        return delete_monitor(self._get_conn(), self._lock, monitor_id)
+
+    def record_endpoint_check(self, monitor_id: int, **kwargs) -> None:
+        record_check_result(self._get_conn(), self._lock, monitor_id, **kwargs)
+
+    def get_due_endpoint_monitors(self) -> list[dict]:
+        return get_due_monitors(self._get_read_conn(), self._read_lock)
+
+    def record_endpoint_check_history(self, monitor_id: int, status: str,
+                                       response_ms: int | None = None,
+                                       error: str | None = None) -> None:
+        record_endpoint_check_history(self._get_conn(), self._lock,
+                                      monitor_id, status,
+                                      response_ms=response_ms, error=error)
+
+    def get_endpoint_check_history(self, monitor_id: int,
+                                    hours: int = 720) -> list[dict]:
+        return get_endpoint_check_history(self._get_read_conn(), self._read_lock,
+                                          monitor_id, hours=hours)
+
+    def get_endpoint_uptime(self, monitor_id: int, hours: int = 720) -> float:
+        return get_endpoint_uptime(self._get_read_conn(), self._read_lock,
+                                   monitor_id, hours=hours)
+
+    def get_endpoint_avg_latency(self, monitor_id: int,
+                                  hours: int = 720) -> float | None:
+        return get_endpoint_avg_latency(self._get_read_conn(), self._read_lock,
+                                        monitor_id, hours=hours)
+
+    def prune_endpoint_check_history(self, days: int = 90) -> None:
+        prune_endpoint_check_history(self._get_conn(), self._lock, days=days)

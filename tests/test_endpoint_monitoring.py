@@ -146,7 +146,7 @@ class TestEndpointCheckCommand:
         )
         sys.path.insert(0, agent_path)
         try:
-            from agent import _cmd_endpoint_check
+            from commands import _cmd_endpoint_check
             result = _cmd_endpoint_check({}, {})
             assert result["status"] == "error"
             assert "No URL" in result["error"]
@@ -159,7 +159,7 @@ class TestEndpointCheckCommand:
         )
         sys.path.insert(0, agent_path)
         try:
-            from agent import _cmd_endpoint_check
+            from commands import _cmd_endpoint_check
             # This will fail to connect but proves method validation works
             result = _cmd_endpoint_check(
                 {"url": "http://192.0.2.1:1", "method": "DELETE", "timeout": 1}, {}

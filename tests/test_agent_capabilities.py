@@ -10,7 +10,7 @@ class TestProbeCapabilities:
 
     def test_probe_returns_manifest_dict(self):
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "share", "noba-agent"))
-        from agent import probe_capabilities
+        from commands import probe_capabilities
         result = probe_capabilities()
         assert isinstance(result, dict)
         assert "os" in result
@@ -23,7 +23,7 @@ class TestProbeCapabilities:
 
     def test_probe_detects_available_tools(self):
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "share", "noba-agent"))
-        from agent import probe_capabilities
+        from commands import probe_capabilities
         result = probe_capabilities()
         caps = result["capabilities"]
         assert isinstance(caps, dict)

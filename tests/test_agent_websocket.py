@@ -66,7 +66,7 @@ class TestWebSocketClient:
     """Test the stdlib RFC 6455 WebSocket client class."""
 
     def _get_client_class(self):
-        """Import _WebSocketClient from agent.py without running main."""
+        """Import _WebSocketClient from websocket.py without running main."""
         import importlib
         import sys
         agent_path = os.path.join(
@@ -74,16 +74,18 @@ class TestWebSocketClient:
         )
         if agent_path not in sys.path:
             sys.path.insert(0, agent_path)
-        # Import the agent module
-        if "agent" in sys.modules:
-            mod = sys.modules["agent"]
+        # Import the websocket module under a distinct key to avoid colliding
+        # with the websocket-client third-party package cached as "websocket".
+        MOD_KEY = "noba_agent_websocket"
+        if MOD_KEY in sys.modules:
+            mod = sys.modules[MOD_KEY]
         else:
             spec = importlib.util.spec_from_file_location(
-                "agent",
-                os.path.join(agent_path, "agent.py"),
+                MOD_KEY,
+                os.path.join(agent_path, "websocket.py"),
             )
             mod = importlib.util.module_from_spec(spec)
-            sys.modules["agent"] = mod
+            sys.modules[MOD_KEY] = mod
             spec.loader.exec_module(mod)
         return mod._WebSocketClient
 
@@ -193,23 +195,43 @@ class TestWsThreadLogic:
     """Test the WebSocket thread's command processing logic."""
 
     def _get_agent_module(self):
+        """Return a namespace with execute_commands from commands.py and _ws_thread from __main__.py."""
         import importlib
         import sys
+        import types
         agent_path = os.path.join(
             os.path.dirname(__file__), "..", "share", "noba-agent",
         )
         if agent_path not in sys.path:
             sys.path.insert(0, agent_path)
-        if "agent" in sys.modules:
-            return sys.modules["agent"]
-        spec = importlib.util.spec_from_file_location(
-            "agent",
-            os.path.join(agent_path, "agent.py"),
-        )
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["agent"] = mod
-        spec.loader.exec_module(mod)
-        return mod
+
+        # Load commands module (provides execute_commands)
+        if "commands" not in sys.modules:
+            spec = importlib.util.spec_from_file_location(
+                "commands",
+                os.path.join(agent_path, "commands.py"),
+            )
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["commands"] = mod
+            spec.loader.exec_module(mod)
+        commands_mod = sys.modules["commands"]
+
+        # Load __main__ module (provides _ws_thread)
+        if "noba_agent_main" not in sys.modules:
+            spec = importlib.util.spec_from_file_location(
+                "noba_agent_main",
+                os.path.join(agent_path, "__main__.py"),
+            )
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["noba_agent_main"] = mod
+            spec.loader.exec_module(mod)
+        main_mod = sys.modules["noba_agent_main"]
+
+        # Return a combined namespace
+        ns = types.SimpleNamespace()
+        ns.execute_commands = commands_mod.execute_commands
+        ns._ws_thread = main_mod._ws_thread
+        return ns
 
     def test_execute_commands_with_ws_callback(self):
         """execute_commands should pass ctx through to handlers."""

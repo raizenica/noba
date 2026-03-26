@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from ..config import ALLOWED_ACTIONS
-from ..deps import _client_ip, _get_auth, _int_param, _read_body, _require_admin, _require_operator, db
+from ..deps import _client_ip, _get_auth, _int_param, _read_body, _require_admin, _require_operator, db, handle_errors
 from ..metrics import bust_container_cache, strip_ansi
 from ..runner import job_runner
 from ..yaml_config import read_yaml_settings
@@ -23,6 +23,7 @@ router = APIRouter(tags=["containers"])
 
 # ── /api/container-control ────────────────────────────────────────────────────
 @router.post("/api/container-control")
+@handle_errors
 async def api_container_control(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
@@ -53,6 +54,7 @@ async def api_container_control(request: Request, auth=Depends(_require_operator
 
 # ── Docker deep management ───────────────────────────────────────────────
 @router.get("/api/containers/{name}/logs")
+@handle_errors
 async def api_container_logs(name: str, request: Request, auth=Depends(_require_operator)):
     """Stream container logs (last N lines)."""
     if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
@@ -73,6 +75,7 @@ async def api_container_logs(name: str, request: Request, auth=Depends(_require_
 
 
 @router.get("/api/containers/{name}/inspect")
+@handle_errors
 async def api_container_inspect(name: str, auth=Depends(_require_operator)):
     """Get detailed container info."""
     if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
@@ -118,6 +121,7 @@ async def api_container_inspect(name: str, auth=Depends(_require_operator)):
 
 
 @router.get("/api/containers/stats")
+@handle_errors
 async def api_container_stats(auth=Depends(_get_auth)):
     """Get per-container resource usage."""
     for runtime in ("docker", "podman"):
@@ -149,6 +153,7 @@ async def api_container_stats(auth=Depends(_get_auth)):
 
 
 @router.post("/api/containers/{name}/pull")
+@handle_errors
 async def api_container_pull(name: str, request: Request, auth=Depends(_require_admin)):
     """Pull the latest image for a container."""
     username, _ = auth
@@ -177,6 +182,7 @@ async def api_container_pull(name: str, request: Request, auth=Depends(_require_
 
 # ── /api/compose ──────────────────────────────────────────────────────────────
 @router.get("/api/compose/projects")
+@handle_errors
 async def api_compose_projects(auth=Depends(_get_auth)):
     try:
         r = await asyncio.to_thread(subprocess.run, ["docker", "compose", "ls", "--format", "json"],
@@ -191,6 +197,7 @@ async def api_compose_projects(auth=Depends(_get_auth)):
 
 
 @router.post("/api/compose/{project}/{action}")
+@handle_errors
 async def api_compose_action(project: str, action: str, request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     if action not in ("up", "down", "pull", "restart"):
@@ -211,6 +218,7 @@ async def api_compose_action(project: str, action: str, request: Request, auth=D
 
 # ── /api/truenas/vm ───────────────────────────────────────────────────────────
 @router.post("/api/truenas/vm")
+@handle_errors
 async def api_truenas_vm(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)

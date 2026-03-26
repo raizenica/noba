@@ -52,11 +52,11 @@ New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Write-Host "  Downloading agent..."
 try {
     $headers = @{ "X-Agent-Key" = $Key }
-    Invoke-WebRequest -Uri "$Server/api/agent/update" -Headers $headers -OutFile "$InstallDir\agent.py" -UseBasicParsing
+    Invoke-WebRequest -Uri "$Server/api/agent/update" -Headers $headers -OutFile "$InstallDir\agent.pyz" -UseBasicParsing
     Write-Host "[ok] Agent downloaded" -ForegroundColor Green
 } catch {
     Write-Host "[!] Download failed, copying local agent..." -ForegroundColor Yellow
-    Copy-Item "$PSScriptRoot\agent.py" "$InstallDir\agent.py" -Force
+    Copy-Item "$PSScriptRoot\agent.pyz" "$InstallDir\agent.pyz" -Force
 }
 
 # Write config
@@ -72,7 +72,7 @@ Write-Host "[ok] Config: $Config" -ForegroundColor Green
 # Test
 Write-Host ""
 Write-Host "  Testing connection..."
-& $Python.Source "$InstallDir\agent.py" --config $Config --once
+& $Python.Source "$InstallDir\agent.pyz" --config $Config --once
 if ($LASTEXITCODE -eq 0) {
     Write-Host "[ok] Test report successful!" -ForegroundColor Green
 } else {
@@ -80,7 +80,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # Create scheduled task (runs at startup + every 30s via loop)
-$Action = New-ScheduledTaskAction -Execute $Python.Source -Argument "$InstallDir\agent.py --config $Config"
+$Action = New-ScheduledTaskAction -Execute $Python.Source -Argument "$InstallDir\agent.pyz --config $Config"
 $Trigger = New-ScheduledTaskTrigger -AtStartup
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 $Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
@@ -92,7 +92,7 @@ try {
     Write-Host "[ok] Scheduled task '$TaskName' created and started" -ForegroundColor Green
 } catch {
     Write-Host "[!] Could not create scheduled task: $_" -ForegroundColor Yellow
-    Write-Host "    Run manually: python $InstallDir\agent.py --config $Config" -ForegroundColor Yellow
+    Write-Host "    Run manually: python $InstallDir\agent.pyz --config $Config" -ForegroundColor Yellow
 }
 
 Write-Host ""

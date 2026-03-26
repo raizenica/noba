@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from .. import deps as _deps  # noqa: F401 – runtime access to bg_collector
+from ..deps import handle_errors
 from ..collector import collect_stats, get_shutdown_flag
 from ..config import HISTORY_METRICS
 from ..deps import (
@@ -32,6 +33,7 @@ def _get_server_start_time() -> float:
 
 # ── /api/health ───────────────────────────────────────────────────────────────
 @router.get("/api/health")
+@handle_errors
 def api_health() -> dict:
     from ..config import VERSION  # noqa: PLC0415
     return {"status": "ok", "version": VERSION, "uptime_s": round(time.time() - _get_server_start_time())}
@@ -39,6 +41,7 @@ def api_health() -> dict:
 
 # ── /api/me ───────────────────────────────────────────────────────────────────
 @router.get("/api/me")
+@handle_errors
 def api_me(auth=Depends(_get_auth)):
     username, role = auth
     from ..auth import get_permissions  # noqa: PLC0415
@@ -46,6 +49,7 @@ def api_me(auth=Depends(_get_auth)):
 
 
 @router.get("/api/permissions")
+@handle_errors
 def api_permissions(auth=Depends(_get_auth)):
     """List all available permissions and which roles have them."""
     from ..auth import PERMISSIONS  # noqa: PLC0415
@@ -54,12 +58,14 @@ def api_permissions(auth=Depends(_get_auth)):
 
 # ── /api/plugins ─────────────────────────────────────────────────────────────
 @router.get("/api/plugins")
+@handle_errors
 def api_plugins(auth=Depends(_get_auth)):
     return plugin_manager.get_all()
 
 
 # ── /api/stats ────────────────────────────────────────────────────────────────
 @router.get("/api/stats")
+@handle_errors
 def api_stats(request: Request, auth=Depends(_get_auth)):
     qs = dict(request.query_params)
     qs_lists = {k: [v] for k, v in qs.items()}
@@ -129,6 +135,7 @@ async def api_stream(request: Request, auth=Depends(_get_auth_sse)):
 
 # ── /api/history ──────────────────────────────────────────────────────────────
 @router.get("/api/history/multi")
+@handle_errors
 def api_history_multi(request: Request, auth=Depends(_get_auth)):
     """Get multiple metrics for overlay charting."""
     metrics_param = request.query_params.get("metrics", "")
@@ -146,6 +153,7 @@ def api_history_multi(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/history/{metric}")
+@handle_errors
 def api_history(metric: str, request: Request, auth=Depends(_get_auth)):
     if metric not in HISTORY_METRICS:
         raise HTTPException(400, "Unknown metric")
@@ -156,6 +164,7 @@ def api_history(metric: str, request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/history/{metric}/export")
+@handle_errors
 def api_history_export(metric: str, request: Request, auth=Depends(_get_auth)):
     if metric not in HISTORY_METRICS:
         raise HTTPException(400, "Unknown metric")
@@ -177,6 +186,7 @@ def api_history_export(metric: str, request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/history/{metric}/trend")
+@handle_errors
 def api_history_trend(metric: str, request: Request, auth=Depends(_get_auth)):
     if metric not in HISTORY_METRICS:
         raise HTTPException(400, "Unknown metric")
@@ -187,6 +197,7 @@ def api_history_trend(metric: str, request: Request, auth=Depends(_get_auth)):
 
 # ── /api/metrics ─────────────────────────────────────────────────────────────
 @router.get("/api/metrics/available")
+@handle_errors
 def api_metrics_available(auth=Depends(_get_auth)):
     """List all available metric names with current values for the UI metric picker."""
     stats = _deps.bg_collector.get() or {}
@@ -207,6 +218,7 @@ def api_metrics_available(auth=Depends(_get_auth)):
 
 
 @router.get("/api/metrics/prometheus")
+@handle_errors
 def api_prometheus(auth=Depends(_get_auth)):
     """Expose metrics in Prometheus exposition format."""
     data = _deps.bg_collector.get()
@@ -230,6 +242,7 @@ def api_prometheus(auth=Depends(_get_auth)):
 
 
 @router.get("/api/metrics/correlate")
+@handle_errors
 def api_metrics_correlate(request: Request, auth=Depends(_get_auth)):
     """Get multiple metrics aligned on the same timeline for correlation."""
     metrics_param = request.query_params.get("metrics", "")
@@ -246,6 +259,7 @@ def api_metrics_correlate(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/alert-rules ─────────────────────────────────────────────────────────
 @router.get("/api/alert-rules")
+@handle_errors
 def api_alert_rules(auth=Depends(_get_auth)):
     """List all configured alert rules."""
     cfg = read_yaml_settings()
@@ -253,6 +267,7 @@ def api_alert_rules(auth=Depends(_get_auth)):
 
 
 @router.put("/api/alert-rules")
+@handle_errors
 async def api_alert_rules_batch(request: Request, auth=Depends(_require_admin)):
     """Replace all alert rules (batch save from settings UI)."""
     username, _ = auth
@@ -275,6 +290,7 @@ async def api_alert_rules_batch(request: Request, auth=Depends(_require_admin)):
 
 
 @router.post("/api/alert-rules")
+@handle_errors
 async def api_alert_rules_create(request: Request, auth=Depends(_require_admin)):
     """Add a new alert rule."""
     import uuid
@@ -310,6 +326,7 @@ async def api_alert_rules_create(request: Request, auth=Depends(_require_admin))
 
 
 @router.put("/api/alert-rules/{rule_id}")
+@handle_errors
 async def api_alert_rules_update(rule_id: str, request: Request, auth=Depends(_require_admin)):
     """Update an existing alert rule."""
     username, _ = auth
@@ -336,6 +353,7 @@ async def api_alert_rules_update(rule_id: str, request: Request, auth=Depends(_r
 
 
 @router.delete("/api/alert-rules/{rule_id}")
+@handle_errors
 def api_alert_rules_delete(rule_id: str, request: Request, auth=Depends(_require_admin)):
     """Delete an alert rule."""
     username, _ = auth
@@ -351,6 +369,7 @@ def api_alert_rules_delete(rule_id: str, request: Request, auth=Depends(_require
 
 
 @router.get("/api/alert-rules/test/{rule_id}")
+@handle_errors
 def api_alert_rule_test(rule_id: str, auth=Depends(_require_admin)):
     """Test an alert rule against current stats."""
     cfg = read_yaml_settings()
@@ -372,6 +391,7 @@ def api_alert_rule_test(rule_id: str, auth=Depends(_require_admin)):
 
 # ── /api/sla ──────────────────────────────────────────────────────────────────
 @router.get("/api/sla/{rule_id}")
+@handle_errors
 def api_sla(rule_id: str, request: Request, auth=Depends(_get_auth)):
     window = _int_param(request, "window", 720, 1, 8760)
     return db.get_sla(rule_id, window_hours=window)
@@ -379,6 +399,7 @@ def api_sla(rule_id: str, request: Request, auth=Depends(_get_auth)):
 
 # ── /api/alert-history ────────────────────────────────────────────────────────
 @router.get("/api/alert-history")
+@handle_errors
 def api_alert_history(request: Request, auth=Depends(_get_auth)):
     limit = _int_param(request, "limit", 100, 1, 1000)
     rule_id = request.query_params.get("rule_id", "")
@@ -389,6 +410,7 @@ def api_alert_history(request: Request, auth=Depends(_get_auth)):
 
 # ── /api/notifications ───────────────────────────────────────────────────────
 @router.get("/api/notifications")
+@handle_errors
 def api_notifications(request: Request, auth=Depends(_get_auth)):
     username, _ = auth
     unread = request.query_params.get("unread", "0") == "1"
@@ -398,6 +420,7 @@ def api_notifications(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/notifications/{notif_id}/read")
+@handle_errors
 def api_notification_read(notif_id: int, auth=Depends(_get_auth)):
     username, _ = auth
     db.mark_notification_read(notif_id, username)
@@ -405,6 +428,7 @@ def api_notification_read(notif_id: int, auth=Depends(_get_auth)):
 
 
 @router.post("/api/notifications/read-all")
+@handle_errors
 def api_notifications_read_all(auth=Depends(_get_auth)):
     username, _ = auth
     db.mark_all_notifications_read(username)
@@ -413,12 +437,14 @@ def api_notifications_read_all(auth=Depends(_get_auth)):
 
 # ── /api/dashboard ────────────────────────────────────────────────────────────
 @router.get("/api/dashboard")
+@handle_errors
 def api_dashboard_get(auth=Depends(_get_auth)):
     username, _ = auth
     return db.get_user_dashboard(username) or {}
 
 
 @router.post("/api/dashboard")
+@handle_errors
 async def api_dashboard_save(request: Request, auth=Depends(_get_auth)):
     username, _ = auth
     body = await _read_body(request)

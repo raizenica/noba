@@ -110,3 +110,37 @@ def prune_audit(
             logger.info("Audit pruned: %d rows older than %d days", stale, AUDIT_RETENTION_DAYS)
     except Exception as e:
         logger.error("prune_audit failed: %s", e)
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS audit (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            username  TEXT NOT NULL,
+            action    TEXT NOT NULL,
+            details   TEXT,
+            ip        TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_ts
+            ON audit(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_user_action
+            ON audit(username, action);
+    """)
+
+
+class _AuditMixin:
+    def audit_log(self, action: str, username: str, details: str = "", ip: str = "") -> None:
+        audit_log(self._get_conn(), self._lock, action, username, details=details, ip=ip)
+
+    def get_audit(self, limit: int = 100, username_filter: str = "",
+                  action_filter: str = "", from_ts: int = 0, to_ts: int = 0) -> list[dict]:
+        return get_audit(self._get_read_conn(), self._read_lock, limit=limit,
+                         username_filter=username_filter, action_filter=action_filter,
+                         from_ts=from_ts, to_ts=to_ts)
+
+    def get_login_history(self, username: str, limit: int = 30) -> list[dict]:
+        return get_login_history(self._get_read_conn(), self._read_lock, username, limit=limit)
+
+    def prune_audit(self) -> None:
+        prune_audit(self._get_conn(), self._lock)

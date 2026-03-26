@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import PlainTextResponse
 
 from .. import deps as _deps
+from ..deps import handle_errors
 from ..agent_config import RISK_LEVELS, check_role_permission
 from ..agent_store import (
     _agent_cmd_lock, _agent_commands,
@@ -57,6 +58,7 @@ def _validate_k8s_name(val: str, label: str = "name") -> str:
 
 # ── /api/service-control ──────────────────────────────────────────────────────
 @router.post("/api/service-control")
+@handle_errors
 async def api_service_control(request: Request, auth=Depends(_require_operator)):
     username, _ = auth
     ip   = _client_ip(request)
@@ -89,18 +91,21 @@ async def api_service_control(request: Request, auth=Depends(_require_operator))
 
 # ── Network analysis ─────────────────────────────────────────────────────────
 @router.get("/api/network/connections")
+@handle_errors
 def api_network_connections(auth=Depends(_require_operator)):
     """List active network connections."""
     return get_network_connections()
 
 
 @router.get("/api/network/ports")
+@handle_errors
 def api_network_ports(auth=Depends(_get_auth)):
     """List listening ports with process info."""
     return get_listening_ports()
 
 
 @router.get("/api/network/interfaces")
+@handle_errors
 def api_network_interfaces(auth=Depends(_get_auth)):
     """Get network interface details."""
     import psutil as _psutil
@@ -124,6 +129,7 @@ def api_network_interfaces(auth=Depends(_get_auth)):
 
 # ── Service dependency map ───────────────────────────────────────────────────
 @router.get("/api/services/map")
+@handle_errors
 def api_service_map(auth=Depends(_get_auth)):
     """Build a service dependency map from network connections and configured integrations."""
     stats = _deps.bg_collector.get() or {}
@@ -190,6 +196,7 @@ def api_service_map(auth=Depends(_get_auth)):
 
 # ── Disk usage prediction ────────────────────────────────────────────────────
 @router.get("/api/disks/prediction")
+@handle_errors
 def api_disk_prediction(request: Request, auth=Depends(_get_auth)):
     """Disk capacity prediction with confidence intervals."""
     from ..prediction import predict_capacity
@@ -209,6 +216,7 @@ def api_disk_prediction(request: Request, auth=Depends(_get_auth)):
 
 # ── Kubernetes deep management ───────────────────────────────────────────
 @router.get("/api/k8s/namespaces")
+@handle_errors
 def api_k8s_namespaces(auth=Depends(_get_auth)):
     """List Kubernetes namespaces."""
     cfg = read_yaml_settings()
@@ -232,6 +240,7 @@ def api_k8s_namespaces(auth=Depends(_get_auth)):
 
 
 @router.get("/api/k8s/pods")
+@handle_errors
 def api_k8s_pods(request: Request, auth=Depends(_get_auth)):
     """List pods with details, optionally filtered by namespace."""
     cfg = read_yaml_settings()
@@ -279,6 +288,7 @@ def api_k8s_pods(request: Request, auth=Depends(_get_auth)):
 
 
 @router.get("/api/k8s/pods/{namespace}/{name}/logs")
+@handle_errors
 def api_k8s_pod_logs(namespace: str, name: str, request: Request, auth=Depends(_require_operator)):
     """Get pod logs."""
     namespace = _validate_k8s_name(namespace, "namespace")
@@ -307,6 +317,7 @@ def api_k8s_pod_logs(namespace: str, name: str, request: Request, auth=Depends(_
 
 
 @router.get("/api/k8s/deployments")
+@handle_errors
 def api_k8s_deployments(request: Request, auth=Depends(_get_auth)):
     """List deployments with replica info."""
     cfg = read_yaml_settings()
@@ -338,6 +349,7 @@ def api_k8s_deployments(request: Request, auth=Depends(_get_auth)):
 
 
 @router.post("/api/k8s/deployments/{namespace}/{name}/scale")
+@handle_errors
 async def api_k8s_scale(namespace: str, name: str, request: Request, auth=Depends(_require_operator)):
     """Scale a deployment."""
     namespace = _validate_k8s_name(namespace, "namespace")
@@ -386,6 +398,7 @@ def _validate_pmx_node(node: str) -> None:
 
 
 @router.get("/api/proxmox/nodes/{node}/vms")
+@handle_errors
 def api_pmx_node_vms(node: str, auth=Depends(_get_auth)):
     """List VMs and containers on a Proxmox node."""
     _validate_pmx_node(node)
@@ -419,6 +432,7 @@ def api_pmx_node_vms(node: str, auth=Depends(_get_auth)):
 
 
 @router.get("/api/proxmox/nodes/{node}/vms/{vmid}/snapshots")
+@handle_errors
 def api_pmx_snapshots(node: str, vmid: int, request: Request, auth=Depends(_get_auth)):
     """List VM snapshots."""
     _validate_pmx_node(node)
@@ -445,6 +459,7 @@ def api_pmx_snapshots(node: str, vmid: int, request: Request, auth=Depends(_get_
 
 
 @router.post("/api/proxmox/nodes/{node}/vms/{vmid}/snapshot")
+@handle_errors
 async def api_pmx_create_snapshot(node: str, vmid: int, request: Request, auth=Depends(_require_admin)):
     """Create a VM snapshot."""
     _validate_pmx_node(node)
@@ -477,6 +492,7 @@ async def api_pmx_create_snapshot(node: str, vmid: int, request: Request, auth=D
 
 
 @router.get("/api/proxmox/nodes/{node}/vms/{vmid}/console")
+@handle_errors
 def api_pmx_console_url(node: str, vmid: int, request: Request, auth=Depends(_require_operator)):
     """Get a noVNC console URL for a VM."""
     cfg = read_yaml_settings()
@@ -504,12 +520,14 @@ async def ws_terminal(ws: WebSocket):
 # ── Network discovery endpoints ───────────────────────────────────────────────
 
 @router.get("/api/network/devices")
+@handle_errors
 def api_network_devices(auth=Depends(_get_auth)):
     """List all discovered network devices."""
     return db.list_network_devices()
 
 
 @router.post("/api/network/discover/{hostname}")
+@handle_errors
 async def api_network_discover(hostname: str, request: Request, auth=Depends(_require_operator)):
     """Trigger network discovery on a specific agent."""
     username, role = auth
@@ -556,6 +574,7 @@ async def api_network_discover(hostname: str, request: Request, auth=Depends(_re
 
 
 @router.delete("/api/network/devices/{device_id}")
+@handle_errors
 def api_delete_network_device(device_id: int, request: Request, auth=Depends(_require_operator)):
     """Remove a discovered network device."""
     username, _ = auth

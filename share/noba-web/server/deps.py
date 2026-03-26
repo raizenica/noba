@@ -1,7 +1,10 @@
 """Noba – Shared dependencies for route modules."""
 from __future__ import annotations
 
+import functools
+import inspect
 import json
+import logging
 import subprocess
 
 from fastapi import HTTPException, Request
@@ -9,6 +12,8 @@ from fastapi import HTTPException, Request
 from .auth import authenticate, has_permission, token_store
 from .config import MAX_BODY_BYTES, TRUST_PROXY
 from .db import db  # noqa: F401  -- re-exported for route modules
+
+_log = logging.getLogger("noba")
 
 # ── bg_collector reference (set during lifespan) ─────────────────────────────
 bg_collector: object | None = None
@@ -60,6 +65,39 @@ def _run_cmd(cmd: list, timeout: float = 3) -> str:
         return r.stdout.strip()
     except Exception:
         return ""
+
+
+# ── Route error handler ───────────────────────────────────────────────────────
+
+def handle_errors(func):
+    """Catch unhandled exceptions in route handlers and return HTTP 500.
+
+    HTTPException passes through unchanged.
+    Do NOT apply to @router.websocket routes or routes returning StreamingResponse —
+    those connections are already upgraded; wrapping them corrupts the protocol.
+    """
+    if inspect.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def _async_wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as e:
+                _log.exception("Unhandled error in %s", func.__name__)
+                raise HTTPException(status_code=500, detail=str(e))
+        return _async_wrapper
+    else:
+        @functools.wraps(func)
+        def _sync_wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as e:
+                _log.exception("Unhandled error in %s", func.__name__)
+                raise HTTPException(status_code=500, detail=str(e))
+        return _sync_wrapper
 
 
 # ── Auth dependencies ────────────────────────────────────────────────────────

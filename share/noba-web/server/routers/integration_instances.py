@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import _get_auth, _read_body, _require_admin, _require_operator, db
+from ..deps import _get_auth, _read_body, _require_admin, _require_operator, db, handle_errors
 
 logger = logging.getLogger("noba")
 router = APIRouter(tags=["integrations"])
@@ -65,6 +65,7 @@ def _is_safe_url(url: str) -> bool:
 # ── Instances CRUD ───────────────────────────────────────────────
 
 @router.get("/api/integrations/instances")
+@handle_errors
 def api_list_instances(
     category: str | None = None,
     site: str | None = None,
@@ -81,6 +82,7 @@ def api_list_instances(
 
 
 @router.get("/api/integrations/instances/{instance_id}")
+@handle_errors
 def api_get_instance(instance_id: str, auth=Depends(_get_auth)):
     """Get a single integration instance."""
     inst = db.get_integration_instance(instance_id)
@@ -101,6 +103,7 @@ def api_get_instance(instance_id: str, auth=Depends(_get_auth)):
 
 
 @router.post("/api/integrations/instances")
+@handle_errors
 async def api_create_instance(request: Request, auth=Depends(_require_admin)):
     """Create a new integration instance."""
     body = await _read_body(request)
@@ -137,6 +140,7 @@ async def api_create_instance(request: Request, auth=Depends(_require_admin)):
 
 
 @router.patch("/api/integrations/instances/{instance_id}")
+@handle_errors
 async def api_update_instance(
     instance_id: str, request: Request, auth=Depends(_require_admin),
 ):
@@ -183,6 +187,7 @@ async def api_update_instance(
 
 
 @router.delete("/api/integrations/instances/{instance_id}")
+@handle_errors
 def api_delete_instance(instance_id: str, auth=Depends(_require_admin)):
     """Delete an integration instance."""
     inst = db.get_integration_instance(instance_id)
@@ -195,6 +200,7 @@ def api_delete_instance(instance_id: str, auth=Depends(_require_admin)):
 # ── Connection Test ──────────────────────────────────────────────
 
 @router.post("/api/integrations/instances/test-connection")
+@handle_errors
 async def api_test_connection(request: Request, auth=Depends(_require_operator)):
     """Test connectivity to an integration platform."""
     body = await _read_body(request)
@@ -244,6 +250,7 @@ async def api_test_connection(request: Request, auth=Depends(_require_operator))
 # ── Catalog ──────────────────────────────────────────────────────
 
 @router.get("/api/integrations/catalog/categories")
+@handle_errors
 def api_catalog_categories(auth=Depends(_get_auth)):
     """List all available integration categories from the registry."""
     from ..healing.integration_registry import list_categories
@@ -251,6 +258,7 @@ def api_catalog_categories(auth=Depends(_get_auth)):
 
 
 @router.get("/api/integrations/catalog/categories/{category}/platforms")
+@handle_errors
 def api_catalog_platforms(category: str, auth=Depends(_get_auth)):
     """List available platforms for a category."""
     from ..healing.integration_registry import list_operations, list_platforms
@@ -267,18 +275,21 @@ def api_catalog_platforms(category: str, auth=Depends(_get_auth)):
 # ── Groups ───────────────────────────────────────────────────────
 
 @router.get("/api/integrations/groups")
+@handle_errors
 def api_list_groups(auth=Depends(_get_auth)):
     """List all integration groups."""
     return db.list_integration_groups()
 
 
 @router.get("/api/integrations/groups/{group_name}/members")
+@handle_errors
 def api_list_group_members(group_name: str, auth=Depends(_get_auth)):
     """List members of an integration group."""
     return db.list_integration_group(group_name)
 
 
 @router.post("/api/integrations/groups/{group_name}/members")
+@handle_errors
 async def api_add_group_member(
     group_name: str, request: Request, auth=Depends(_require_admin),
 ):
@@ -292,6 +303,7 @@ async def api_add_group_member(
 
 
 @router.delete("/api/integrations/groups/{group_name}/members/{instance_id}")
+@handle_errors
 def api_remove_group_member(
     group_name: str, instance_id: str, auth=Depends(_require_admin),
 ):
