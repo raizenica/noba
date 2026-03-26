@@ -79,7 +79,7 @@ def api_agent_delete(hostname: str, request: Request, auth=Depends(_require_admi
 @router.get("/api/agent/update")
 @handle_errors
 def api_agent_update(request: Request) -> FileResponse:
-    """Serve the latest agent.py for self-update. Auth via X-Agent-Key."""
+    """Serve the latest agent.pyz for self-update. Auth via X-Agent-Key."""
     key = request.headers.get("X-Agent-Key", "")
     if not key:
         raise HTTPException(401, "Missing X-Agent-Key")
