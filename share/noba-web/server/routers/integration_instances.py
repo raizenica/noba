@@ -197,6 +197,64 @@ def api_delete_instance(instance_id: str, auth=Depends(_require_admin)):
     return {"id": instance_id, "status": "deleted"}
 
 
+# ── Per-instance actions ─────────────────────────────────────────
+
+_ALLOWED_VM_ACTIONS = frozenset({"start", "stop", "poweroff"})
+
+
+@router.post("/api/integrations/instances/{instance_id}/truenas/vm")
+@handle_errors
+async def api_instance_truenas_vm(
+    instance_id: str, request: Request, auth=Depends(_require_operator),
+):
+    """Execute a VM action on a managed TrueNAS instance."""
+    username, _ = auth
+    body = await _read_body(request)
+    vm_id  = body.get("id")
+    action = body.get("action")
+    try:
+        vm_id = int(vm_id)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid VM ID")
+    if vm_id < 0 or action not in _ALLOWED_VM_ACTIONS:
+        raise HTTPException(400, "Invalid action")
+
+    inst = db.get_integration_instance(instance_id)
+    if not inst:
+        raise HTTPException(404, f"Instance not found: {instance_id}")
+    if dict(inst).get("platform") != "truenas":
+        raise HTTPException(400, "Instance is not a TrueNAS platform")
+
+    inst_d = dict(inst)
+    url = inst_d.get("url", "")
+    raw_ac = inst_d.get("auth_config", "{}")
+    try:
+        ac = json.loads(raw_ac) if isinstance(raw_ac, str) else (raw_ac or {})
+    except Exception:
+        ac = {}
+    key = ac.get("api_key") or ac.get("token") or ac.get("apikey_env") or ac.get("apikey") or ""
+    if not url or not key:
+        raise HTTPException(400, "TrueNAS instance missing URL or API key")
+
+    import urllib.request as _ur
+    try:
+        req = _ur.Request(
+            f"{url.rstrip('/')}/api/v2.0/vm/id/{vm_id}/{action}",
+            data=b"{}",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with _ur.urlopen(req, timeout=5) as r:
+            success = r.getcode() == 200
+        db.audit_log("vm_action", username, f"Instance {instance_id} VM {vm_id} {action} {success}", "")
+        return {"success": success}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("VM action failed for instance %s: %s", instance_id, exc)
+        raise HTTPException(502, "VM action failed")
+
+
 # ── Connection Test ──────────────────────────────────────────────
 
 @router.post("/api/integrations/instances/test-connection")

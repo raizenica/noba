@@ -55,7 +55,8 @@ import CameraFeedsCard  from '../components/cards/CameraFeedsCard.vue'
 import RecoveryCard     from '../components/cards/RecoveryCard.vue'
 import N8nCard         from '../components/cards/N8nCard.vue'
 import PredictionCard  from '../components/cards/PredictionCard.vue'
-import IntegrationCard from '../components/cards/IntegrationCard.vue'
+import IntegrationCard      from '../components/cards/IntegrationCard.vue'
+import TruenasInstanceCard  from '../components/cards/TruenasInstanceCard.vue'
 import { getTemplate } from '../data/cardTemplates'
 
 const dashboardStore = useDashboardStore()
@@ -302,15 +303,22 @@ onUnmounted(() => {
         <RecoveryCard    v-if="showCard('recovery')"                                        data-id="recovery" />
 
         <!-- Managed Integration Cards (with data) -->
-        <IntegrationCard
-          v-for="inst in activeInstances"
-          :key="'int-'+inst.id"
-          :instance="inst"
-          :template="getCardTemplate(inst.platform)"
-          :data="getIntegrationData(inst.id)"
-          class="card"
-          :data-id="'int-'+inst.id"
-        />
+        <template v-for="inst in activeInstances" :key="'int-'+inst.id">
+          <TruenasInstanceCard
+            v-if="inst.platform === 'truenas'"
+            :instance="inst"
+            class="card"
+            :data-id="'int-'+inst.id"
+          />
+          <IntegrationCard
+            v-else
+            :instance="inst"
+            :template="getCardTemplate(inst.platform)"
+            :data="getIntegrationData(inst.id)"
+            class="card"
+            :data-id="'int-'+inst.id"
+          />
+        </template>
       </div>
 
       <!-- Unconfigured integrations collapsed section -->

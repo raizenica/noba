@@ -2,49 +2,71 @@
   <DashboardCard :title="instance.id" :icon="template.icon || 'fas fa-plug'" :health="health">
     <div v-if="!data || !Object.keys(data).length" class="empty-msg">No data available</div>
     <template v-else>
-      <div v-for="metric in template.metrics" :key="metric.key" class="row">
-        <span class="row-label">{{ metric.label }}</span>
-
-        <!-- Status badge -->
-        <span v-if="metric.type === 'status'" class="row-val">
-          <span :class="['badge', statusClass(data[metric.key])]">
-            {{ data[metric.key] || 'unknown' }}
-          </span>
-        </span>
-
-        <!-- Percent bar -->
-        <span v-else-if="metric.type === 'percent_bar'" class="row-val">
-          <div class="prog" style="flex:1">
-            <div class="prog-track" :style="{ width: Math.min(data[metric.key]||0, 100) + '%',
-              background: percentColor(data[metric.key]||0) }" />
+      <template v-for="metric in template.metrics" :key="metric.key">
+        <!-- VM / container list (full-width, breaks out of row layout) -->
+        <div v-if="metric.type === 'vm_list'" class="ic-vm-list">
+          <div
+            v-for="vm in (data[metric.key] || [])"
+            :key="vm.vmid || vm.name"
+            class="ic-vm-row"
+          >
+            <span
+              class="status-dot"
+              :class="vm.status === 'running' ? 'dot-up' : 'dot-down'"
+              aria-hidden="true"
+            />
+            <span class="ic-vm-name">{{ vm.name }}</span>
+            <span class="ic-vm-type">{{ vm.type }}</span>
+            <span class="ic-vm-cpu" v-if="vm.cpu != null">{{ vm.cpu }}%</span>
           </div>
-          <span class="prog-meta">{{ data[metric.key]||0 }}%</span>
-        </span>
+          <div v-if="!(data[metric.key] || []).length" class="ic-vm-empty">No guests</div>
+        </div>
 
-        <!-- Temperature -->
-        <span v-else-if="metric.type === 'temperature'" class="row-val"
-          :style="{ color: tempColor(data[metric.key]) }">
-          {{ data[metric.key] != null ? data[metric.key] + '°C' : '—' }}
-        </span>
+        <!-- All other metrics: standard row -->
+        <div v-else class="row">
+          <span class="row-label">{{ metric.label }}</span>
 
-        <!-- Age (time since) -->
-        <span v-else-if="metric.type === 'age'" class="row-val">
-          {{ formatAge(data[metric.key]) }}
-        </span>
+          <!-- Status badge -->
+          <span v-if="metric.type === 'status'" class="row-val">
+            <span :class="['badge', statusClass(data[metric.key])]">
+              {{ data[metric.key] || 'unknown' }}
+            </span>
+          </span>
 
-        <!-- Number -->
-        <span v-else-if="metric.type === 'number'" class="row-val">
-          {{ data[metric.key] != null ? data[metric.key] : '—' }}
-        </span>
+          <!-- Percent bar -->
+          <span v-else-if="metric.type === 'percent_bar'" class="row-val">
+            <div class="prog" style="flex:1">
+              <div class="prog-track" :style="{ width: Math.min(data[metric.key]||0, 100) + '%',
+                background: percentColor(data[metric.key]||0) }" />
+            </div>
+            <span class="prog-meta">{{ data[metric.key]||0 }}%</span>
+          </span>
 
-        <!-- Bytes -->
-        <span v-else-if="metric.type === 'bytes'" class="row-val">
-          {{ formatBytes(data[metric.key]) }}
-        </span>
+          <!-- Temperature -->
+          <span v-else-if="metric.type === 'temperature'" class="row-val"
+            :style="{ color: tempColor(data[metric.key]) }">
+            {{ data[metric.key] != null ? data[metric.key] + '°C' : '—' }}
+          </span>
 
-        <!-- Default -->
-        <span v-else class="row-val">{{ data[metric.key] ?? '—' }}</span>
-      </div>
+          <!-- Age (time since) -->
+          <span v-else-if="metric.type === 'age'" class="row-val">
+            {{ formatAge(data[metric.key]) }}
+          </span>
+
+          <!-- Number -->
+          <span v-else-if="metric.type === 'number'" class="row-val">
+            {{ data[metric.key] != null ? data[metric.key] : '—' }}
+          </span>
+
+          <!-- Bytes -->
+          <span v-else-if="metric.type === 'bytes'" class="row-val">
+            {{ formatBytes(data[metric.key]) }}
+          </span>
+
+          <!-- Default -->
+          <span v-else class="row-val">{{ data[metric.key] ?? '—' }}</span>
+        </div>
+      </template>
 
       <!-- Site badge -->
       <div v-if="instance.site" class="row">
@@ -120,3 +142,12 @@ function formatBytes(val) {
   return `${v.toFixed(1)} ${units[i]}`
 }
 </script>
+
+<style scoped>
+.ic-vm-list { display: flex; flex-direction: column; gap: .2rem; margin: .25rem 0; }
+.ic-vm-row  { display: flex; align-items: center; gap: .4rem; font-size: .75rem; }
+.ic-vm-name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ic-vm-type { font-size: .65rem; color: var(--text-muted); background: var(--surface); padding: .1rem .3rem; border-radius: 3px; }
+.ic-vm-cpu  { font-size: .65rem; color: var(--text-muted); min-width: 2.5rem; text-align: right; }
+.ic-vm-empty { font-size: .75rem; color: var(--text-muted); padding: .2rem 0; }
+</style>

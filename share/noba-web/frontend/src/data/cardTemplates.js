@@ -35,9 +35,9 @@ export const CARD_TEMPLATES = {
     icon: 'fas fa-server',
     metrics: [
       { key: 'node_status', label: 'Node', type: 'status' },
-      { key: 'cpu_percent', label: 'CPU', type: 'percent_bar' },
-      { key: 'mem_percent', label: 'RAM', type: 'percent_bar' },
-      { key: 'vm_count', label: 'VMs', type: 'number' },
+      { key: 'cpu_percent', label: 'CPU',  type: 'percent_bar' },
+      { key: 'mem_percent', label: 'RAM',  type: 'percent_bar' },
+      { key: 'vm_count',    label: 'VMs',  type: 'number' },
     ],
   },
   vmware: {
