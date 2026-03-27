@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useDashboardStore } from '../../stores/dashboard'
 import DashboardCard from './DashboardCard.vue'
 
@@ -17,9 +17,13 @@ const gpuTempClass = computed(() => {
   return 'bs'
 })
 
-const showGpuTemp = computed(() =>
-  gpuTemp.value && gpuTemp.value !== 'N/A'
-)
+// Once we've ever seen a valid GPU temperature, keep the row visible permanently
+// (showing N/A when unavailable). This prevents masonry layout jumps caused by
+// nvidia-smi transiently returning N/A between polling cycles.
+const showGpuTemp = ref(false)
+watch(gpuTemp, (v) => {
+  if (v && v !== 'N/A') showGpuTemp.value = true
+}, { immediate: true })
 </script>
 
 <template>

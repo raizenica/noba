@@ -84,20 +84,8 @@ const isFirstRun = computed(() => {
 function dismissWelcome() {
   welcomeDismissed.value = true
   localStorage.setItem('noba:welcome_dismissed', '1')
-  setTimeout(() => {
-    if (gridRef.value) {
-      const observer = new ResizeObserver(entries => {
-        for (const entry of entries) {
-          const card = entry.target
-          if (card.offsetParent === null) continue
-          const height = card.getBoundingClientRect().height
-          const rowSpan = Math.ceil((height + 18) / 10)
-          card.style.gridRowEnd = `span ${rowSpan}`
-        }
-      })
-      gridRef.value.querySelectorAll('.card').forEach(c => observer.observe(c))
-    }
-  }, 300)
+  // Re-use the shared masonry observer after the grid renders
+  setTimeout(() => nextTick(() => requestAnimationFrame(() => requestAnimationFrame(initMasonry))), 300)
 }
 
 // ── Managed integration instances ────────────────────────────────────────────
@@ -136,9 +124,62 @@ function getIntegrationData(instanceId) {
 const glanceMode = ref(false)
 const gridRef = ref(null)
 
+// Masonry observer kept at component scope so onUnmounted can clean it up
+let _masonryObserver = null
+
+function initMasonry() {
+  if (_masonryObserver) _masonryObserver.disconnect()
+  _masonryObserver = new ResizeObserver(entries => {
+    for (const entry of entries) {
+      const card = entry.target
+      if (card.offsetParent === null) continue
+      const height = card.getBoundingClientRect().height
+      const next = `span ${Math.ceil((height + 18) / 10)}`
+      // Only write the DOM when the span actually changes — prevents the
+      // style-write → reflow → observer-refires cascade.
+      if (card.style.gridRowEnd !== next) card.style.gridRowEnd = next
+    }
+  })
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const grid = gridRef.value
+    if (grid) grid.querySelectorAll('.card').forEach(c => _masonryObserver.observe(c))
+  }))
+}
+
 // ── Card visibility helper ────────────────────────────────────────────────────
 function showCard(key) {
   return settingsStore.vis[key] !== false
+}
+
+// ── Card order helpers ────────────────────────────────────────────────────────
+function applyCardOrder(order) {
+  const container = gridRef.value
+  if (!container || !order || order.length === 0) return
+  const items = Array.from(container.children)
+  const itemMap = {}
+  items.forEach(el => {
+    const id = el.getAttribute('data-id')
+    if (id) itemMap[id] = el
+  })
+  order.forEach(id => {
+    if (itemMap[id]) { container.appendChild(itemMap[id]); delete itemMap[id] }
+  })
+  Object.values(itemMap).forEach(el => container.appendChild(el))
+}
+
+function onDashboardLoaded() {
+  nextTick(() => {
+    applyCardOrder(settingsStore.preferences.preferences?.cardOrder || [])
+    // Recalculate masonry spans after reorder
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const grid = gridRef.value
+      if (!grid) return
+      grid.querySelectorAll('.card').forEach(c => {
+        const height = c.getBoundingClientRect().height
+        if (height > 0) { const s = `span ${Math.ceil((height + 18) / 10)}`; if (c.style.gridRowEnd !== s) c.style.gridRowEnd = s }
+      })
+    }))
+  })
 }
 
 onMounted(() => {
@@ -150,26 +191,7 @@ onMounted(() => {
     if (!gridRef.value) return
     if (gridRef.value._sortable) return
 
-    const savedOrder = settingsStore.preferences.cardOrder || []
-    if (savedOrder.length > 0) {
-      const container = gridRef.value
-      const items = Array.from(container.children)
-      const itemMap = {}
-      items.forEach(el => {
-        const id = el.getAttribute('data-id')
-        if (id) itemMap[id] = el
-      })
-
-      savedOrder.forEach(id => {
-        if (itemMap[id]) {
-          container.appendChild(itemMap[id])
-          delete itemMap[id]
-        }
-      })
-      Object.values(itemMap).forEach(el => {
-        container.appendChild(el)
-      })
-    }
+    applyCardOrder(settingsStore.preferences.preferences?.cardOrder || [])
 
     gridRef.value._sortable = Sortable.create(gridRef.value, {
       animation: 150,
@@ -181,10 +203,11 @@ onMounted(() => {
       dataIdAttr: 'data-id',
       store: {
         get: function () {
-          return settingsStore.preferences.cardOrder || []
+          return settingsStore.preferences.preferences?.cardOrder || []
         },
         set: function (sortable) {
-          settingsStore.preferences.cardOrder = sortable.toArray()
+          if (!settingsStore.preferences.preferences) settingsStore.preferences.preferences = {}
+          settingsStore.preferences.preferences.cardOrder = sortable.toArray()
           settingsStore.savePreferences().catch(() => {})
         }
       }
@@ -201,44 +224,29 @@ onMounted(() => {
   }
   setTimeout(tryInit, 300)
 
-  // Masonry
-  let _masonryObserver = null
-  function initMasonry() {
-    if (_masonryObserver) _masonryObserver.disconnect()
-    _masonryObserver = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        const card = entry.target
-        if (card.offsetParent === null) continue
-        const height = card.getBoundingClientRect().height
-        const rowSpan = Math.ceil((height + 18) / 10)
-        card.style.gridRowEnd = `span ${rowSpan}`
-      }
-    })
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const grid = gridRef.value
-      if (grid) {
-        grid.querySelectorAll('.card').forEach(c => _masonryObserver.observe(c))
-      }
-    }))
-  }
-
   nextTick(() => requestAnimationFrame(() => requestAnimationFrame(initMasonry)))
 })
 
-// Re-run masonry when managed instance cards appear (data arrives after initial render)
-watch(activeInstances, () => {
+// Re-run masonry only when the SET of active instances changes (not on every SSE data tick).
+// Watching the full reactive array fires on every SSE update because .filter() always
+// returns a new array reference — watch a stable key derived from instance IDs instead.
+watch(() => activeInstances.value.map(i => i.id).join(','), () => {
   nextTick(() => requestAnimationFrame(() => requestAnimationFrame(() => {
     const grid = gridRef.value
     if (!grid) return
+    // Re-apply card order so late-arriving managed instance cards land in their saved position
+    const savedOrder = settingsStore.preferences.preferences?.cardOrder
+    if (savedOrder?.length) applyCardOrder(savedOrder)
     grid.querySelectorAll('.card').forEach(c => {
       const height = c.getBoundingClientRect().height
-      if (height > 0) c.style.gridRowEnd = `span ${Math.ceil((height + 18) / 10)}`
+      if (height > 0) { const s = `span ${Math.ceil((height + 18) / 10)}`; if (c.style.gridRowEnd !== s) c.style.gridRowEnd = s }
     })
   })))
 })
 
 onUnmounted(() => {
   if (gridRef.value?._sortable) gridRef.value._sortable.destroy()
+  if (_masonryObserver) { _masonryObserver.disconnect(); _masonryObserver = null }
 })
 </script>
 
@@ -251,7 +259,7 @@ onUnmounted(() => {
     <template v-else>
       <HealthBar />
       <HealthScoreGauge ref="healthScoreRef" />
-      <DashboardToolbar ref="toolbarRef" />
+      <DashboardToolbar ref="toolbarRef" @dashboard-loaded="onDashboardLoaded" />
 
       <!-- Card grid -->
       <div ref="gridRef" class="grid" :class="{ 'glance-mode': glanceMode }">
@@ -344,7 +352,7 @@ onUnmounted(() => {
           {{ emptyInstances.length }} unconfigured integration{{ emptyInstances.length !== 1 ? 's' : '' }}
           <span style="font-size:.7rem;opacity:.7">(no data)</span>
         </button>
-        <div v-if="showEmptyIntegrations" class="grid" style="margin-top:.75rem;grid-auto-rows:auto;gap:.875rem">
+        <div v-if="showEmptyIntegrations" style="margin-top:.75rem;display:flex;flex-wrap:wrap;gap:.875rem">
           <IntegrationCard
             v-for="inst in emptyInstances"
             :key="'int-'+inst.id"

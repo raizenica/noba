@@ -4,6 +4,8 @@ import { useApi } from '../../composables/useApi'
 import { useSettingsStore } from '../../stores/settings'
 import { useModalsStore } from '../../stores/modals'
 
+const emit = defineEmits(['dashboard-loaded'])
+
 const { get, post, del } = useApi()
 const settingsStore = useSettingsStore()
 const modals        = useModalsStore()
@@ -11,6 +13,7 @@ const modals        = useModalsStore()
 const savedDashboards   = ref([])
 const saveDashboardName = ref('')
 const showSaveModal     = ref(false)
+const showManage        = ref(false)
 
 async function fetchDashboards() {
   try {
@@ -22,7 +25,14 @@ async function saveDashboard() {
   const name = saveDashboardName.value.trim()
   if (!name) return
   try {
-    const config = { vis: { ...settingsStore.vis } }
+    // Read current order from the live Sortable instance so it reflects
+    // the actual DOM order regardless of whether store.set has fired.
+    const grid = document.querySelector('.grid')
+    const liveOrder = grid?._sortable?.toArray() || settingsStore.preferences.cardOrder || []
+    const config = {
+      vis: { ...settingsStore.vis },
+      cardOrder: liveOrder,
+    }
     await post('/api/dashboards', { name, config_json: JSON.stringify(config), shared: false })
     saveDashboardName.value = ''
     showSaveModal.value = false
@@ -34,6 +44,12 @@ async function loadDashboard(dashboard) {
   try {
     const config = JSON.parse(dashboard.config_json)
     if (config.vis) Object.assign(settingsStore.vis, config.vis)
+    if (config.cardOrder) {
+      if (!settingsStore.preferences.preferences) settingsStore.preferences.preferences = {}
+      settingsStore.preferences.preferences.cardOrder = config.cardOrder
+    }
+    await settingsStore.savePreferences()
+    emit('dashboard-loaded')
   } catch { /* silent */ }
 }
 
@@ -42,6 +58,7 @@ async function deleteDashboard(id) {
   try {
     await del('/api/dashboards/' + id)
     await fetchDashboards()
+    if (savedDashboards.value.length === 0) showManage.value = false
   } catch { /* silent */ }
 }
 
@@ -57,18 +74,14 @@ defineExpose({ fetchDashboards })
       @change="e => { const d = savedDashboards.find(x => String(x.id) === e.target.value); if (d) loadDashboard(d); e.target.value = '' }"
     >
       <option value="">Load dashboard...</option>
-      <option
-        v-for="d in savedDashboards"
-        :key="d.id"
-        :value="d.id"
-      >{{ d.name }}</option>
+      <option v-for="d in savedDashboards" :key="d.id" :value="d.id">{{ d.name }}</option>
     </select>
 
     <button
       class="btn btn-xs btn-secondary"
       type="button"
       title="Save current layout"
-      @click="showSaveModal = !showSaveModal"
+      @click="showSaveModal = !showSaveModal; showManage = false"
     >
       <i class="fas fa-save"></i> Save Layout
     </button>
@@ -94,18 +107,23 @@ defineExpose({ fetchDashboards })
       v-if="savedDashboards.length > 0"
       class="btn btn-xs btn-secondary"
       type="button"
-      style="margin-left:.25rem"
       title="Manage saved dashboards"
-      @click="showSaveModal = false"
+      @click="showManage = !showManage; showSaveModal = false"
     >
-      <i class="fas fa-trash"></i>
+      <i class="fas fa-cog"></i>
     </button>
-    <template v-if="savedDashboards.length > 0">
+
+    <template v-if="showManage">
       <span
         v-for="d in savedDashboards"
-        :key="'del-' + d.id"
-        style="display:none"
-      ></span>
+        :key="'mgr-' + d.id"
+        style="display:inline-flex;align-items:center;gap:.3rem;font-size:.75rem;background:var(--card-bg);padding:.2rem .5rem;border-radius:.3rem"
+      >
+        {{ d.name }}
+        <button class="btn btn-xs btn-danger" type="button" @click="deleteDashboard(d.id)">
+          <i class="fas fa-trash"></i>
+        </button>
+      </span>
     </template>
   </div>
 </template>

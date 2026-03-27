@@ -4,6 +4,10 @@ All notable changes to NOBA Command Center are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Dashboard masonry grid stability** — Cards no longer jump or reorder during live SSE telemetry updates. Root causes fixed: (1) `watch(activeInstances)` was firing on every SSE data tick because `Array.filter()` always returns a new reference — replaced with a stable string key `map(i=>i.id).join(',')`. (2) ResizeObserver was writing `gridRowEnd` on every call regardless of whether the value changed, triggering a layout→observer cascade — added a change guard. (3) `HardwareCard` GPU Temp row used `v-if` tied to a `computed` that toggled on/off when `nvidia-smi` transiently returns N/A, causing ~40px height oscillations — replaced with a "once seen, never hide" `ref` pattern.
+- **Dashboard save/load card order** — Saving a layout now correctly captures the live drag order from the SortableJS instance (`_sortable.toArray()`) rather than stale store state. Loading a dashboard now correctly reorders the DOM via `applyCardOrder()` and persists across page refreshes: `cardOrder` is now stored inside `preferences.preferences` (the inner object sent to and returned by the server), not at the outer preferences level where the server ignored it. Late-arriving managed instance cards (SSE-driven) are re-sorted by the `activeInstances` watcher so they land in their saved position even if they mount after `initSortable` runs.
+
 ### Added
 - Plugin workflow nodes: plugins can declare `WORKFLOW_NODE` + `workflow_node_run` to contribute action nodes to the workflow builder palette
 - `GET /api/workflow-nodes` endpoint returns built-in + plugin node descriptors
