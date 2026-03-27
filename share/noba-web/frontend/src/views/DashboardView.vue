@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import Sortable from 'sortablejs'
 import { useDashboardStore } from '../stores/dashboard'
 import { useSettingsStore } from '../stores/settings'
@@ -221,7 +221,7 @@ onMounted(() => {
     }))
   }
 
-  setTimeout(initMasonry, 500)
+  nextTick(() => requestAnimationFrame(() => requestAnimationFrame(initMasonry)))
 })
 
 onUnmounted(() => {
