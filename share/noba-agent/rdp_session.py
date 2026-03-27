@@ -152,7 +152,9 @@ def _inject(ev):
                 GLib.Variant("(ui)", (0, steps)),
                 None, Gio.DBusCallFlags.NONE, 100, None)
         elif evt in ("keydown", "keyup"):
-            kc = int(ev.get("keycode", 0))
+            # NotifyKeyboardKeycode expects Linux evdev keycodes (not X11).
+            # X11 hardware keycode = evdev + 8, so subtract 8 to convert.
+            kc = max(0, int(ev.get("keycode", 0)) - 8)
             dbus_conn.call_sync("org.gnome.Mutter.RemoteDesktop", rd,
                 "org.gnome.Mutter.RemoteDesktop.Session", "NotifyKeyboardKeycode",
                 GLib.Variant("(ub)", (kc, evt == "keydown")),

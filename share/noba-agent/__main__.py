@@ -25,7 +25,7 @@ import sys
 import time
 
 # ── Configuration ────────────────────────────────────────────────────────────
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 DEFAULT_INTERVAL = 30
 DEFAULT_CONFIG = (
     os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"), "noba-agent", "agent.yaml")
