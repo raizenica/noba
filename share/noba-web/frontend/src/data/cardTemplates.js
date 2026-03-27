@@ -80,17 +80,16 @@ export const CARD_TEMPLATES = {
   plex: {
     icon: 'fas fa-film',
     metrics: [
-      { key: 'status', label: 'Status', type: 'status' },
-      { key: 'movies', label: 'Movies', type: 'number' },
-      { key: 'shows', label: 'Shows', type: 'number' },
+      { key: 'status',      label: 'Status',  type: 'status' },
       { key: 'connections', label: 'Streams', type: 'number' },
+      { key: 'activities',  label: 'Active',  type: 'number' },
     ],
   },
   jellyfin: {
     icon: 'fas fa-film',
     metrics: [
-      { key: 'status', label: 'Status', type: 'status' },
-      { key: 'movie_count', label: 'Movies', type: 'number' },
+      { key: 'status',       label: 'Status', type: 'status' },
+      { key: 'movie_count',  label: 'Movies', type: 'number' },
       { key: 'series_count', label: 'Series', type: 'number' },
     ],
   },

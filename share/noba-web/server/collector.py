@@ -404,8 +404,8 @@ def collect_stats(qs: dict) -> dict:
             raw = get_truenas(url, key)
             if not raw:
                 return raw
-            pools = raw.get("pools", [])
-            apps  = raw.get("apps", [])
+            pools  = raw.get("pools", [])
+            apps   = raw.get("apps", [])
             alerts = raw.get("alerts", [])
             return {
                 **raw,
@@ -416,8 +416,97 @@ def collect_stats(qs: dict) -> dict:
                 "alert_count":  len(alerts),
             }
 
+        def _fetch_proxmox(url, ac):
+            raw = get_proxmox(
+                url,
+                ac.get("user") or ac.get("username") or "",
+                ac.get("token_name") or ac.get("tokenName") or "",
+                ac.get("token_value") or ac.get("tokenValue") or ac.get("token") or "",
+            )
+            if not raw:
+                return raw
+            nodes = raw.get("nodes", [])
+            n = nodes[0] if nodes else {}
+            return {
+                **raw,
+                "node_status": n.get("status", "offline"),
+                "cpu_percent": n.get("cpu", 0),
+                "mem_percent": n.get("mem_percent", 0),
+                "vm_count":    len(raw.get("vms", [])),
+            }
+
+        def _fetch_pihole(url, ac):
+            raw = get_pihole(url, ac.get("token") or ac.get("api_key") or "", ac.get("password") or "")
+            if not raw:
+                return raw
+            return {
+                **raw,
+                "queries_today":        raw.get("queries", 0),
+                "ads_blocked_today":    raw.get("blocked", 0),
+                "ads_percentage_today": raw.get("percent", 0),
+                "status":               raw.get("status", "online"),
+            }
+
+        def _fetch_adguard(url, ac):
+            raw = get_adguard(url, ac.get("username") or ac.get("user") or "", ac.get("password") or "")
+            if not raw:
+                return raw
+            return {
+                **raw,
+                "num_dns_queries":       raw.get("queries", 0),
+                "num_blocked_filtering": raw.get("blocked", 0),
+            }
+
+        def _fetch_plex(url, ac):
+            raw = get_plex(url, ac.get("token") or ac.get("api_key") or "")
+            if not raw:
+                return raw
+            return {**raw, "connections": raw.get("sessions", 0)}
+
+        def _fetch_jellyfin(url, ac):
+            raw = get_jellyfin(url, ac.get("api_key") or ac.get("token") or "")
+            if not raw:
+                return raw
+            return {
+                **raw,
+                "movie_count":  raw.get("movies", 0),
+                "series_count": raw.get("series", 0),
+            }
+
+        def _fetch_kuma(url, ac):
+            raw = get_kuma(url)
+            if not isinstance(raw, list):
+                return None
+            up   = sum(1 for m in raw if m.get("status") == "Up")
+            down = len(raw) - up
+            return {"monitors": raw, "monitors_up": up, "monitors_down": down,
+                    "status": "online" if raw else "offline"}
+
+        def _fetch_unifi(url, ac):
+            raw = get_unifi(
+                url,
+                ac.get("username") or ac.get("user") or "",
+                ac.get("password") or "",
+                ac.get("site") or "default",
+            )
+            if not raw:
+                return raw
+            return {
+                **raw,
+                "num_ap":      raw.get("adopted", 0),
+                "num_clients": raw.get("clients", 0),
+            }
+
         _PLATFORM_FETCHERS = {
-            "truenas": _fetch_truenas,
+            "truenas":  _fetch_truenas,
+            "proxmox":  _fetch_proxmox,
+            "pihole":   _fetch_pihole,
+            "adguard":  _fetch_adguard,
+            "plex":     _fetch_plex,
+            "jellyfin": _fetch_jellyfin,
+            "kuma":     _fetch_kuma,
+            "uptimekuma": _fetch_kuma,
+            "unifi":    _fetch_unifi,
         }
         _inst_futs: dict[str, object] = {}
         for _inst in _inst_list:
