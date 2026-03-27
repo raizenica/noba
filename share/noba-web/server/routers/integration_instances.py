@@ -211,9 +211,6 @@ async def api_test_connection(request: Request, auth=Depends(_require_operator))
     if not url:
         return {"success": False, "error": "No URL provided", "platform": platform}
 
-    if not _is_safe_url(url):
-        return {"success": False, "error": "URL targets a private/internal network", "platform": platform, "url": url}
-
     verify = body.get("verify_ssl", True)
     if isinstance(verify, str) and os.path.isfile(verify):
         pass  # CA bundle path

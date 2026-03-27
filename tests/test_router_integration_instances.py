@@ -1,7 +1,7 @@
 """Integration tests for the integration_instances router."""
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 _VALID_INSTANCE = {
@@ -322,77 +322,56 @@ class TestConnectionTest:
 # ===========================================================================
 
 class TestSSRFProtection:
-    """_is_safe_url blocks private/internal IPs."""
+    """_is_safe_url unit tests — the function guards automation webhooks (remediation.py).
+    Integration test-connection is operator-gated and intentionally allows private IPs
+    so users can reach their own NAS/Proxmox/UniFi on local networks."""
 
-    def test_localhost_blocked(self, client, operator_headers):
-        resp = client.post(
-            "/api/integrations/instances/test-connection",
-            json={"url": "http://localhost:8080/api", "platform": "generic"},
-            headers=operator_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is False
-        assert "private" in data["error"].lower() or "internal" in data["error"].lower()
+    def test_localhost_blocked(self):
+        from server.routers.integration_instances import _is_safe_url
+        assert _is_safe_url("http://localhost:8080/api") is False
 
-    def test_127_0_0_1_blocked(self, client, operator_headers):
-        resp = client.post(
-            "/api/integrations/instances/test-connection",
-            json={"url": "http://127.0.0.1:9090", "platform": "generic"},
-            headers=operator_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is False
+    def test_127_0_0_1_blocked(self):
+        from server.routers.integration_instances import _is_safe_url
+        assert _is_safe_url("http://127.0.0.1:9090") is False
 
-    def test_private_ip_10_x_blocked(self, client, operator_headers):
-        resp = client.post(
-            "/api/integrations/instances/test-connection",
-            json={"url": "http://10.0.0.1:3000", "platform": "generic"},
-            headers=operator_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is False
+    def test_private_ip_10_x_blocked(self):
+        from server.routers.integration_instances import _is_safe_url
+        assert _is_safe_url("http://10.0.0.1:3000") is False
 
-    def test_private_ip_192_168_blocked(self, client, operator_headers):
-        resp = client.post(
-            "/api/integrations/instances/test-connection",
-            json={"url": "http://192.168.1.1", "platform": "generic"},
-            headers=operator_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is False
+    def test_private_ip_192_168_blocked(self):
+        from server.routers.integration_instances import _is_safe_url
+        assert _is_safe_url("http://192.168.1.1") is False
 
-    def test_metadata_169_254_blocked(self, client, operator_headers):
-        resp = client.post(
-            "/api/integrations/instances/test-connection",
-            json={"url": "http://169.254.169.254/latest/meta-data/", "platform": "generic"},
-            headers=operator_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is False
+    def test_metadata_169_254_blocked(self):
+        from server.routers.integration_instances import _is_safe_url
+        assert _is_safe_url("http://169.254.169.254/latest/meta-data/") is False
 
-    def test_ipv6_loopback_blocked(self, client, operator_headers):
-        resp = client.post(
-            "/api/integrations/instances/test-connection",
-            json={"url": "http://[::1]:8080", "platform": "generic"},
-            headers=operator_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is False
+    def test_ipv6_loopback_blocked(self):
+        from server.routers.integration_instances import _is_safe_url
+        assert _is_safe_url("http://[::1]:8080") is False
 
-    def test_dns_rebind_private_blocked(self, client, operator_headers):
+    def test_dns_rebind_private_blocked(self):
         """Hostname resolving to private IP should be blocked."""
+        from server.routers.integration_instances import _is_safe_url
         with patch("server.routers.integration_instances.socket.getaddrinfo") as mock_dns:
-            mock_dns.return_value = [
-                (2, 1, 6, "", ("10.0.0.5", 80)),
-            ]
+            mock_dns.return_value = [(2, 1, 6, "", ("10.0.0.5", 80))]
+            assert _is_safe_url("http://evil.example.com/api") is False
+
+    def test_integration_endpoint_allows_private_ip(self, client, operator_headers):
+        """test-connection must NOT block private IPs — operators configure local devices."""
+        with patch("server.routers.integration_instances.httpx.AsyncClient") as mock_client:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_client.return_value.get = AsyncMock(return_value=mock_resp)
             resp = client.post(
                 "/api/integrations/instances/test-connection",
-                json={"url": "http://evil.example.com/api", "platform": "generic"},
+                json={"url": "http://192.168.1.100/api", "platform": "truenas"},
                 headers=operator_headers,
             )
-            assert resp.status_code == 200
-            assert resp.json()["success"] is False
+        assert resp.status_code == 200
+        assert resp.json().get("success") is True
 
 
 # ===========================================================================
