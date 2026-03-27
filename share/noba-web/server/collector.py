@@ -399,11 +399,25 @@ def collect_stats(qs: dict) -> dict:
     try:
         import json as _json
         _inst_list = db.list_integration_instances()
+        def _fetch_truenas(url, ac):
+            key = ac.get("api_key") or ac.get("token") or ac.get("apikey_env") or ac.get("apikey") or ""
+            raw = get_truenas(url, key)
+            if not raw:
+                return raw
+            pools = raw.get("pools", [])
+            apps  = raw.get("apps", [])
+            alerts = raw.get("alerts", [])
+            return {
+                **raw,
+                "pool_status":  (pools[0]["status"].lower() if pools else "unknown"),
+                "pool_healthy": all(p.get("healthy") for p in pools),
+                "app_count":    len(apps),
+                "running_apps": sum(1 for a in apps if a.get("state") == "RUNNING"),
+                "alert_count":  len(alerts),
+            }
+
         _PLATFORM_FETCHERS = {
-            "truenas": lambda url, ac: get_truenas(
-                url,
-                ac.get("api_key") or ac.get("token") or ac.get("apikey_env") or ac.get("apikey") or "",
-            ),
+            "truenas": _fetch_truenas,
         }
         _inst_futs: dict[str, object] = {}
         for _inst in _inst_list:

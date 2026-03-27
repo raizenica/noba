@@ -8,9 +8,9 @@ export const CARD_TEMPLATES = {
   truenas: {
     icon: 'fas fa-database',
     metrics: [
-      { key: 'pool_status', label: 'Pool', type: 'status' },
-      { key: 'pool_used_pct', label: 'Used', type: 'percent_bar' },
-      { key: 'dataset_count', label: 'Datasets', type: 'number' },
+      { key: 'pool_status',  label: 'Pool',    type: 'status' },
+      { key: 'running_apps', label: 'Apps',    type: 'number' },
+      { key: 'alert_count',  label: 'Alerts',  type: 'number' },
     ],
   },
   synology: {
