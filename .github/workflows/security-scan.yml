@@ -1,0 +1,70 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  infra-leak-scan:
+    name: Infrastructure leak check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for private infrastructure IPs
+        run: |
+          echo "Scanning for private infrastructure IPs..."
+          FOUND=$(grep -rn '192\.168\.\(100\|101\|50\)\.[0-9]' \
+            --include='*.py' --include='*.js' --include='*.vue' \
+            --include='*.sh' --include='*.yml' --include='*.yaml' \
+            --include='*.md' --include='*.html' --include='*.json' \
+            --include='*.ini' --include='*.cfg' --include='*.conf' \
+            --include='*.spec' --include='*.toml' \
+            --exclude-dir='.git' --exclude-dir='node_modules' \
+            --exclude-dir='.claude' \
+            . 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Private infrastructure IPs found in source files!"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "Clean — no private IPs found."
+
+      - name: Scan for infrastructure hostnames
+        run: |
+          echo "Scanning for real infrastructure hostnames..."
+          FOUND=$(grep -rnE '(proxmoxa01|proxmoxb01|pve-siteb|dnsa01|dnsa02|dnsb01|dnsb02|vnnas)' \
+            --include='*.py' --include='*.js' --include='*.vue' \
+            --include='*.sh' --include='*.yml' --include='*.yaml' \
+            --include='*.md' --include='*.html' --include='*.json' \
+            --exclude-dir='.git' --exclude-dir='node_modules' \
+            --exclude-dir='.claude' \
+            . 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Real infrastructure hostnames found in source files!"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "Clean — no infrastructure hostnames found."
+
+      - name: Scan for location identifiers
+        run: |
+          echo "Scanning for physical location names..."
+          FOUND=$(grep -rni 'dendermonde' \
+            --include='*.py' --include='*.js' --include='*.vue' \
+            --include='*.sh' --include='*.yml' --include='*.yaml' \
+            --include='*.md' --include='*.html' --include='*.json' \
+            --exclude-dir='.git' --exclude-dir='node_modules' \
+            --exclude-dir='.claude' \
+            . 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Physical location names found in source files!"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "Clean — no location identifiers found."
