@@ -377,10 +377,14 @@ reload_systemd() {
         return 0
     fi
 
-    if ! systemctl --user is-system-running &>/dev/null \
-       && ! systemctl --user status &>/dev/null 2>&1 | grep -q -v "Failed to connect"; then
-        say_warn "systemd user session not available (container/non-systemd env)."
-        say_warn "Units were copied but not activated — reload manually when systemd is running."
+    # Check if user session bus is reachable (is-system-running returns
+    # "degraded" on many desktops — that still means the bus works)
+    local _sys_state
+    _sys_state=$(systemctl --user is-system-running 2>/dev/null) || true
+    if [[ -z "$_sys_state" ]]; then
+        # No output at all — session bus unreachable
+        say_warn "systemd user session not reachable."
+        say_warn "Units were copied but not activated — run: systemctl --user daemon-reload"
         return 0
     fi
 
@@ -790,15 +794,84 @@ else
     say "No systemd/ directory in source — skipping unit installation."
 fi
 
+# ── Patch noba-web.service with repo path + capabilities ─────────────────
+_svc_file="$SYSTEMD_USER_DIR/noba-web.service"
+if [[ -f "$_svc_file" && "$DRY_RUN" == false ]]; then
+    # Set NOBA_REPO_DIR so auto-updater can find the git repo
+    if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
+        if ! grep -q "NOBA_REPO_DIR" "$_svc_file"; then
+            sed -i "/^Environment=PORT=/a Environment=NOBA_REPO_DIR=$SCRIPT_DIR" "$_svc_file"
+            say_ok "Auto-update enabled (repo: $SCRIPT_DIR)"
+        fi
+    fi
+    # Enable port 443 support via AmbientCapabilities
+    # For root: works directly in user service (root has all capabilities)
+    # For non-root: create a system-level service with User= and the capability
+    if ! grep -q "AmbientCapabilities" "$_svc_file"; then
+        if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+            sed -i 's/^NoNewPrivileges=true/AmbientCapabilities=CAP_NET_BIND_SERVICE/' "$_svc_file"
+            say_ok "Port 443 support enabled (root install)"
+        else
+            # For non-root: install a system-level service with the capability
+            _sys_svc="/etc/systemd/system/noba-web.service"
+            _user=$(id -un)
+            _home=$(eval echo "~$_user")
+            if command -v sudo &>/dev/null; then
+                sudo tee "$_sys_svc" > /dev/null <<SYSSVC
+[Unit]
+Description=Noba Web Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=$_user
+Group=$(id -gn)
+
+ExecStart=/usr/bin/python3 $_home/.local/libexec/noba/web/server.py
+WorkingDirectory=$_home/.local/libexec/noba/web
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PORT=8080
+Environment=NOBA_REPO_DIR=$SCRIPT_DIR
+
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SYSSVC
+                sudo chmod 644 "$_sys_svc"
+                say_ok "System service created for port 443 support"
+            fi
+        fi
+    fi
+fi
+
 reload_systemd
 
-# ── Restart web service if running ───────────────────────────────────────
+# ── Enable and start web service ─────────────────────────────────────────
 if [[ "$DRY_RUN" == false && "$NO_SYSTEMD" != true && "$NO_RESTART" != true ]] && command -v systemctl &>/dev/null; then
-    if systemctl --user is-active noba-web.service &>/dev/null; then
-        if systemctl --user restart noba-web.service 2>/dev/null; then
-            say_ok "noba-web service restarted."
+    if [[ -f /etc/systemd/system/noba-web.service ]]; then
+        # System-level service exists (non-root install with port 443 support)
+        # Disable the user service to avoid conflicts
+        systemctl --user stop noba-web.service 2>/dev/null || true
+        systemctl --user disable noba-web.service 2>/dev/null || true
+        sudo systemctl daemon-reload 2>/dev/null || true
+        sudo systemctl enable noba-web.service 2>/dev/null || true
+        if sudo systemctl restart noba-web.service 2>/dev/null; then
+            say_ok "noba-web system service enabled and started."
         else
-            say_warn "Failed to restart noba-web — run: systemctl --user restart noba-web.service"
+            say_warn "Failed to start noba-web — run: sudo systemctl enable --now noba-web.service"
+        fi
+    elif systemctl --user daemon-reload 2>/dev/null; then
+        # User service (standard install)
+        systemctl --user enable noba-web.service 2>/dev/null
+        if systemctl --user restart noba-web.service 2>/dev/null; then
+            say_ok "noba-web service enabled and started."
+        else
+            say_warn "Failed to start noba-web — run: systemctl --user enable --now noba-web.service"
         fi
     fi
 fi
