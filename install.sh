@@ -790,6 +790,25 @@ else
     say "No systemd/ directory in source — skipping unit installation."
 fi
 
+# ── Patch noba-web.service with repo path + capabilities ─────────────────
+_svc_file="$SYSTEMD_USER_DIR/noba-web.service"
+if [[ -f "$_svc_file" && "$DRY_RUN" == false ]]; then
+    # Set NOBA_REPO_DIR so auto-updater can find the git repo
+    if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
+        if ! grep -q "NOBA_REPO_DIR" "$_svc_file"; then
+            sed -i "/^Environment=PORT=/a Environment=NOBA_REPO_DIR=$SCRIPT_DIR" "$_svc_file"
+            say_ok "Auto-update enabled (repo: $SCRIPT_DIR)"
+        fi
+    fi
+    # When running as root, add AmbientCapabilities for port 443 support
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        if ! grep -q "AmbientCapabilities" "$_svc_file"; then
+            sed -i 's/^NoNewPrivileges=true/AmbientCapabilities=CAP_NET_BIND_SERVICE/' "$_svc_file"
+            say_ok "Port 443 support enabled (root install)"
+        fi
+    fi
+fi
+
 reload_systemd
 
 # ── Restart web service if running ───────────────────────────────────────
