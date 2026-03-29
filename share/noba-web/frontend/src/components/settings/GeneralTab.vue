@@ -61,7 +61,10 @@ async function applyUpdate() {
 
 onMounted(async () => {
   if (!settingsStore.loaded) await settingsStore.fetchSettings()
-  if (authStore.isAdmin) checkForUpdates()
+  if (authStore.isAdmin) {
+    checkForUpdates()
+    fetchSslStatus()
+  }
 })
 
 async function save() {
@@ -100,6 +103,66 @@ async function uploadConfigRestore(evt) {
     notify.addToast('Config restored — reload to apply', 'success')
   } catch (e) {
     notify.addToast('Restore failed: ' + e.message, 'danger')
+  }
+}
+
+// ── SSL / HTTPS ────────────────────────────────────────────────────────────
+const sslStatus = ref(null)
+const sslUploading = ref(false)
+const certFileRef = ref(null)
+const keyFileRef = ref(null)
+
+async function fetchSslStatus() {
+  try {
+    sslStatus.value = await get('/api/admin/ssl')
+  } catch { sslStatus.value = null }
+}
+
+async function uploadSsl() {
+  const certEl = certFileRef.value
+  const keyEl = keyFileRef.value
+  if (!certEl?.files?.[0] || !keyEl?.files?.[0]) {
+    notify.addToast('Select both certificate and private key files', 'danger')
+    return
+  }
+  sslUploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('cert', certEl.files[0])
+    fd.append('key', keyEl.files[0])
+    await request('/api/admin/ssl/upload', { method: 'POST', body: fd })
+    notify.addToast('SSL certificate uploaded — restart to activate HTTPS', 'success')
+    certEl.value = ''; keyEl.value = ''
+    await fetchSslStatus()
+  } catch (e) {
+    notify.addToast('Upload failed: ' + (e.message || 'Invalid certificate or key'), 'danger')
+  } finally {
+    sslUploading.value = false
+  }
+}
+
+async function removeSsl() {
+  if (!await modals.confirm('Remove SSL certificate and disable HTTPS? The server will restart on HTTP.')) return
+  try {
+    await del('/api/admin/ssl')
+    notify.addToast('SSL removed — restart to switch to HTTP', 'success')
+    await fetchSslStatus()
+  } catch (e) {
+    notify.addToast('Failed: ' + e.message, 'danger')
+  }
+}
+
+async function restartService() {
+  if (!await modals.confirm('Restart the NOBA service now? This applies SSL/port changes.')) return
+  try {
+    await post('/api/system/update/apply', {})
+    notify.addToast('Service restarting...', 'success')
+    const proto = sslStatus.value?.enabled ? 'https' : 'http'
+    setTimeout(() => { window.location.href = `${proto}://${window.location.hostname}:${window.location.port || (proto === 'https' ? 443 : 80)}` }, 4000)
+  } catch {
+    // The restart itself kills the connection — that's expected
+    const proto = sslStatus.value?.enabled ? 'https' : 'http'
+    setTimeout(() => { window.location.href = `${proto}://${window.location.hostname}:${window.location.port || (proto === 'https' ? 443 : 80)}` }, 4000)
   }
 }
 
@@ -251,6 +314,65 @@ async function resetLayout() {
         <input id="s-hostname" class="field-input" type="text"
           v-model="settingsStore.data.hostname"
           placeholder="Leave blank to auto-detect">
+      </div>
+    </div>
+
+    <!-- SSL / HTTPS (admin only) -->
+    <div v-if="authStore.isAdmin" class="s-section">
+      <span class="s-label">SSL / HTTPS</span>
+
+      <!-- Current status -->
+      <div v-if="sslStatus" style="margin-bottom:.75rem">
+        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+          <span v-if="sslStatus.enabled && sslStatus.cert_exists" class="badge bs" style="font-size:.7rem">
+            <i class="fas fa-lock"></i> HTTPS Active
+          </span>
+          <span v-else class="badge bw" style="font-size:.7rem">
+            <i class="fas fa-unlock"></i> HTTP Only
+          </span>
+        </div>
+
+        <!-- Certificate info -->
+        <div v-if="sslStatus.cert_info && !sslStatus.cert_info.error" style="font-size:.78rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:.6rem .8rem;margin-bottom:.6rem">
+          <div style="margin-bottom:.3rem"><strong>Subject:</strong> {{ sslStatus.cert_info.subject }}</div>
+          <div v-if="sslStatus.cert_info.sans" style="margin-bottom:.3rem"><strong>Domains:</strong> {{ sslStatus.cert_info.sans.join(', ') }}</div>
+          <div style="margin-bottom:.3rem"><strong>Issuer:</strong> {{ sslStatus.cert_info.issuer }}</div>
+          <div style="display:flex;gap:1rem">
+            <span><strong>Valid from:</strong> {{ new Date(sslStatus.cert_info.not_before).toLocaleDateString() }}</span>
+            <span><strong>Expires:</strong> {{ new Date(sslStatus.cert_info.not_after).toLocaleDateString() }}</span>
+          </div>
+        </div>
+
+        <!-- Remove button for existing cert -->
+        <div v-if="sslStatus.cert_exists" style="margin-bottom:.75rem">
+          <button class="btn btn-sm" style="color:var(--danger)" @click="removeSsl">
+            <i class="fas fa-trash"></i> Remove Certificate
+          </button>
+        </div>
+      </div>
+
+      <!-- Upload form -->
+      <p class="help-text" style="margin-bottom:.5rem">
+        Upload a PEM certificate (fullchain) and private key to enable HTTPS. A service restart is required after upload.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:.5rem">
+        <div>
+          <label class="field-label">Certificate (fullchain.pem)</label>
+          <input ref="certFileRef" type="file" accept=".pem,.crt,.cer" class="field-input" style="padding:.3rem">
+        </div>
+        <div>
+          <label class="field-label">Private Key (privkey.pem)</label>
+          <input ref="keyFileRef" type="file" accept=".pem,.key" class="field-input" style="padding:.3rem">
+        </div>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-top:.25rem">
+          <button class="btn btn-sm btn-primary" :disabled="sslUploading" @click="uploadSsl">
+            <i class="fas" :class="sslUploading ? 'fa-spinner fa-spin' : 'fa-upload'"></i>
+            {{ sslUploading ? 'Uploading...' : 'Upload Certificate' }}
+          </button>
+          <button v-if="sslStatus?.cert_exists" class="btn btn-sm" @click="restartService">
+            <i class="fas fa-sync-alt"></i> Restart to Apply
+          </button>
+        </div>
       </div>
     </div>
 

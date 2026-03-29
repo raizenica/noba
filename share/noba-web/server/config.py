@@ -118,6 +118,8 @@ WEB_KEYS = frozenset([
     "seatLimit",
     # Auto-update
     "autoUpdateEnabled",
+    # SSL / Network
+    "sslCertPath", "sslKeyPath", "sslEnabled",
 ])
 _NOTIF_WEB_KEYS = frozenset([
     "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",

@@ -1042,3 +1042,120 @@ def api_admin_scim_token(auth=Depends(_require_admin)):
     token_hash = _hashlib.sha256(token.encode()).hexdigest()
     db.scim_store_token(str(_uuid.uuid4()), token_hash)
     return {"token": token, "note": "Store this token securely — it will not be shown again."}
+
+
+# ── /api/admin/ssl ──────────────────────────────────────────────────────────
+_SSL_DIR = os.path.expanduser("~/.config/noba/ssl")
+
+
+@router.get("/api/admin/ssl")
+@handle_errors
+def api_admin_ssl_status(auth=Depends(_require_admin)):
+    """Return current SSL configuration and certificate details."""
+    settings = read_yaml_settings()
+    cert_path = settings.get("sslCertPath", "")
+    key_path = settings.get("sslKeyPath", "")
+    ssl_enabled = settings.get("sslEnabled", False)
+    result = {
+        "enabled": ssl_enabled,
+        "cert_path": cert_path,
+        "key_path": key_path,
+        "cert_exists": bool(cert_path and os.path.isfile(cert_path)),
+        "key_exists": bool(key_path and os.path.isfile(key_path)),
+        "cert_info": None,
+    }
+    # Parse certificate details if available
+    if result["cert_exists"]:
+        try:
+            from cryptography.x509 import load_pem_x509_certificate
+            with open(cert_path, "rb") as f:
+                cert = load_pem_x509_certificate(f.read())
+            result["cert_info"] = {
+                "subject": cert.subject.rfc4514_string(),
+                "issuer": cert.issuer.rfc4514_string(),
+                "not_before": cert.not_valid_before_utc.isoformat(),
+                "not_after": cert.not_valid_after_utc.isoformat(),
+                "serial": str(cert.serial_number),
+            }
+            # Extract SANs
+            try:
+                from cryptography.x509.oid import ExtensionOID
+                san = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+                from cryptography.x509 import DNSName
+                result["cert_info"]["sans"] = san.value.get_values_for_type(DNSName)
+            except Exception:
+                pass
+        except Exception as exc:
+            result["cert_info"] = {"error": str(exc)}
+    return result
+
+
+@router.post("/api/admin/ssl/upload")
+@handle_errors
+async def api_admin_ssl_upload(request: Request, auth=Depends(_require_admin)):
+    """Upload SSL certificate and private key files."""
+    username, _ = auth
+    ip = _client_ip(request)
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(400, "Expected multipart/form-data with cert and key files")
+    form = await request.form()
+    cert_file = form.get("cert")
+    key_file = form.get("key")
+    if not cert_file or not key_file:
+        raise HTTPException(400, "Both 'cert' and 'key' files are required")
+    cert_data = await cert_file.read()
+    key_data = await key_file.read()
+    # Validate cert
+    try:
+        from cryptography.x509 import load_pem_x509_certificate
+        cert = load_pem_x509_certificate(cert_data)
+        subject = cert.subject.rfc4514_string()
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid certificate: {exc}")
+    # Validate key
+    try:
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        load_pem_private_key(key_data, password=None)
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid private key: {exc}")
+    # Write files
+    os.makedirs(_SSL_DIR, mode=0o700, exist_ok=True)
+    cert_path = os.path.join(_SSL_DIR, "fullchain.pem")
+    key_path = os.path.join(_SSL_DIR, "privkey.pem")
+    with open(cert_path, "wb") as f:
+        f.write(cert_data)
+    os.chmod(cert_path, 0o644)
+    fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(key_data)
+    # Update config
+    settings = read_yaml_settings()
+    settings["sslCertPath"] = cert_path
+    settings["sslKeyPath"] = key_path
+    settings["sslEnabled"] = True
+    write_yaml_settings(settings)
+    db.audit_log("ssl_upload", username, f"SSL certificate uploaded: {subject}", ip)
+    return {"status": "ok", "cert_path": cert_path, "key_path": key_path, "subject": subject}
+
+
+@router.delete("/api/admin/ssl")
+@handle_errors
+def api_admin_ssl_remove(request: Request, auth=Depends(_require_admin)):
+    """Remove SSL certificate and disable HTTPS."""
+    username, _ = auth
+    ip = _client_ip(request)
+    settings = read_yaml_settings()
+    settings["sslCertPath"] = ""
+    settings["sslKeyPath"] = ""
+    settings["sslEnabled"] = False
+    write_yaml_settings(settings)
+    # Remove cert files
+    for f in ("fullchain.pem", "privkey.pem"):
+        path = os.path.join(_SSL_DIR, f)
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+    db.audit_log("ssl_remove", username, "SSL certificate removed", ip)
+    return {"status": "ok"}

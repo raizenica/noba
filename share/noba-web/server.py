@@ -16,6 +16,31 @@ SSL_CERT = os.environ.get("SSL_CERT", "")
 SSL_KEY  = os.environ.get("SSL_KEY", "")
 
 
+def _resolve_ssl() -> dict:
+    """Resolve SSL cert/key paths from env vars or YAML config."""
+    cert = SSL_CERT
+    key = SSL_KEY
+    # Fall back to YAML config (set via the GUI)
+    if not cert or not key:
+        try:
+            import yaml
+            config_path = os.environ.get(
+                "NOBA_CONFIG",
+                os.path.expanduser("~/.config/noba/config.yaml"),
+            )
+            if os.path.isfile(config_path):
+                with open(config_path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                web = cfg.get("web", {})
+                cert = cert or web.get("sslCertPath", "")
+                key = key or web.get("sslKeyPath", "")
+        except Exception:
+            pass
+    if cert and key and os.path.isfile(cert) and os.path.isfile(key):
+        return {"ssl_certfile": cert, "ssl_keyfile": key}
+    return {}
+
+
 if __name__ == "__main__":
     # Ensure the package directory is on sys.path so `from server.app import app` works
     if _HERE not in sys.path:
@@ -31,8 +56,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     os.chdir(_HERE)
-    ssl_kwargs = {}
-    if SSL_CERT and SSL_KEY and os.path.isfile(SSL_CERT) and os.path.isfile(SSL_KEY):
-        ssl_kwargs["ssl_certfile"] = SSL_CERT
-        ssl_kwargs["ssl_keyfile"] = SSL_KEY
-    uvicorn.run(app, host=HOST, port=PORT, log_config=None, access_log=False, **ssl_kwargs)
+    uvicorn.run(app, host=HOST, port=PORT, log_config=None, access_log=False, **_resolve_ssl())
