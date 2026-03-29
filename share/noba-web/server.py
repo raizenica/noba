@@ -12,6 +12,8 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 HOST  = os.environ.get("HOST", "0.0.0.0")
 PORT  = int(os.environ.get("PORT", 8080))
+SSL_CERT = os.environ.get("SSL_CERT", "")
+SSL_KEY  = os.environ.get("SSL_KEY", "")
 
 
 if __name__ == "__main__":
@@ -29,4 +31,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     os.chdir(_HERE)
-    uvicorn.run(app, host=HOST, port=PORT, log_config=None, access_log=False)
+    ssl_kwargs = {}
+    if SSL_CERT and SSL_KEY and os.path.isfile(SSL_CERT) and os.path.isfile(SSL_KEY):
+        ssl_kwargs["ssl_certfile"] = SSL_CERT
+        ssl_kwargs["ssl_keyfile"] = SSL_KEY
+    uvicorn.run(app, host=HOST, port=PORT, log_config=None, access_log=False, **ssl_kwargs)
