@@ -27,12 +27,14 @@ body:
       description: Which part of NOBA is affected?
       options:
         - Web Dashboard (UI)
-        - Backend Server (server.py)
-        - Automation Scripts (backup, disk, cloud, etc.)
+        - Backend / API
+        - Integrations (Proxmox, Pi-hole, TrueNAS, etc.)
+        - Agents (remote monitoring)
+        - Automations / Self-healing
+        - Enterprise (SSO, RBAC, Vault, License)
         - Installer (install.sh)
-        - Systemd Timers
         - Docker / Container
-        - CLI (noba wrapper)
+        - Auto-update
         - Other
     validations:
       required: true

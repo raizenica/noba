@@ -25,7 +25,7 @@ NOBA Command Center was deployed across two physical sites and subjected to comp
 
 ## Test Infrastructure
 
-### Site A — Primary (Dendermonde)
+### Site A — Primary
 
 | Component | Specification |
 |-----------|--------------|
@@ -36,7 +36,7 @@ NOBA Command Center was deployed across two physical sites and subjected to comp
 | Agent | `pve` v2.3.0, WebSocket |
 | Docker | v29.3.0 (nginx, busybox) |
 | Ollama | llama3.2:3b (2.0GB), llama3:8b (4.7GB) |
-| IP | 192.168.100.70 |
+| IP | 192.168.x.x (Site A) |
 
 ### Site B — Remote
 
@@ -50,7 +50,7 @@ NOBA Command Center was deployed across two physical sites and subjected to comp
 | Docker | v29.3.0 (nginx, redis) |
 | LXC | Alpine Linux (VMID 100, created via API) |
 | Ollama | llama3.2:1b (1.3GB) |
-| IP | 192.168.50.70 |
+| IP | 192.168.x.x (Site B) |
 
 ### Network
 

@@ -719,12 +719,12 @@ disk:
 web:
   port: 8080
   wanTestIp: "8.8.8.8"
-  lanTestIp: "192.168.100.111"
+  lanTestIp: "192.168.1.1"
   customActions:
     - id: "reboot-dns"
       name: "Reboot DNS Stack"
       icon: "fa-sync-alt"
-      command: "ssh admin@192.168.100.111 sudo reboot"
+      command: "ssh admin@192.168.1.1 sudo reboot"
   automations:
     - id: "test-hook"
       name: "Test Webhook"

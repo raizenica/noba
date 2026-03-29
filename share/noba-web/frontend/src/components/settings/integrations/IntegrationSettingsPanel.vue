@@ -127,7 +127,7 @@ function toggleReveal(evt) {
       <span class="s-label">Uptime Kuma (Prometheus)</span>
       <div>
         <label class="field-label">Base URL</label>
-        <input class="field-input" type="url" v-model="settingsStore.data.kumaUrl" placeholder="http://vnnas.example.org:3001">
+        <input class="field-input" type="url" v-model="settingsStore.data.kumaUrl" placeholder="http://nas.example.com:3001">
       </div>
     </div>
 
@@ -222,7 +222,7 @@ function toggleReveal(evt) {
       <div class="field-2">
         <div>
           <label class="field-label">Base URL</label>
-          <input class="field-input" type="url" v-model="settingsStore.data.plexUrl" placeholder="http://vnnas.example.org:32400">
+          <input class="field-input" type="url" v-model="settingsStore.data.plexUrl" placeholder="http://nas.example.com:32400">
         </div>
         <div>
           <label class="field-label">X-Plex-Token</label>
@@ -421,7 +421,7 @@ function toggleReveal(evt) {
       <div class="field-2">
         <div>
           <label class="field-label">URL / IP</label>
-          <input class="field-input" type="url" v-model="settingsStore.data.piholeUrl" placeholder="http://192.168.100.111">
+          <input class="field-input" type="url" v-model="settingsStore.data.piholeUrl" placeholder="http://192.168.1.100">
         </div>
         <div>
           <label class="field-label">

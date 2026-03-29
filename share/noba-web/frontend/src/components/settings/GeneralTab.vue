@@ -226,7 +226,7 @@ async function resetLayout() {
         <div>
           <label class="field-label" for="s-lan-ip">LAN DNS IP</label>
           <input id="s-lan-ip" class="field-input" type="text"
-            v-model="settingsStore.data.lanTestIp" placeholder="192.168.100.111">
+            v-model="settingsStore.data.lanTestIp" placeholder="192.168.1.1">
         </div>
       </div>
     </div>

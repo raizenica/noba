@@ -222,7 +222,7 @@ function copyMetric(m) {
             </div>
             <div v-if="draft._actionType && (draft._actionType === 'restart_container' || draft._actionType === 'restart_service')" style="margin-top:.5rem">
               <label class="field-label">Remote Agent (optional — leave empty for local)</label>
-              <input class="field-input" v-model="draft._actionAgent" placeholder="e.g. pve, pve-siteb">
+              <input class="field-input" v-model="draft._actionAgent" placeholder="e.g. server-01, db-host">
             </div>
             <div v-if="draft._actionType" class="field-2" style="margin-top:.5rem">
               <div>

@@ -294,7 +294,7 @@ web:
     - id: "reboot-dns"
       name: "Reboot DNS Stack"
       icon: "fa-sync-alt"
-      command: "ssh admin@192.168.100.111 sudo systemctl restart pihole-FTL"
+      command: "ssh admin@192.168.1.100 sudo systemctl restart pihole-FTL"
 
     - id: "clear-tmp"
       name: "Clear Temp Files"

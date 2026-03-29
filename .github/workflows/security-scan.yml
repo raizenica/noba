@@ -1,0 +1,65 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  infra-leak-scan:
+    name: Infrastructure leak check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for private infrastructure IPs
+        run: |
+          echo "Scanning for private infrastructure IPs..."
+          # IPs are scanned broadly — they should never appear anywhere
+          # except tests (which use them as fixture data)
+          FOUND=$(grep -rn '192\.168\.\(100\|101\|50\)\.[0-9]' \
+            --include='*.py' --include='*.js' --include='*.vue' \
+            --include='*.sh' --include='*.yml' --include='*.yaml' \
+            --include='*.md' --include='*.html' --include='*.json' \
+            --include='*.ini' --include='*.cfg' --include='*.conf' \
+            --include='*.spec' --include='*.toml' \
+            --exclude-dir='.git' --exclude-dir='node_modules' \
+            --exclude-dir='.claude' --exclude-dir='static/dist' \
+            --exclude-dir='tests' --exclude-dir='dev' \
+            --exclude-dir='.vitepress' \
+            --exclude='security-scan.yml' \
+            . 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Private infrastructure IPs found in source files!"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "Clean — no private IPs found."
+
+      - name: Scan user-facing files for infrastructure details
+        run: |
+          echo "Scanning user-facing files for real hostnames and locations..."
+          # Only scan files that end users / customers would see:
+          # install.sh, frontend source, config examples, docs
+          SCAN_PATHS="install.sh share/noba-web/frontend/src scripts/"
+          FOUND=""
+          # Check for real hostnames
+          for f in $SCAN_PATHS; do
+            [ -e "$f" ] || continue
+            MATCH=$(grep -rnE '(proxmoxa01|proxmoxb01|pve-siteb|dnsa01|dnsa02|dnsb01|dnsb02|vnnas|Dendermonde)' \
+              "$f" --include='*.py' --include='*.js' --include='*.vue' \
+              --include='*.sh' --include='*.md' --include='*.html' \
+              2>/dev/null || true)
+            [ -n "$MATCH" ] && FOUND="$FOUND
+          $MATCH"
+          done
+          if [ -n "$(echo "$FOUND" | tr -d '[:space:]')" ]; then
+            echo "::error::Real infrastructure details found in user-facing files!"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "Clean — no infrastructure details in user-facing files."

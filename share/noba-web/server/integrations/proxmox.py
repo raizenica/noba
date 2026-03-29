@@ -13,7 +13,10 @@ def get_proxmox(url: str, user: str, token_name: str, token_value: str,
         return None
     base      = url.rstrip("/")
     user_full = user if "@" in user else f"{user}@pam"
-    auth_hdr  = f"PVEAPIToken={user_full}!{token_name}={token_value}"
+    # If token_name already contains '!' it's a full token ID (e.g. "root@pam!noba-api"),
+    # so use it directly.  Otherwise prepend user_full!.
+    token_id  = token_name if "!" in token_name else f"{user_full}!{token_name}"
+    auth_hdr  = f"PVEAPIToken={token_id}={token_value}"
     hdrs      = {"Authorization": auth_hdr, "Accept": "application/json"}
     result    = {"nodes": [], "vms": [], "status": "offline"}
     try:
