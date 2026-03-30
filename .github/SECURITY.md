@@ -13,7 +13,7 @@
 
 If you discover a security vulnerability in NOBA, please report it responsibly:
 
-1. **Email:** Send details to **security@noba.app** (or open a [private security advisory](https://github.com/raizenica/noba/security/advisories/new) on GitHub)
+1. **Open a [private security advisory](https://github.com/raizenica/noba/security/advisories/new)** on GitHub (preferred)
 2. **Include:**
    - Description of the vulnerability
    - Steps to reproduce

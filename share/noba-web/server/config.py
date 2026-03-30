@@ -78,7 +78,7 @@ WEB_KEYS = frozenset([
     "pikvmUrl", "pikvmUser", "pikvmPass",
     "hassEventTriggers", "hassSensors", "cameraFeeds",
     # Round 6 – Security
-    "oidcProviderUrl", "oidcClientId", "oidcClientSecret",
+    "oidcProviderUrl", "oidcClientId", "oidcClientSecret", "oidcVerifySsl",
     "ldapUrl", "ldapBaseDn", "ldapBindDn", "ldapBindPassword",
     "ipWhitelist", "auditRetentionDays", "require2fa",
     # Round 9 – DevOps
@@ -104,6 +104,8 @@ WEB_KEYS = frozenset([
     # AI / LLM
     "llmProvider", "llmModel", "llmApiKey", "llmBaseUrl",
     "llmMaxTokens", "llmTemperature", "llmEnabled",
+    # Social / OIDC
+    "oidcVerifySsl", "oidcProviderName", "socialProviders",
 ])
 _NOTIF_WEB_KEYS = frozenset([
     "pushoverEnabled", "pushoverAppToken", "pushoverUserKey",
