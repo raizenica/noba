@@ -90,7 +90,7 @@ def read_yaml_settings() -> dict:
         "hassEventTriggers": [], "hassSensors": "", "cameraFeeds": [],
         "frigateUrl": "",
         # ── Round 6: Security ──────────────────────────────────────────────
-        "oidcProviderUrl": "", "oidcClientId": "", "oidcClientSecret": "", "oidcProviderName": "SSO", "oidcVerifySsl": True,
+        "oidcProviderUrl": "", "oidcClientId": "", "oidcClientSecret": "", "oidcProviderName": "SSO",
         "socialProviders": {
             "google": {"clientId": "", "clientSecret": ""},
             "facebook": {"clientId": "", "clientSecret": ""},
@@ -192,15 +192,6 @@ def read_yaml_settings() -> dict:
     for k, v in defaults.items():
         if isinstance(v, str) and is_secret_key(k):
             defaults[k] = decrypt_value(v)
-    # Decrypt secrets nested inside socialProviders
-    sp = defaults.get("socialProviders")
-    if isinstance(sp, dict):
-        for _prov, prov_cfg in sp.items():
-            if isinstance(prov_cfg, dict):
-                for sk in ("clientSecret",):
-                    sv = prov_cfg.get(sk, "")
-                    if isinstance(sv, str):
-                        prov_cfg[sk] = decrypt_value(sv)
 
     with _settings_cache_lock:
         _settings_cache = defaults
@@ -231,20 +222,6 @@ def write_yaml_settings(settings: dict) -> bool:
             k: (encrypt_value(v) if isinstance(v, str) and is_secret_key(k) and v and v != "***" else v)
             for k, v in settings.items()
         }
-        # Encrypt secrets nested inside socialProviders, preserving
-        # masked "***" values by restoring from the existing config
-        if "socialProviders" in settings and isinstance(settings["socialProviders"], dict):
-            existing_sp = (config.get("web") or {}).get("socialProviders", {})
-            for prov_name, prov_cfg in settings["socialProviders"].items():
-                if isinstance(prov_cfg, dict):
-                    for sk in ("clientSecret",):
-                        sv = prov_cfg.get(sk, "")
-                        if sv == "***":
-                            # Restore existing encrypted value from disk
-                            existing_prov = existing_sp.get(prov_name, {})
-                            prov_cfg[sk] = existing_prov.get(sk, "")
-                        elif isinstance(sv, str) and sv:
-                            prov_cfg[sk] = encrypt_value(sv)
 
         # Merge web section — only update keys present in the request,
         # preserving existing values for keys not in this save

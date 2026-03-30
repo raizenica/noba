@@ -269,26 +269,6 @@ def _resolve_provider(cfg: dict, provider_key: str = "") -> dict | None:
     client_id = cfg.get("oidcClientId", "")
     client_secret = cfg.get("oidcClientSecret", "")
     if provider_url and client_id:
-        # Try OIDC Discovery (RFC 8414) for correct endpoint URLs
-        oidc_verify_ssl = cfg.get("oidcVerifySsl", True)
-        discovery_url = f"{provider_url}/.well-known/openid-configuration"
-        try:
-            import httpx as _httpx
-            r = _httpx.get(discovery_url, timeout=5, verify=oidc_verify_ssl)
-            if r.status_code == 200:
-                disc = r.json()
-                return {
-                    "authorize_url": disc["authorization_endpoint"],
-                    "token_url": disc["token_endpoint"],
-                    "userinfo_url": disc.get("userinfo_endpoint", f"{provider_url}/userinfo"),
-                    "scope": "openid email profile",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "name": cfg.get("oidcProviderName", "OIDC"),
-                }
-        except Exception:
-            pass
-        # Fallback: construct URLs from provider_url
         return {
             "authorize_url": f"{provider_url.rstrip('/')}/authorize",
             "token_url": f"{provider_url.rstrip('/')}/token",
@@ -705,13 +685,6 @@ def api_profile_sessions(auth=Depends(_get_auth)):
     return [s for s in all_sessions if s.get("username") == username]
 
 
-@router.get("/api/admin/sessions")
-@handle_errors
-def api_admin_sessions(auth=Depends(_require_admin)):
-    """List all active sessions across all users."""
-    return token_store.list_sessions()
-
-
 # ── /api/user/preferences (Feature 10: Multi-user Dashboard Views) ───────────
 @router.get("/api/user/preferences")
 @handle_errors
@@ -806,6 +779,13 @@ async def api_users_post(request: Request, auth=Depends(_require_admin)):
         return users.list_users()
 
     raise HTTPException(400, "Invalid action")
+
+
+# ── /api/admin/sessions ──────────────────────────────────────────────────────
+@router.get("/api/admin/sessions")
+@handle_errors
+def api_sessions_list(auth=Depends(_require_admin)):
+    return token_store.list_sessions()
 
 
 @router.post("/api/admin/sessions/revoke")

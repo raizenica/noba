@@ -45,17 +45,7 @@ def api_settings_get(auth=Depends(_get_auth)):
     _, role = auth
     settings = read_yaml_settings()
     # Mask secrets for ALL roles including admin — secrets are write-only
-    masked = {k: ("***" if is_secret_key(k) else v) for k, v in settings.items()}
-    # Mask nested secrets inside socialProviders
-    sp = masked.get("socialProviders")
-    if isinstance(sp, dict):
-        masked["socialProviders"] = {
-            prov: {sk: ("***" if sk == "clientSecret" and sv else sv)
-                   for sk, sv in pcfg.items()}
-            if isinstance(pcfg, dict) else pcfg
-            for prov, pcfg in sp.items()
-        }
-    return masked
+    return {k: ("***" if is_secret_key(k) else v) for k, v in settings.items()}
 
 
 @router.post("/api/settings")
@@ -68,15 +58,13 @@ async def api_settings_post(request: Request, auth=Depends(_require_admin)):
     if url_errors:
         raise HTTPException(status_code=400, detail="; ".join(url_errors))
     old_settings = read_yaml_settings()
-    _audit_mask = {"socialProviders"}
     changed = []
     for k in body:
         ov = old_settings.get(k)
         nv = body.get(k)
         if ov != nv:
-            hide = is_secret_key(k) or k in _audit_mask
-            changed.append({"key": k, "old": "***" if hide else str(ov)[:80],
-                            "new": "***" if hide else str(nv)[:80]})
+            changed.append({"key": k, "old": "***" if is_secret_key(k) else str(ov)[:80],
+                            "new": "***" if is_secret_key(k) else str(nv)[:80]})
     ok = write_yaml_settings(body)
     if not ok:
         db.audit_log("settings_update", username, "Settings update failed", ip)
