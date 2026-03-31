@@ -3,7 +3,7 @@
 ## Project
 - **Stack**: FastAPI (Python) backend + Alpine.js frontend, single-page dashboard
 - **Purpose**: Homelab monitoring/automation suite (Nobara Linux)
-- **Repo**: github.com/raizenica/noba, branch: main
+- **Repo**: github.com/raizenica/noba-ce, branch: main
 
 ## Architecture
 - `share/noba-web/server/` — Python backend (app.py, auth.py, db.py, collector.py, metrics.py, integrations.py, alerts.py, plugins.py, config.py, yaml_config.py)

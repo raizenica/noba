@@ -22,7 +22,7 @@ Deploy anywhere — bare metal, Docker, multi-site.
 ### 🐧 Bare Metal
 
 ```bash
-git clone https://github.com/raizenica/noba.git
+git clone https://github.com/raizenica/noba-ce.git
 cd noba
 bash install.sh
 ```
@@ -35,7 +35,7 @@ journalctl --user -u noba-web.service | grep password
 ### 🐳 Docker
 
 ```bash
-git clone https://github.com/raizenica/noba.git
+git clone https://github.com/raizenica/noba-ce.git
 cd noba
 docker compose up -d
 ```

@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'NOBA Command Center',
   description: 'Self-hosted infrastructure monitoring, automation, and predictive intelligence.',
-  base: '/noba/',
+  base: '/noba-ce/',
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/noba/favicon.svg' }],
   ],
@@ -13,7 +13,7 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Configuration', link: '/config/' },
       { text: 'API', link: '/api/' },
-      { text: 'GitHub', link: 'https://github.com/raizenica/noba' },
+      { text: 'GitHub', link: 'https://github.com/raizenica/noba-ce' },
     ],
     sidebar: {
       '/guide/': [
@@ -76,7 +76,7 @@ export default defineConfig({
       ],
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/raizenica/noba' },
+      { icon: 'github', link: 'https://github.com/raizenica/noba-ce' },
     ],
     footer: {
       message: 'Released under the MIT License.',

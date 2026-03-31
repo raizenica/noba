@@ -268,4 +268,4 @@ Open an issue with:
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/raizenica/noba/discussions) for general questions, ideas, and show-and-tell. Reserve Issues for confirmed bugs and concrete feature requests.
+Open a [GitHub Discussion](https://github.com/raizenica/noba-ce/discussions) for general questions, ideas, and show-and-tell. Reserve Issues for confirmed bugs and concrete feature requests.
