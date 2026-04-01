@@ -4,8 +4,51 @@ All notable changes to NOBA Command Center are documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **PBKDF2 600k iterations** — Upgraded from 200,000 to 600,000 iterations (OWASP minimum for PBKDF2-HMAC-SHA256). Hash format now includes iteration count (`pbkdf2:{iters}:{salt}:{hash}`). Backward-compatible with legacy 3-part hashes (200k assumed). Auto-upgrades password hash on successful login.
+- **TOTP fail-fast** — `generate_totp_secret` now raises RuntimeError when pyotp is missing instead of silently returning a weak fallback.
+- **OWASP security headers** — X-Frame-Options DENY, HSTS (2-year), COOP, COEP, CORP, CSP `frame-ancestors 'none'`, X-XSS-Protection disabled (modern approach), stricter Referrer-Policy.
+- **Exception chain suppression** — `from None` on 40+ HTTPException raises across all routers prevents stack trace leakage in error responses.
+- **Error message sanitization** — Exception details logged server-side, generic messages returned to clients across integrations, infrastructure, intelligence, containers, operations, dashboards, collector, remediation, runner, and plugins.
+- **Hostname validation** — Regex validation on WebSocket connect and agent report endpoint prevents injection via malformed hostnames.
+- **Global error handlers** — Custom 500/422 exception handlers log details server-side, return generic messages to prevent information disclosure.
+- **Agent deploy hostname validation** — Regex validation on deploy target hostname.
+- **AiChatPanel XSS protection** — DOMPurify sanitization on AI chat output (whitelist: pre, code, strong, br tags only).
+- **Dockerfile non-root user** — Container now runs as `noba` user instead of root.
+- **Shell temp file security** — `mktemp` + trap pattern replaces predictable `.tmp` suffix in noba-lib.sh.
+
 ### Fixed
-- **RDP keyboard on Wayland/Mutter** — `NotifyKeyboardKeycode` expects Linux evdev keycodes, not X11 hardware keycodes. The `_JS_CODE_TO_X11` table in `rdp.py` correctly maps W3C `e.code` → X11, but `rdp_session.py` was passing those values directly to Mutter. Fixed by subtracting 8 before the D-Bus call (`kc = max(0, int(ev.get("keycode", 0)) - 8)`). Previously, pressing 'A' (X11=38) was interpreted as evdev 38 = `KEY_L`; pressing any key sent evdev 65 = `KEY_F7`, opening LibreOffice's spell checker. Confirmed via live AZERTY layout test on dnsa01 (Belgian layout: Q→a, A→q, W→z, Z→w all correct). Agent bumped to v3.0.1 to trigger auto-update.
+- **Agent deploy localhost detection** — Rejects localhost/127.0.0.1/::1 with clear error message in both install-script and SSH deploy endpoints. Falls back to configured serverUrl.
+- **Agent deploy preflight checks** — Python3 availability, sudo access, and existing agent cleanup verified before SSH deployment. Alpine Linux (apk) support added.
+- **Agent deploy SSH config** — `-F /dev/null` avoids broken distro ssh_config issues (Fedora/Nobara + OpenSSH 10).
+- **Agent deploy verify_ssl** — Auto-disabled for IP-based server URLs where domain certs can't match.
+- **Agent deploy connectivity check** — Post-deploy curl check warns if the remote agent can't reach the server.
+- **5 frontend API path mismatches** — topology→dependencies, site-sync→sites/sync-status, /api/users→/api/admin/users, test-notifications→notifications/test, run-script→run.
+- **HealthScoreGauge missing initialization** — Component now fetches health score data on mount.
+- **DashboardToolbar missing initialization** — Component now fetches dashboard list on mount.
+- **RemoteDesktopView JSON.parse crash** — WebSocket message handler now guards against malformed/binary frames.
+- **SystemLogTab nextTick shim** — Replaced setTimeout(0) shim with native Vue nextTick.
+- **HealingApprovalTab timestamp field** — Corrected `requested_at` → `created_at` to match backend.
+- **STREAM_BUFFER_MAX_LINES sign fix** — Changed from -2000 to 2000 (buffer was unbounded due to double negation in slice).
+- **Service worker error suppression** — Registration failure no longer throws unhandled error in unsupported environments.
+- **DNS failover implementation** — `_handle_failover_dns` now actually modifies /etc/resolv.conf instead of just logging.
+- **Webhook HMAC-SHA256 signing** — Outbound webhooks with configured secrets now include `X-Noba-Signature` header.
+- **healing/agent_verify key typo** — `"type"` → `"command"` in agent command dict.
+- **Shutdown ordering** — Shutdown flag set first to prevent port-bind failures on restart.
+- **noba-lib.sh PBKDF2 sync** — Shell password hashing synced to 600k iterations and 4-part format.
+- **noba-tui.sh quoting** — `$DIALOG` variable quoted throughout to prevent word splitting.
+- **install.sh hardening** — Sudo detection, python-multipart+lxml deps, --break-system-packages fallback for Python 3.11+.
+
+### Improved
+- **App.vue theme persistence** — Theme saved to localStorage with fallback chain for nested preferences structure.
+- **Dashboard masonry MutationObserver** — New cards added by SSE are automatically observed for masonry layout.
+- **WelcomeSetup UX** — Completed steps now show "Edit" button and remain clickable.
+- **DeployModal URL validation** — Warns on localhost, HTTP, short hostnames, and IP-based HTTPS URLs.
+- **Frontend code cleanup** — Removed unused imports/refs across 10+ components.
+- **Dockerfile Python 3.14** — Updated base image from 3.13-slim to 3.14-slim.
+
+### Fixed
+- **RDP keyboard on Wayland/Mutter** — `NotifyKeyboardKeycode` expects Linux evdev keycodes, not X11 hardware keycodes. The `_JS_CODE_TO_X11` table in `rdp.py` correctly maps W3C `e.code` → X11, but `rdp_session.py` was passing those values directly to Mutter. Fixed by subtracting 8 before the D-Bus call (`kc = max(0, int(ev.get("keycode", 0)) - 8)`). Previously, pressing 'A' (X11=38) was interpreted as evdev 38 = `KEY_L`; pressing any key sent evdev 65 = `KEY_F7`, opening LibreOffice's spell checker. Confirmed via live AZERTY layout test on a Belgian-layout host (Q→a, A→q, W→z, Z→w all correct). Agent bumped to v3.0.1 to trigger auto-update.
 - **Dashboard masonry grid stability** — Cards no longer jump or reorder during live SSE telemetry updates. Root causes fixed: (1) `watch(activeInstances)` was firing on every SSE data tick because `Array.filter()` always returns a new reference — replaced with a stable string key `map(i=>i.id).join(',')`. (2) ResizeObserver was writing `gridRowEnd` on every call regardless of whether the value changed, triggering a layout→observer cascade — added a change guard. (3) `HardwareCard` GPU Temp row used `v-if` tied to a `computed` that toggled on/off when `nvidia-smi` transiently returns N/A, causing ~40px height oscillations — replaced with a "once seen, never hide" `ref` pattern.
 - **Dashboard save/load card order** — Saving a layout now correctly captures the live drag order from the SortableJS instance (`_sortable.toArray()`) rather than stale store state. Loading a dashboard now correctly reorders the DOM via `applyCardOrder()` and persists across page refreshes: `cardOrder` is now stored inside `preferences.preferences` (the inner object sent to and returned by the server), not at the outer preferences level where the server ignored it. Late-arriving managed instance cards (SSE-driven) are re-sorted by the `activeInstances` watcher so they land in their saved position even if they mount after `initSortable` runs.
 
