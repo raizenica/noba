@@ -1,7 +1,8 @@
 """Tests for auth module: passwords, tokens, rate limiting, user store."""
-import secrets
 import hashlib
+import secrets
 from datetime import datetime, timedelta
+from unittest import mock
 
 from server.auth import (
     pbkdf2_hash, verify_password, valid_username, check_password_strength,
@@ -16,8 +17,9 @@ class TestPasswordHashing:
         h = pbkdf2_hash("password123")
         parts = h.split(":")
         assert parts[0] == "pbkdf2"
-        assert len(parts) == 3
-        assert len(parts[1]) == 32  # 16 bytes hex
+        assert len(parts) == 4  # pbkdf2:iterations:salt:hash
+        assert parts[1] == "600000"
+        assert len(parts[2]) == 32  # 16 bytes hex
 
     def test_verify_correct(self):
         h = pbkdf2_hash("MySuperSecret1!")
@@ -47,6 +49,48 @@ class TestPasswordHashing:
         h1 = pbkdf2_hash("Pass1!", salt="deadsalt")
         h2 = pbkdf2_hash("Pass1!", salt="deadsalt")
         assert h1 == h2
+
+    def test_verify_legacy_3part_pbkdf2(self):
+        """Legacy 3-part format (pbkdf2:salt:hash) with 200k iterations still verifies."""
+        salt = secrets.token_hex(16)
+        pw = "LegacyPbkdf2Pass1!"
+        dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), 200_000)
+        stored = f"pbkdf2:{salt}:{dk.hex()}"
+        assert verify_password(stored, pw)
+        assert not verify_password(stored, "WrongPassword")
+
+    def test_verify_new_4part_format(self):
+        """New 4-part format (pbkdf2:iters:salt:hash) verifies correctly."""
+        h = pbkdf2_hash("NewFormat1!")
+        assert verify_password(h, "NewFormat1!")
+        assert not verify_password(h, "WrongPassword")
+
+    def test_auto_upgrade_legacy_pbkdf2(self):
+        """Legacy 3-part hash (200k iters) is upgraded to 4-part (600k) on login."""
+        import server.auth as auth_module
+
+        salt = secrets.token_hex(16)
+        pw = "UpgradeMe1!"
+        dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), 200_000)
+        stored = f"pbkdf2:{salt}:{dk.hex()}"
+
+        with mock.patch.object(auth_module.users, "update_password") as mock_update:
+            result = verify_password(stored, pw, username="testuser")
+
+        assert result is True
+        mock_update.assert_called_once()
+        call_args = mock_update.call_args
+        assert call_args[0][0] == "testuser"
+        upgraded_hash = call_args[0][1]
+        parts = upgraded_hash.split(":", 3)
+        assert len(parts) == 4
+        assert parts[0] == "pbkdf2"
+        assert parts[1] == "600000"
+
+    def test_malformed_iters_returns_false(self):
+        """Non-integer iteration count in stored hash returns False without crashing."""
+        stored = "pbkdf2:notanumber:somesalt:somehash"
+        assert verify_password(stored, "anypassword") is False
 
 
 # ── Password strength ───────────────────────────────────────────────────────
