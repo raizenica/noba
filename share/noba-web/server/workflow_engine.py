@@ -153,6 +153,14 @@ def _build_auto_webhook_process(config: dict) -> _HttpResult | None:
             content = json.dumps(body).encode()
         elif isinstance(body, str):
             content = body.encode()
+    # Sign request if webhook has a secret configured
+    secret = config.get("secret", "")
+    if secret and content:
+        import hashlib
+        import hmac as _hmac
+
+        sig = "sha256=" + _hmac.new(secret.encode(), content, hashlib.sha256).hexdigest()
+        headers["X-Noba-Signature"] = sig
     return _do_http_request(url, method, headers=headers, body=content)
 
 

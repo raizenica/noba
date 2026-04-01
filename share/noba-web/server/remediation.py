@@ -6,6 +6,7 @@ import logging
 import re
 import subprocess
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 from .yaml_config import read_yaml_settings
@@ -710,6 +711,7 @@ def execute_action(action_type, params, triggered_by="system",
             "health_check": "pass" if health_ok else "fail",
         }
     except Exception as e:
+        logger.error("Healing action failed: %s", e)
         duration = round(time.time() - start, 2)
         _db.insert_action_audit(
             trigger_type=trigger_type, trigger_id=trigger_id,
@@ -719,7 +721,7 @@ def execute_action(action_type, params, triggered_by="system",
         )
         return {
             "success": False,
-            "error": str(e),
+            "error": "Action execution failed",
             "duration_s": duration,
         }
 
@@ -762,7 +764,8 @@ def _handle_flush_dns(params):
                       timeout=10)
             return {"success": True, "output": "Pi-hole DNS restarted"}
         except Exception as e:
-            return {"success": False, "output": str(e)}
+            logger.error("DNS flush failed: %s", e)
+            return {"success": False, "output": "DNS flush failed"}
     r = subprocess.run(["sudo", "-n", "systemd-resolve", "--flush-caches"],
                       capture_output=True, text=True, timeout=10)
     return {"success": r.returncode == 0, "output": "DNS cache flushed"}
@@ -793,15 +796,27 @@ def _handle_trigger_backup(params):
         )
         return {"success": True, "output": f"Backup queued: run_id={run_id}"}
     except Exception as e:
-        return {"success": False, "output": str(e)}
+        logger.error("Backup trigger failed: %s", e)
+        return {"success": False, "output": "Backup trigger failed"}
 
 
 def _handle_failover_dns(params):
-    primary = params["primary"]
-    secondary = params["secondary"]
-    # This would configure DNS failover — implementation depends on infrastructure
-    logger.warning("DNS failover: %s -> %s", primary, secondary)
-    return {"success": True, "output": f"DNS failover: {primary} -> {secondary}"}
+    primary = params.get("primary", "")
+    secondary = params.get("secondary", "")
+    if not primary or not secondary:
+        return {"success": False, "output": "Both primary and secondary DNS required"}
+    resolv = Path("/etc/resolv.conf")
+    try:
+        content = resolv.read_text()
+        new_content = content.replace(f"nameserver {primary}", f"nameserver {secondary}")
+        if new_content == content:
+            return {"success": False, "output": f"Primary DNS {primary} not found in resolv.conf"}
+        resolv.write_text(new_content)
+        logger.info("DNS failover: %s → %s", primary, secondary)
+        return {"success": True, "output": f"DNS failover: {primary} → {secondary}"}
+    except Exception as e:
+        logger.error("DNS failover failed: %s", e)
+        return {"success": False, "output": "DNS failover failed"}
 
 
 def _handle_scale_container(params):
@@ -878,7 +893,8 @@ def _handle_webhook(params):
             ok = 200 <= r.getcode() < 300
             return {"success": ok, "output": f"HTTP {r.getcode()}"}
     except Exception as e:
-        return {"success": False, "output": str(e)}
+        logger.error("Webhook delivery failed: %s", e)
+        return {"success": False, "output": "Webhook delivery failed"}
 
 
 def _handle_automation(params):

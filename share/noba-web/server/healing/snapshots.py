@@ -95,7 +95,8 @@ def _execute_reverse_action(action_type: str, target: str, snapshot_state: dict)
             target=target,
         )
     except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        logger.error("Rollback execution failed: %s", exc)
+        return {"success": False, "error": "Rollback execution failed"}
 
 
 def execute_rollback(*, action_type: str, target: str, snapshot_state: dict) -> dict:

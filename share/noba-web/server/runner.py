@@ -222,8 +222,8 @@ class JobRunner:
                 error = f"Exit code {exit_code}"
 
         except Exception as exc:
-            logger.exception("Job %d runner error: %s", run_id, exc)
-            error = str(exc)[:512]
+            logger.error("Job %d runner error: %s", run_id, exc)
+            error = "Internal execution error"
         finally:
             output = "".join(output_buf) if output_buf else None
             logger.info(

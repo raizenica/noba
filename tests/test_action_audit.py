@@ -336,11 +336,12 @@ class TestExecuteActionAuditIntegration:
             )
 
         assert result["success"] is False
-        assert "Subprocess exploded" in result["error"]
+        assert result["error"] == "Action execution failed"
         rows = app_db.get_action_audit(trigger_type="test_integration_exc", limit=500)
         assert len(rows) >= 1
         entry = rows[0]
         assert entry["outcome"] == "error"
+        # Audit log retains raw error for operators; API response is sanitized
         assert "Subprocess exploded" in entry["error"]
 
     def test_unknown_action_type_records_error_outcome(self):

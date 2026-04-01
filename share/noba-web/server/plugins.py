@@ -226,7 +226,7 @@ class Plugin:
             self.error = ""
         except Exception as e:
             logger.error("Plugin %s collect error: %s", self.id, e)
-            self.error = str(e)
+            self.error = "Plugin data collection failed"
 
     def to_dict(self) -> dict:
         return {
