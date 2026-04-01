@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import re
 import secrets
@@ -33,7 +34,7 @@ from ..deps import (
 from . import agents as _agents_mod
 from .agents import _validate_agent_key
 
-logger = __import__("logging").getLogger("noba")
+logger = logging.getLogger("noba")
 
 _WEB_DIR = Path(__file__).resolve().parent.parent.parent  # share/noba-web/
 
@@ -101,9 +102,20 @@ def api_agent_install_script(request: Request) -> Response:
         raise HTTPException(401, "Missing agent key")
     if not _agents_mod._validate_agent_key(key):
         raise HTTPException(403, "Invalid agent key")
-    host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", "localhost:8080"))
-    scheme = request.headers.get("X-Forwarded-Proto", "http")
-    server_url = f"{scheme}://{host}"
+    cfg = _agents_mod.read_yaml_settings()
+    server_url = cfg.get("serverUrl", "").strip()
+    if not server_url:
+        host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", ""))
+        scheme = "https" if cfg.get("sslEnabled") else request.headers.get("X-Forwarded-Proto", "http")
+        if host:
+            host_part = host.split(":")[0]
+            if host_part in ("localhost", "127.0.0.1", "::1"):
+                raise HTTPException(400,
+                    "Cannot generate install script when accessing via localhost. "
+                    "Set 'serverUrl' in Settings or access NOBA via its network address.")
+            server_url = f"{scheme}://{host}"
+        else:
+            raise HTTPException(400, "Server URL could not be determined.")
     script = f"""#!/bin/bash
 # NOBA Agent -- Auto-installer
 set -e
@@ -182,13 +194,20 @@ async def api_agent_deploy(request: Request, auth=Depends(_require_admin)):
         raise HTTPException(400, "No agent keys configured. Set agentKeys in settings first.")
     agent_key = agent_keys.split(",")[0].strip()
 
-    # Validate server_url from config rather than trusting the Host header
-    server_url = cfg.get("serverUrl", "").strip()
+    server_url = body.get("server_url", "").strip() or cfg.get("serverUrl", "").strip()
     if not server_url:
-        host_header = request.headers.get("Host", "localhost:8080")
-        server_url = f"http://{host_header}"
-    if not re.match(r'^https?://[a-zA-Z0-9._:/-]+$', server_url):
-        raise HTTPException(400, "Invalid serverUrl configuration")
+        host_header = request.headers.get("Host", "")
+        scheme = "https" if cfg.get("sslEnabled") else "http"
+        if host_header:
+            host_part = host_header.split(":")[0]
+            if host_part in ("localhost", "127.0.0.1", "::1"):
+                raise HTTPException(400,
+                    "Cannot deploy agents when accessing NOBA via localhost. "
+                    "Enter your server's reachable address in the Server URL field "
+                    "(e.g. https://noba.example.com:8080).")
+            server_url = f"{scheme}://{host_header}"
+        else:
+            raise HTTPException(400, "Server URL is required for agent deployment.")
 
     agent_path = _WEB_DIR.parent / "noba-agent.pyz"
     if not agent_path.exists():
@@ -201,8 +220,16 @@ async def api_agent_deploy(request: Request, auth=Depends(_require_admin)):
     target = f"{ssh_user}@{target_host}"
     env = {**os.environ, "SSHPASS": ssh_pass} if ssh_pass else os.environ
 
+    # Determine if agent should skip SSL verification (IP-based URLs can't match domain certs)
+    try:
+        from urllib.parse import urlparse as _urlparse
+        _host = _urlparse(server_url).hostname or ""
+        _agent_verify_ssl = not bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', _host))
+    except Exception:
+        _agent_verify_ssl = True
+
     # Build list-form commands (no shell=True) to prevent shell injection
-    _ssh_common = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
+    _ssh_common = ["-F", "/dev/null", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
     if ssh_pass:
         scp_cmd = ["sshpass", "-e", "scp", "-P", str(target_port)] + _ssh_common
         ssh_cmd = ["sshpass", "-e", "ssh", "-p", str(target_port)] + _ssh_common
@@ -220,53 +247,127 @@ async def api_agent_deploy(request: Request, auth=Depends(_require_admin)):
             return {"status": "error", "step": "copy", "error": result.stderr[:DEPLOY_ERROR_TRUNCATE]}
 
         install_cmds = f"""
+set -e
+
+# ── Pre-flight checks ────────────────────────────────────────────────
+PYTHON=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+if [ -z "$PYTHON" ]; then
+    echo "PREFLIGHT_FAIL: python3 not found on this host"
+    exit 1
+fi
+PY_VER=$($PYTHON --version 2>&1)
+echo "PREFLIGHT_OK: $PY_VER at $PYTHON"
+
+if [ "$(id -u)" -ne 0 ]; then
+    if ! sudo -n true 2>/dev/null; then
+        echo "PREFLIGHT_FAIL: sudo access required but not available (try deploying as root)"
+        exit 1
+    fi
+fi
+
+if systemctl is-active noba-agent >/dev/null 2>&1; then
+    echo "DEPLOY_INFO: stopping existing agent"
+    sudo systemctl stop noba-agent 2>/dev/null || true
+fi
+
+# ── Install ──────────────────────────────────────────────────────────
 sudo mkdir -p /opt/noba-agent
 sudo cp /tmp/noba-agent.pyz /opt/noba-agent/agent.pyz
 sudo chmod +x /opt/noba-agent/agent.pyz
+
 command -v apt-get >/dev/null && sudo apt-get install -y python3-psutil 2>/dev/null || true
 command -v dnf >/dev/null && sudo dnf install -y python3-psutil 2>/dev/null || true
+command -v apk >/dev/null && sudo apk add --no-cache py3-psutil 2>/dev/null || true
+
+# ── Configure ────────────────────────────────────────────────────────
 sudo tee /etc/noba-agent.yaml > /dev/null <<AGENTCFG
 server: {shlex.quote(server_url)}
 api_key: {shlex.quote(agent_key)}
 interval: 30
 hostname: $(hostname)
+verify_ssl: {"true" if _agent_verify_ssl else "false"}
 AGENTCFG
+
 sudo tee /etc/systemd/system/noba-agent.service > /dev/null <<SVC
 [Unit]
 Description=NOBA Agent
 After=network-online.target
 [Service]
 Type=simple
-ExecStart=$(command -v python3 || echo /usr/bin/python3) /opt/noba-agent/agent.pyz --config /etc/noba-agent.yaml
+ExecStart=$PYTHON /opt/noba-agent/agent.pyz --config /etc/noba-agent.yaml
 Restart=always
 RestartSec=30
 [Install]
 WantedBy=multi-user.target
 SVC
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now noba-agent 2>&1
-systemctl is-active noba-agent
+
+# ── Verify ───────────────────────────────────────────────────────────
+sleep 2
+if systemctl is-active noba-agent >/dev/null 2>&1; then
+    echo "AGENT_STATUS: active"
+else
+    echo "AGENT_STATUS: failed"
+    journalctl -u noba-agent -n 5 --no-pager 2>/dev/null || true
+fi
 """
         result = await asyncio.to_thread(
             subprocess.run,
             ssh_cmd + [target, "bash", "-s"],
             input=install_cmds, capture_output=True, text=True,
-            timeout=60, env=env,
+            timeout=90, env=env,
         )
-        success = "active" in result.stdout
+        output = result.stdout + result.stderr
+
+        # Check for pre-flight failures
+        if "PREFLIGHT_FAIL:" in output:
+            fail_msg = ""
+            for line in output.splitlines():
+                if "PREFLIGHT_FAIL:" in line:
+                    fail_msg = line.split("PREFLIGHT_FAIL:", 1)[1].strip()
+                    break
+            db.audit_log("agent_deploy", username, f"host={target_host} preflight_fail={fail_msg}", ip)
+            return {"status": "error", "step": "preflight", "error": fail_msg}
+
+        success = "AGENT_STATUS: active" in output
+
+        # Post-deploy connectivity check
+        connectivity = ""
+        if success:
+            try:
+                check_cmd = f"curl -ksf --connect-timeout 5 {shlex.quote(server_url)}/health 2>&1 || echo UNREACHABLE"
+                check_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ssh_cmd + [target, "bash", "-c", check_cmd],
+                    capture_output=True, text=True, timeout=15, env=env,
+                )
+                if "UNREACHABLE" in check_result.stdout or check_result.returncode != 0:
+                    connectivity = (
+                        f"Agent installed but cannot reach {server_url} from the remote host. "
+                        f"Check firewall rules, DNS resolution, and that the server URL is correct."
+                    )
+            except Exception:
+                connectivity = "Could not verify connectivity from remote host."
+
         db.audit_log("agent_deploy", username, f"host={target_host} user={ssh_user} ok={success}", ip)
-        return {
+        resp: dict = {
             "status": "ok" if success else "error",
             "host": target_host,
             "output": result.stdout[:DEPLOY_OUTPUT_TRUNCATE],
             "error": result.stderr[:DEPLOY_ERROR_TRUNCATE] if not success else "",
         }
+        if connectivity:
+            resp["warning"] = connectivity
+        return resp
     except subprocess.TimeoutExpired:
         return {"status": "error", "error": "SSH connection timed out"}
     except HTTPException:
         raise
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error("Agent deploy failed: %s", e)
+        return {"status": "error", "error": "Deployment failed"}
 
 
 # ── File transfer endpoints (Phase 1c) ──────────────────────────────────────
