@@ -6,7 +6,7 @@ to produce a comprehensive map of the homelab.
 
 Usage:
     python dev/recon.py                    # Full discovery
-    python dev/recon.py --node vnnas       # Scan specific node
+    python dev/recon.py --node my-server    # Scan specific node
     python dev/recon.py --deep             # Include k3s NodePort scan
     python dev/recon.py --json             # JSON output for programmatic use
     python dev/recon.py --timeout 1        # Custom timeout per port (seconds)
@@ -690,7 +690,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   %(prog)s                    Full discovery of all Tailscale nodes
-  %(prog)s --node vnnas       Scan only nodes matching 'vnnas'
+  %(prog)s --node my-server   Scan only nodes matching 'my-server'
   %(prog)s --deep             Include k3s NodePort range (30000-30200)
   %(prog)s --json             Output as JSON for programmatic use
   %(prog)s --timeout 1        Faster scan with 1s timeout per port

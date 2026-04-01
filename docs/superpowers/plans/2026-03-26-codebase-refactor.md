@@ -1152,7 +1152,7 @@ rsync -a share/noba-agent.pyz ~/.local/libexec/noba/noba-agent.pyz
 Verify agents on pve01 and pve02 auto-update within one report interval (~30s). Check:
 - Agent connects and reports metrics
 - Terminal access works
-- RDP works on dnsa01
+- RDP works on host-a
 
 ---
 

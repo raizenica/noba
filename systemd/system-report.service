@@ -3,7 +3,7 @@ Description=Weekly system report
 
 [Service]
 Type=oneshot
-ExecStart=/home/raizen/.local/libexec/noba/system-report.sh
+ExecStart=%h/.local/libexec/noba/system-report.sh
 
 [Install]
 WantedBy=multi-user.target

@@ -30,7 +30,7 @@ NOBA Command Center was deployed across two physical sites and subjected to comp
 | Component | Specification |
 |-----------|--------------|
 | Hypervisor | Proxmox VE 9.1.1 |
-| CPU | Intel Xeon E5-2687W v4, 32 threads |
+| CPU | Multi-core Xeon, 32 threads |
 | RAM | 64 GB |
 | NOBA | v2.0.0, port 8080 |
 | Agent | `pve` v2.3.0, WebSocket |
@@ -46,7 +46,7 @@ NOBA Command Center was deployed across two physical sites and subjected to comp
 | CPU | Multi-core |
 | RAM | 32 GB |
 | NOBA | v2.0.0, port 8080 |
-| Agent | `pve-siteb` v2.3.0, WebSocket (multi-homed to both NOBAs) |
+| Agent | `site-b-agent` v2.3.0, WebSocket (multi-homed to both NOBAs) |
 | Docker | v29.3.0 (nginx, redis) |
 | LXC | Alpine Linux (VMID 100, created via API) |
 | Ollama | llama3.2:1b (1.3GB) |
@@ -199,7 +199,7 @@ NOBA Command Center was deployed across two physical sites and subjected to comp
 |---------|--------|----------|
 | Baseline creation | PASS | SHA-256 hash of /etc/ssh/sshd_config |
 | Drift check | PASS | Agent computes hash, server compares |
-| Cross-site drift | PASS | PVE (match) vs dnsb02 (drift) — different SSH configs |
+| Cross-site drift | PASS | PVE (match) vs host-d (drift) — different SSH configs |
 | Set from agent | PASS | Snapshot current file state as baseline |
 
 ### AI / LLM Integration
@@ -253,7 +253,7 @@ NOBA Command Center was deployed across two physical sites and subjected to comp
 | HAProxy load balancer | PASS | Round-robin across 4 nginx backends + cross-site pool |
 | Multi-tier architecture | PASS | SiteB proxy → WAN → SiteA webapp → Postgres → JSON |
 | NOBA Status Page in LXC | PASS | HTML dashboard aggregating NOBA API + local Postgres |
-| Config drift detection | PASS | resolv.conf baseline found real misconfiguration on dnsb02 |
+| Config drift detection | PASS | resolv.conf baseline found real misconfiguration on host-d |
 | Chaos cascade | PASS | Kill 4 Docker + 2 LXC simultaneously, full recovery |
 | DNS blocking from LXC | PASS | Pi-hole blocking doubleclick.net verified from inside container |
 | k3s in LXC | FAIL | Installs but API server fails due to cgroup2 restrictions |
@@ -397,8 +397,8 @@ Real issues discovered during testing that would be invisible in staging:
 
 | Finding | Source | Action Required |
 |---------|--------|-----------------|
-| QXL VRAM allocation failures (938/hr) | Graylog via NOBA | Increase video memory on dnsa02/dnsb02 VMs |
-| dnsb02 resolv.conf drift | NOBA config baselines | Uses 1.1.1.1 instead of Tailscale DNS — investigate |
+| QXL VRAM allocation failures (938/hr) | Graylog via NOBA | Increase video memory on host-b/host-d VMs |
+| host-d resolv.conf drift | NOBA config baselines | Uses 1.1.1.1 instead of Tailscale DNS — investigate |
 | WAN asymmetry (120/36 Mbps) | iperf3 cross-site | Factor into replication/backup design |
 | k3s incompatible with LXC on PVE | k3s install test | Use VMs for Kubernetes, not LXC |
 | Docker Hub rate limiting on PVE | Container pull attempts | Need registry mirror or `docker login` |

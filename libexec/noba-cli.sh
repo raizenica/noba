@@ -202,9 +202,9 @@ cmd_exec() {
     local cmd_type="${2:-}"
     if [[ -z "$target" || -z "$cmd_type" ]]; then
         echo "Usage: noba-cli exec <hostname|--all> <command_type> [params_json]" >&2
-        echo "  e.g.: noba-cli exec dnsa01 disk_usage" >&2
+        echo "  e.g.: noba-cli exec myhost01 disk_usage" >&2
         echo "        noba-cli exec --all ping" >&2
-        echo "        noba-cli exec dnsa01 exec '{\"command\":\"uptime\"}'" >&2
+        echo "        noba-cli exec myhost01 exec '{\"command\":\"uptime\"}'" >&2
         return 1
     fi
     local params="${3:-{}}"

@@ -3,7 +3,7 @@ Description=Daily disk sentinel check
 
 [Service]
 Type=oneshot
-ExecStart=/home/raizen/.local/libexec/noba/disk-sentinel.sh
+ExecStart=%h/.local/libexec/noba/disk-sentinel.sh
 
 [Install]
 WantedBy=multi-user.target

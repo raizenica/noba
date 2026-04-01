@@ -8,7 +8,7 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 LABEL org.opencontainers.image.title="NOBA Command Center"
 LABEL org.opencontainers.image.description="System monitoring and automation dashboard"
-LABEL org.opencontainers.image.source="https://github.com/itsraizen/noba"
+LABEL org.opencontainers.image.source="https://github.com/raizenica/noba-ce"
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -189,7 +189,7 @@ Gamified infrastructure health with actionable recommendations.
 ### Frontend (Dashboard card + dedicated page)
 - Health score gauge in dashboard (big number, color ring)
 - Click → detailed breakdown with per-category scores
-- Recommendations: "Add backup for dnsa02", "Renew cert for example.com"
+- Recommendations: "Add backup for host-b", "Renew cert for example.com"
 - Historical score trend chart
 
 ### Files

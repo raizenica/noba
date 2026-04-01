@@ -1,7 +1,7 @@
 # Enterprise v2 — Phase 1 Design: Auth Triad + API Key Scoping
 
 **Date:** 2026-03-27
-**Branch:** `enterprise-v2` (off `main`, pushed to `raizenica/noba-ce-enterprise`)
+**Branch:** `enterprise-v2` (off `main`, pushed to `<private-enterprise-repo>`)
 **Scope:** SAML 2.0 SP, WebAuthn/FIDO2 + MFA backup codes, SCIM 2.0 provisioning, API key scoping/IP restriction/rate limiting
 
 ---
@@ -24,12 +24,12 @@ The original `enterprise-uplift` branch (+12,844 lines across 3 phase commits) w
 
 ```
 main (raizenica/noba-ce)
-  └── enterprise-v2 (raizenica/noba-ce-enterprise)
+  └── enterprise-v2 (<private-enterprise-repo>)
 ```
 
 - Community fixes flow up: `git merge origin/main` periodically
 - Enterprise work never flows back to community `main`
-- Git remotes in `~/noba`: `origin` → raizenica/noba-ce, `enterprise` → raizenica/noba-ce-enterprise
+- Git remotes in `~/noba`: `origin` → raizenica/noba-ce, `enterprise` → <private-enterprise-repo>
 - Create branch: `git checkout -b enterprise-v2 main && git push enterprise enterprise-v2`
 
 ---

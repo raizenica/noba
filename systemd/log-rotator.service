@@ -3,7 +3,7 @@ Description=Weekly log rotation
 
 [Service]
 Type=oneshot
-ExecStart=/home/raizen/.local/libexec/noba/log-rotator.sh
+ExecStart=%h/.local/libexec/noba/log-rotator.sh
 
 [Install]
 WantedBy=multi-user.target
