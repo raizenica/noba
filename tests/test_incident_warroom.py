@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for the Collaborative Incident War Room -- DB CRUD and API endpoints."""
 from __future__ import annotations
 

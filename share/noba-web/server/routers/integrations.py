@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Service-specific proxy and control endpoints (cameras, HA, Pi-hole, etc.)."""
 from __future__ import annotations
 

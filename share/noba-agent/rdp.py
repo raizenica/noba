@@ -1,4 +1,7 @@
 """Remote Desktop (RDP) capture, encoding, and input injection."""
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 from __future__ import annotations
 
 import importlib.util as _ilu

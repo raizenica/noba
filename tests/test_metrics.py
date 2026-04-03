@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for the metrics module: validators, cache, ANSI stripping, formatters."""
 from server.metrics import (
     validate_ip, validate_service_name, strip_ansi, human_bps,

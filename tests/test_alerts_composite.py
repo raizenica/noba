@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for Round 2 alert enhancements: composite conditions, grouping,
 maintenance windows, cooldown, heal state, and _safe_eval_single."""
 from __future__ import annotations

@@ -1,3 +1,5 @@
+// Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+// NOBA Command Center — Licensed under Apache 2.0.
 const CACHE_NAME = 'noba-v5'
 const STATS_CACHE = 'noba-stats'
 

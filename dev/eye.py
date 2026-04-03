@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """eye.py — Playwright-based screenshot tool for NOBA development.
 
 Gives Claude "eyes" to see the actual rendered UI. Takes screenshots of

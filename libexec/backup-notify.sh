@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # backup-notify.sh – Send a desktop notification about the last backup status
 # Version: 3.1.0
 

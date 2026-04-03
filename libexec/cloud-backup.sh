@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # cloud-backup.sh – Sync local backups to cloud using rclone
 # Version: 3.1.0
 

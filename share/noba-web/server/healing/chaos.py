@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Chaos testing framework for controlled fault injection.
 
 Defines scenarios that intentionally break things and validates the

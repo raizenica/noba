@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """e2e.py — End-to-end UI tests for NOBA using Playwright.
 
 Tests the actual rendered UI, not just API endpoints. Catches:

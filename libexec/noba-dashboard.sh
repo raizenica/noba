@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # noba-dashboard.sh – Detailed terminal dashboard for Noba automation
 # Version: 3.1.0
 

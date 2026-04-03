@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <template>
   <DashboardCard :title="instance.id" :icon="template.icon || 'fas fa-plug'" :health="health">
     <div v-if="!data || !Object.keys(data).length" class="empty-msg">No data available</div>

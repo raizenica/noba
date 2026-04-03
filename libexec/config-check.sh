@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # config-check.sh – Validate configuration and check dependencies
 # Version: 3.0.0
 #

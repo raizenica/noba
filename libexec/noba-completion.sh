@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # noba-completion.sh – Fast Bash completion for Noba automation scripts
 # Version: 2.2.1
 # NOTE: Do NOT use set -e/-u here. This is sourced into the user's interactive shell.

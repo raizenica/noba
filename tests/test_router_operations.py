@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Integration tests for the operations router (share/noba-web/server/routers/operations.py)."""
 from __future__ import annotations
 

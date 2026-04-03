@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """NOBA Agent — Zero-dependency system telemetry collector.
 
 Collects CPU, memory, disk, network, temperature, and top process metrics

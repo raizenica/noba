@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Agent-verified healing.
 
 Before healing a remote target, ask the local agent to confirm the

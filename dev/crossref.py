@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """crossref.py — Cross-reference validator for NOBA.
 
 Catches the exact class of bugs that burned us: mismatched variable names

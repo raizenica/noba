@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Dependency graph model and root cause resolution for the healing pipeline."""
 from __future__ import annotations
 

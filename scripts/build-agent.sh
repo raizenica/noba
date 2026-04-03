@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # Build the NOBA agent zipapp (agent.pyz) from share/noba-agent/
 # Usage: bash scripts/build-agent.sh [--verbose]
 set -euo pipefail

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # backup-verifier.sh – Verify backup integrity by sampling random files
 # Version: 1.2.0
 

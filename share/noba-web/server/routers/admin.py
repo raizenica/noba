@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Admin endpoints (settings, audit, backup, log viewer, reports, plugins, runbooks)."""
 from __future__ import annotations
 

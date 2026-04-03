@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # backup-to-nas.sh – Incremental hardlink backup to NAS with retention, space check, and report
 # Version: 1.1.0
 

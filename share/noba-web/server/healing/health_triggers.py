@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Health score integration with healing pipeline.
 
 Evaluates health score categories against configurable thresholds.
