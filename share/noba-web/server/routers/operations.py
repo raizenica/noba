@@ -16,18 +16,27 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from .. import deps as _deps
-from ..deps import handle_errors
 from ..agent_config import RISK_LEVELS, check_role_permission
 from ..agent_store import (
-    _agent_cmd_lock, _agent_commands,
-    _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
-    _agent_websockets, _agent_ws_lock,
+    _AGENT_MAX_AGE,
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_websockets,
+    _agent_ws_lock,
 )
-
 from ..config import VERSION
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body,
-    _require_admin, _require_operator, _safe_int, db,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    _safe_int,
+    db,
+    handle_errors,
 )
 from ..metrics import collect_smart
 from ..yaml_config import read_yaml_settings
@@ -52,7 +61,8 @@ async def api_recovery_tailscale(request: Request, auth=Depends(_require_operato
         return {"status": "ok" if result.returncode == 0 else "error",
                 "output": result.stdout[:500], "error": result.stderr[:500]}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error("tailscale-reconnect failed: %s", e)
+        return {"status": "error", "error": "Operation failed"}
 
 
 @router.post("/api/recovery/dns-flush")
@@ -73,7 +83,8 @@ async def api_recovery_dns(request: Request, auth=Depends(_require_operator)):
         return {"status": "ok" if result.returncode == 0 else "error",
                 "output": result.stdout[:500], "error": result.stderr[:500]}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error("dns-flush failed: %s", e)
+        return {"status": "error", "error": "Operation failed"}
 
 
 @router.post("/api/recovery/service-restart")
@@ -95,7 +106,8 @@ async def api_recovery_service(request: Request, auth=Depends(_require_operator)
         return {"status": "ok" if result.returncode == 0 else "error",
                 "service": service, "output": result.stdout[:500]}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error("service-restart %s failed: %s", service, e)
+        return {"status": "error", "error": "Operation failed"}
 
 
 # ── /api/sites/sync-status ───────────────────────────────────────────────────
@@ -150,9 +162,8 @@ def api_journal(request: Request, auth=Depends(_require_operator)):
         if priority in ("0", "1", "2", "3", "4", "5", "6", "7",
                         "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"):
             cmd += ["-p", priority]
-    if since:
-        if re.match(r'^\d+\s*(min|hour|day|sec)\s*ago$', since):
-            cmd += ["--since", since]
+    if since and re.match(r'^\d+\s*(min|hour|day|sec)\s*ago$', since):
+        cmd += ["--since", since]
     if grep_pattern:
         # Reject patterns with nested quantifiers (ReDoS risk)
         if re.search(r'\([^)]*[+*][^)]*\)[+*]', grep_pattern):
@@ -377,7 +388,7 @@ async def _ensure_agent_discovery(hostname: str, timeout: float = 15.0) -> str |
     Returns None on success, or a warning string if discovery timed out.
     Skips silently if agent is offline or already has data.
     """
-    from ..agent_store import _agent_cmd_results, _agent_cmd_lock
+    from ..agent_store import _agent_cmd_lock, _agent_cmd_results
 
     with _agent_data_lock:
         agent = _agent_data.get(hostname)
@@ -444,7 +455,11 @@ async def _run_export_with_discovery(
     request: Request, fmt: str, hostname: str | None, discover: bool,
 ) -> PlainTextResponse:
     """Shared logic for IaC export endpoints (all formats)."""
-    from ..iac_export import generate_ansible, generate_docker_compose, generate_shell_script
+    from ..iac_export import (
+        generate_ansible,
+        generate_docker_compose,
+        generate_shell_script,
+    )
 
     if fmt in ("docker-compose", "shell") and not hostname:
         raise HTTPException(400, "hostname parameter is required")
@@ -477,8 +492,14 @@ async def _run_export_with_discovery(
 
 @router.get("/api/export/ansible")
 @handle_errors
-async def api_export_ansible(request: Request, auth=Depends(_get_auth)):
-    """Generate an Ansible playbook from cached agent data (read-only)."""
+async def api_export_ansible(request: Request, auth=Depends(_require_operator)):
+    """Generate an Ansible playbook from cached agent data (read-only).
+
+    Auth: operator+ (raised from viewer). An Ansible playbook reveals the
+    full infrastructure topology (hostnames, services, ports, paths) —
+    info disclosure risk, so viewers no longer have access. Use the POST
+    sibling endpoint if you also need to trigger fresh discovery.
+    """
     hostname = request.query_params.get("hostname") or None
     return await _run_export_with_discovery(request, "ansible", hostname, discover=False)
 
@@ -495,8 +516,14 @@ async def api_export_ansible_discover(request: Request, auth=Depends(_require_op
 
 @router.get("/api/export/docker-compose")
 @handle_errors
-async def api_export_docker_compose(request: Request, auth=Depends(_get_auth)):
-    """Generate a docker-compose.yml from cached agent container data (read-only)."""
+async def api_export_docker_compose(request: Request, auth=Depends(_require_operator)):
+    """Generate a docker-compose.yml from cached agent container data.
+
+    Auth: operator+ (raised from viewer). A docker-compose file reveals
+    full container topology (images, volumes, networks, env files, ports)
+    and must not be readable by viewer-role accounts. Use the POST sibling
+    endpoint if you also need to trigger fresh discovery.
+    """
     hostname = request.query_params.get("hostname") or None
     return await _run_export_with_discovery(request, "docker-compose", hostname, discover=False)
 
@@ -513,8 +540,13 @@ async def api_export_docker_compose_discover(request: Request, auth=Depends(_req
 
 @router.get("/api/export/shell")
 @handle_errors
-async def api_export_shell(request: Request, auth=Depends(_get_auth)):
-    """Generate a bash setup script from cached agent data (read-only)."""
+async def api_export_shell(request: Request, auth=Depends(_require_operator)):
+    """Generate a bash setup script from cached agent data.
+
+    Auth: operator+ (raised from viewer). A shell provisioning script
+    reveals hostnames, installed packages, and service paths — not
+    something viewer accounts should read.
+    """
     hostname = request.query_params.get("hostname") or None
     return await _run_export_with_discovery(request, "shell", hostname, discover=False)
 

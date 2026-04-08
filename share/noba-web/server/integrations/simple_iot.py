@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import logging
+
 import httpx
 
 from .base import ConfigError, TransientError, _http_get
-
 
 logger = logging.getLogger("noba")
 
@@ -52,8 +52,8 @@ def get_homebridge(url: str, user: str, password: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -65,7 +65,7 @@ def get_z2m(url: str) -> dict | None:
         return None
     try:
         base = url.rstrip("/")
-        devices = _http_get(f"{base}/api/devices")
+        devices = _http_get(f"{base}/api/devices", category="smart_home")
         dev_list = devices if isinstance(devices, list) else []
         offline = sum(
             1 for d in dev_list
@@ -88,8 +88,8 @@ def get_z2m(url: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -101,7 +101,7 @@ def get_esphome(url: str) -> dict | None:
         return None
     try:
         base = url.rstrip("/")
-        data = _http_get(f"{base}/devices")
+        data = _http_get(f"{base}/devices", category="smart_home")
         dev_list = data if isinstance(data, list) else []
         online = sum(
             1 for d in dev_list
@@ -114,8 +114,8 @@ def get_esphome(url: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -130,12 +130,12 @@ def get_pikvm(url: str, user: str, password: str) -> dict | None:
         base = url.rstrip("/")
         cred = base64.b64encode(f"{user}:{password}".encode()).decode()
         hdrs = {"Authorization": f"Basic {cred}"}
-        _http_get(f"{base}/api/info", hdrs)
+        _http_get(f"{base}/api/info", hdrs, category="smart_home")
         return {"online": True, "status": "online"}
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 

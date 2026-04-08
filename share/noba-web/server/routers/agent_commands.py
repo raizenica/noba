@@ -11,23 +11,36 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..agent_config import (
-    RISK_LEVELS, check_role_permission, get_agent_capabilities,
+    RISK_LEVELS,
+    check_role_permission,
+    get_agent_capabilities,
     validate_command_params,
+)
+from ..agent_store import (
+    _agent_cmd_lock,
+    _agent_cmd_results,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_stream_lines,
+    _agent_stream_lines_lock,
+    _agent_streams,
+    _agent_streams_lock,
+    _agent_websockets,
+    _agent_ws_lock,
 )
 from ..constants import (
     COMMAND_HISTORY_LIMIT,
     SLA_INCIDENT_LIMIT,
 )
-from ..agent_store import (
-    _agent_cmd_lock, _agent_cmd_results, _agent_commands,
-    _agent_data, _agent_data_lock,
-    _agent_stream_lines, _agent_stream_lines_lock,
-    _agent_streams, _agent_streams_lock,
-    _agent_websockets, _agent_ws_lock,
-)
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body,
-    _require_operator, _safe_int, db,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_operator,
+    _safe_int,
+    db,
     handle_errors,
 )
 

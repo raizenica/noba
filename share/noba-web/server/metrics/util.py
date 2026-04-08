@@ -11,7 +11,6 @@ import subprocess
 import threading
 import time
 
-
 logger = logging.getLogger("noba")
 
 ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")

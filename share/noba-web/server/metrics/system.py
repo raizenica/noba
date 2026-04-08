@@ -15,7 +15,6 @@ import psutil
 
 from .util import _read_file
 
-
 logger = logging.getLogger("noba")
 
 # ── CPU ───────────────────────────────────────────────────────────────────────

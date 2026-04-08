@@ -15,13 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import deps as _deps
+from .auth import rate_limiter, token_store
 from .collector import bg_collector, get_shutdown_flag
 from .config import NOBA_YAML, PID_FILE, SECURITY_HEADERS, VERSION
 from .db import db
-from . import deps as _deps
 from .plugins import plugin_manager
 from .runner import job_runner
-from .auth import rate_limiter, token_store
 
 logger = logging.getLogger("noba")
 _server_start_time = time.time()
@@ -52,10 +52,14 @@ def _safe_remove(path: str, allowed_dir: str) -> bool:
 
 def _sweep_stale_commands() -> None:
     """Remove stale agent commands/delivered entries regardless of agent activity."""
-    from .agent_store import (
-        _agent_cmd_lock, _agent_commands, _delivered_commands, _COMMAND_DELIVERY_TIMEOUT,
-    )
     import time as _t
+
+    from .agent_store import (
+        _COMMAND_DELIVERY_TIMEOUT,
+        _agent_cmd_lock,
+        _agent_commands,
+        _delivered_commands,
+    )
     now = _t.time()
     with _agent_cmd_lock:
         stale = [h for h, cmds in _agent_commands.items()
@@ -120,7 +124,12 @@ async def _cleanup_transfers() -> None:
     """Remove orphaned file transfers older than 1 hour."""
     import asyncio as _asyncio
 
-    from .agent_store import _TRANSFER_DIR, _TRANSFER_MAX_AGE, _transfer_lock, _transfers
+    from .agent_store import (
+        _TRANSFER_DIR,
+        _TRANSFER_MAX_AGE,
+        _transfer_lock,
+        _transfers,
+    )
 
     try:
         while True:
@@ -178,7 +187,13 @@ async def lifespan(app: FastAPI):
         _wn.scan(plugin_manager)
     except Exception:
         logger.exception("Plugin system failed to start")
-    from .scheduler import scheduler, fs_watcher, rss_watcher, endpoint_checker, drift_checker
+    from .scheduler import (
+        drift_checker,
+        endpoint_checker,
+        fs_watcher,
+        rss_watcher,
+        scheduler,
+    )
     loop = _asyncio.get_running_loop()
     for name, component in [
         ("scheduler", scheduler), ("fs_watcher", fs_watcher),
@@ -343,6 +358,7 @@ async def favicon_ico():
 
 # ── Include API routers ───────────────────────────────────────────────────────
 from .routers import api_router  # noqa: E402
+
 app.include_router(api_router)
 
 

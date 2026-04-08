@@ -12,7 +12,12 @@ import subprocess
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..deps import (
-    _client_ip, _get_auth, _read_body, _require_admin, _require_operator, db,
+    _client_ip,
+    _get_auth,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    db,
     handle_errors,
 )
 from ..metrics import get_rclone_remotes
@@ -237,6 +242,27 @@ async def api_hass_scene(entity_id: str, request: Request, auth=Depends(_require
         raise HTTPException(502, "Scene activation failed") from None
 
 
+def _pihole_get_sid(base: str, password: str) -> str:
+    """Authenticate with Pi-hole v6 and return a fresh session ID.
+
+    Pi-hole v6 issues short-lived SIDs via POST /api/auth {"password": ...}.
+    The CE collector side already handles this via `integrations/pihole.py`,
+    but the `/api/pihole/toggle` router path was still reusing the static
+    `piholeToken` config field as the SID, which v6 rejects. This helper
+    forces a fresh session per toggle.
+    """
+    import httpx as _httpx
+    r = _httpx.post(f"{base}/api/auth", json={"password": password}, timeout=5)
+    data = r.json()
+    session = data.get("session", {})
+    if not session.get("valid"):
+        raise HTTPException(
+            502,
+            f"Pi-hole auth failed: {session.get('message', 'invalid credentials')}",
+        )
+    return session["sid"]
+
+
 # ── /api/pihole/toggle ───────────────────────────────────────────────────────
 @router.post("/api/pihole/toggle")
 @handle_errors
@@ -247,20 +273,38 @@ async def api_pihole_toggle(request: Request, auth=Depends(_require_operator)):
     duration = int(body.get("duration", 0))
     cfg = read_yaml_settings()
     ph_url = cfg.get("piholeUrl", "")
-    ph_tok = cfg.get("piholeToken", "")
+    # v6 requires a password; fall back to the legacy `piholeToken` field
+    # for users who haven't migrated their config yet.
+    ph_password = cfg.get("piholePassword", "") or cfg.get("piholeToken", "")
     if not ph_url:
         raise HTTPException(400, "Pi-hole not configured")
     base = (ph_url if ph_url.startswith("http") else "http://" + ph_url).rstrip("/").replace("/admin", "")
     import httpx as _httpx
     try:
+        # Pi-hole v6: authenticate per call to get a fresh SID. v5 fallback
+        # uses the legacy /admin/api.php query-string path with no SID.
+        sid = _pihole_get_sid(base, ph_password) if ph_password else ""
         if action == "disable":
-            url = f"{base}/api/dns/blocking" if ph_tok else f"{base}/admin/api.php?disable={duration or 300}"
-            _httpx.post(url, json={"blocking": False, "timer": duration or None},
-                       headers={"sid": ph_tok} if ph_tok else {}, timeout=5)
-        else:
-            url = f"{base}/api/dns/blocking" if ph_tok else f"{base}/admin/api.php?enable"
-            _httpx.post(url, json={"blocking": True},
-                       headers={"sid": ph_tok} if ph_tok else {}, timeout=5)
+            if sid:
+                _httpx.post(
+                    f"{base}/api/dns/blocking",
+                    json={"blocking": False, "timer": duration or None},
+                    headers={"sid": sid}, timeout=5,
+                )
+            else:
+                _httpx.post(
+                    f"{base}/admin/api.php?disable={duration or 300}",
+                    timeout=5,
+                )
+        else:  # enable
+            if sid:
+                _httpx.post(
+                    f"{base}/api/dns/blocking",
+                    json={"blocking": True},
+                    headers={"sid": sid}, timeout=5,
+                )
+            else:
+                _httpx.post(f"{base}/admin/api.php?enable", timeout=5)
         db.audit_log("pihole_toggle", username, f"{action} (duration={duration}s)", _client_ip(request))
         return {"success": True}
     except HTTPException:

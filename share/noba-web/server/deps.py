@@ -12,7 +12,12 @@ import subprocess
 
 from fastapi import HTTPException, Request
 
-from .auth import authenticate, has_permission, token_store, ws_token_store  # noqa: F401
+from .auth import (  # noqa: F401
+    authenticate,
+    has_permission,
+    token_store,
+    ws_token_store,
+)
 from .config import MAX_BODY_BYTES, TRUST_PROXY
 from .db import db  # noqa: F401  -- re-exported for route modules
 
@@ -39,6 +44,48 @@ def _int_param(request: Request, name: str, default: int, lo: int, hi: int) -> i
     except (ValueError, TypeError):
         raise HTTPException(400, f"Invalid {name} parameter") from None
     return max(lo, min(hi, v))
+
+
+def check_ws_origin(origin: str, request_host: str | None = None) -> bool:
+    """Return True if a WebSocket Origin header is allowed.
+
+    CSWSH protection for all websocket endpoints. Rules:
+
+    1. Empty Origin → reject. Browsers always send Origin on WebSocket
+       upgrades; a missing header is either a non-browser client that
+       bypasses CORS anyway (use the REST API or a proxy) or an attempt
+       to evade the check.
+    2. Origin in the explicit ``NOBA_CORS_ORIGINS`` allowlist → allow.
+    3. Origin's hostname matches the request Host → allow (same-origin).
+    4. Otherwise → reject.
+
+    The allowlist is read lazily from ``server.app._cors_origins`` so that
+    tests and future config reloads don't need to bounce the process.
+    """
+    if not origin:
+        return False
+
+    # Lazy import to avoid a circular dep on app.py at module load time.
+    try:
+        from .app import _cors_origins as _allow
+    except Exception:
+        _allow = []
+
+    if _allow and origin in _allow:
+        return True
+
+    # Same-origin match on hostname.
+    try:
+        from urllib.parse import urlparse
+        origin_host = urlparse(origin).hostname or ""
+    except Exception:
+        return False
+
+    if not request_host:
+        return False
+    # Normalise: request_host may include a port (e.g. "noba.local:8000").
+    req_host = request_host.split(":", 1)[0]
+    return origin_host == req_host
 
 
 def _client_ip(request: Request) -> str:

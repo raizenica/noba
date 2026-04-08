@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fcntl
 import json as _json
 import logging
@@ -149,14 +150,10 @@ async def terminal_handler(ws: WebSocket, username: str, role: str = "admin") ->
                 proc.wait(timeout=2)
         except (ProcessLookupError, PermissionError, OSError):
             pass
-        try:
+        with contextlib.suppress(OSError):
             os.close(master_fd)
-        except OSError:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             await ws.close()
-        except Exception:
-            pass
         duration = int(time.time() - start_time)
         logger.info("Terminal session ended: user=%s, duration=%ds", username, duration)
         db.audit_log("terminal_session_end", username, f"PTY session closed (duration={duration}s)", client_ip)

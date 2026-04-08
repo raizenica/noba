@@ -9,7 +9,6 @@ import sqlite3
 import threading
 import time
 
-
 # ── Table Creation ─────────────────────────────────────────────────────────────
 
 def create_tables(conn: sqlite3.Connection) -> None:

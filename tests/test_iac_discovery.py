@@ -12,9 +12,11 @@ class TestIaCExportEndpoints:
         resp = client.get("/api/export/ansible")
         assert resp.status_code == 401
 
-    def test_ansible_viewer_can_read(self, client, viewer_headers):
+    def test_ansible_viewer_returns_403(self, client, viewer_headers):
+        # IaC export tightened to operator+ — an Ansible playbook reveals
+        # full infrastructure topology, viewers no longer have access.
         resp = client.get("/api/export/ansible", headers=viewer_headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 403
 
     def test_ansible_operator_can_access(self, client, operator_headers):
         resp = client.get("/api/export/ansible", headers=operator_headers)

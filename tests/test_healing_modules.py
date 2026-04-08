@@ -68,10 +68,15 @@ def _make_outcome(**overrides):
 class TestIntegrationRegistry:
     def test_handler_lookup_known_operation_platform(self):
         from server.healing.integration_registry import get_integration_handler
+        # CF-10: TrueNAS nas_scrub no longer references the fictional REST
+        # `/api/v2.0/pool/id/{pool}/scrub` endpoint — it's now an exec cell
+        # calling `zpool scrub` directly, which is the real ZFS command
+        # that every TrueNAS release supports regardless of REST / WebSocket
+        # API version. Verifying the cell is still present and executable.
         handler = get_integration_handler("nas_scrub", "truenas")
         assert handler is not None
-        assert handler["method"] == "POST"
-        assert "scrub" in handler["endpoint"]
+        assert handler["method"] == "exec"
+        assert "zpool scrub" in handler["command"]
 
     def test_handler_lookup_missing_platform(self):
         from server.healing.integration_registry import get_integration_handler

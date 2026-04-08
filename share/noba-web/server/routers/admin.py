@@ -4,6 +4,7 @@
 """Noba – Admin endpoints (settings, audit, backup, log viewer, reports, plugins, runbooks)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -26,8 +27,15 @@ from ..constants import (
     SNAPSHOT_LIST_LIMIT,
 )
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body, _require_admin,
-    _require_operator, _run_cmd, _safe_int, db,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    _run_cmd,
+    _safe_int,
+    db,
     handle_errors,
 )
 from ..metrics import _read_file, strip_ansi
@@ -380,15 +388,11 @@ def api_snapshot_diff(request: Request, auth=Depends(_get_auth)):
     files_b: dict[str, os.stat_result] = {}
     try:
         for e in os.scandir(path_a):
-            try:
+            with contextlib.suppress(OSError):
                 files_a[e.name] = e.stat(follow_symlinks=False)
-            except OSError:
-                pass
         for e in os.scandir(path_b):
-            try:
+            with contextlib.suppress(OSError):
                 files_b[e.name] = e.stat(follow_symlinks=False)
-            except OSError:
-                pass
     except OSError as e:
         raise HTTPException(500, f"Cannot scan snapshots: {e}")
 

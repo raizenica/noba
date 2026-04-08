@@ -18,11 +18,17 @@ def collect_n8n(base_url: str, api_key: str) -> dict | None:
     hdrs = {"X-N8N-API-KEY": api_key}
     try:
         # Fetch workflows
-        wf_data = _http_get(f"{base_url.rstrip('/')}/api/v1/workflows?active=true", hdrs, timeout=8)
+        wf_data = _http_get(
+            f"{base_url.rstrip('/')}/api/v1/workflows?active=true",
+            hdrs, timeout=8, category="automation",
+        )
         workflows = wf_data.get("data", []) if isinstance(wf_data, dict) else []
 
         # Fetch recent executions
-        ex_data = _http_get(f"{base_url.rstrip('/')}/api/v1/executions?limit=20&status=error,success", hdrs, timeout=8)
+        ex_data = _http_get(
+            f"{base_url.rstrip('/')}/api/v1/executions?limit=20&status=error,success",
+            hdrs, timeout=8, category="automation",
+        )
         executions = ex_data.get("data", []) if isinstance(ex_data, dict) else []
 
         total_wf = len(workflows)
@@ -47,4 +53,4 @@ def collect_n8n(base_url: str, api_key: str) -> dict | None:
         }
     except Exception as e:
         logger.debug("n8n collection failed: %s", e)
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": "Connection failed"}

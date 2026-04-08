@@ -14,7 +14,6 @@ import psutil
 
 from .util import _cache, _run, validate_service_name
 
-
 logger = logging.getLogger("noba")
 
 # ── Process history ───────────────────────────────────────────────────────────

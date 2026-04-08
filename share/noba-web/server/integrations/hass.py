@@ -16,7 +16,7 @@ def get_hass(url: str, token: str):
     try:
         base = url.rstrip("/")
         hdrs = {"Authorization": f"Bearer {token}"}
-        states = _http_get(f"{base}/api/states", hdrs)
+        states = _http_get(f"{base}/api/states", hdrs, category="smart_home")
         if not isinstance(states, list):
             return None
         domains = {}
@@ -42,7 +42,7 @@ def get_hass_entities(url: str, token: str, entity_filter: str = "") -> dict | N
     try:
         base = url.rstrip("/")
         hdrs = {"Authorization": f"Bearer {token}"}
-        states = _http_get(f"{base}/api/states", hdrs)
+        states = _http_get(f"{base}/api/states", hdrs, category="smart_home")
         if not isinstance(states, list):
             return None
         entities = []
@@ -94,7 +94,7 @@ def get_hass_services(url: str, token: str) -> list | None:
     try:
         base = url.rstrip("/")
         hdrs = {"Authorization": f"Bearer {token}"}
-        services = _http_get(f"{base}/api/services", hdrs)
+        services = _http_get(f"{base}/api/services", hdrs, category="smart_home")
         if not isinstance(services, list):
             return None
         result = []

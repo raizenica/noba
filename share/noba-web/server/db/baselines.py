@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import logging
-import time
 import sqlite3
+import time
 
 logger = logging.getLogger("noba")
 

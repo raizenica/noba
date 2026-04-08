@@ -7,7 +7,6 @@ from __future__ import annotations
 import httpx
 
 
-
 # ── qBittorrent ───────────────────────────────────────────────────────────
 def get_qbit(url: str, user: str, password: str) -> dict | None:
     if not url or not user:

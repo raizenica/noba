@@ -14,7 +14,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from ..config import ALLOWED_ACTIONS
-from ..deps import _client_ip, _get_auth, _int_param, _read_body, _require_admin, _require_operator, db, handle_errors
+from ..deps import (
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    db,
+    handle_errors,
+)
 from ..metrics import bust_container_cache, strip_ansi
 from ..runner import job_runner
 from ..yaml_config import read_yaml_settings
@@ -35,7 +44,7 @@ async def api_container_control(request: Request, auth=Depends(_require_operator
     ct_action = body.get("action", "").strip()
     if ct_action not in ("start", "stop", "restart"):
         raise HTTPException(400, "Invalid action")
-    if not ct_name or not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", ct_name):
+    if not ct_name or not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,252}$", ct_name):
         raise HTTPException(400, "Invalid container name")
     for runtime in ("docker", "podman"):
         try:
@@ -60,7 +69,7 @@ async def api_container_control(request: Request, auth=Depends(_require_operator
 @handle_errors
 async def api_container_logs(name: str, request: Request, auth=Depends(_require_operator)):
     """Stream container logs (last N lines)."""
-    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,252}$", name):
         raise HTTPException(400, "Invalid container name")
     lines = _int_param(request, "lines", 100, 1, 5000)
     for runtime in ("docker", "podman"):
@@ -81,7 +90,7 @@ async def api_container_logs(name: str, request: Request, auth=Depends(_require_
 @handle_errors
 async def api_container_inspect(name: str, auth=Depends(_require_operator)):
     """Get detailed container info."""
-    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,252}$", name):
         raise HTTPException(400, "Invalid container name")
     for runtime in ("docker", "podman"):
         try:
@@ -160,7 +169,7 @@ async def api_container_stats(auth=Depends(_get_auth)):
 async def api_container_pull(name: str, request: Request, auth=Depends(_require_admin)):
     """Pull the latest image for a container."""
     username, _ = auth
-    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$", name):
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,252}$", name):
         raise HTTPException(400, "Invalid container name")
     for runtime in ("docker", "podman"):
         try:

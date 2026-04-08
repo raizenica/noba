@@ -716,18 +716,21 @@ class TestProcessesCurrent:
 # ===========================================================================
 
 class TestExportAnsible:
-    """GET /api/export/ansible — any authenticated user (read-only).
-    POST /api/export/ansible — operator+ (with discovery)."""
+    """GET /api/export/ansible — operator+ (read-only from cache).
+    POST /api/export/ansible — operator+ (with optional discovery).
+
+    Tightened from viewer → operator in the honesty-gap sweep: an Ansible
+    playbook reveals full infrastructure topology (hostnames, services,
+    ports, paths) which is an info-disclosure risk for viewer accounts.
+    """
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/ansible")
         assert resp.status_code == 401
 
-    def test_viewer_can_read(self, client, viewer_headers):
-        with patch("server.iac_export.generate_ansible",
-                   return_value="---\n- hosts: all\n"):
-            resp = client.get("/api/export/ansible", headers=viewer_headers)
-        assert resp.status_code == 200
+    def test_viewer_returns_403(self, client, viewer_headers):
+        resp = client.get("/api/export/ansible", headers=viewer_headers)
+        assert resp.status_code == 403
 
     def test_operator_can_access(self, client, operator_headers):
         with patch("server.iac_export.generate_ansible",
@@ -775,19 +778,21 @@ class TestExportAnsible:
 # ===========================================================================
 
 class TestExportDockerCompose:
-    """GET /api/export/docker-compose — any authenticated user (read-only), hostname required.
-    POST /api/export/docker-compose — operator+ (with discovery)."""
+    """GET /api/export/docker-compose — operator+ (read-only from cache).
+    POST /api/export/docker-compose — operator+ (with optional discovery).
+
+    Tightened from viewer → operator — a docker-compose file reveals full
+    container topology and must not be readable by viewer-role accounts.
+    """
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/docker-compose?hostname=h1")
         assert resp.status_code == 401
 
-    def test_viewer_can_read(self, client, viewer_headers):
-        with patch("server.iac_export.generate_docker_compose",
-                   return_value="version: '3'\n"):
-            resp = client.get("/api/export/docker-compose?hostname=h1",
-                              headers=viewer_headers)
-        assert resp.status_code == 200
+    def test_viewer_returns_403(self, client, viewer_headers):
+        resp = client.get("/api/export/docker-compose?hostname=h1",
+                          headers=viewer_headers)
+        assert resp.status_code == 403
 
     def test_operator_can_access(self, client, operator_headers):
         with patch("server.iac_export.generate_docker_compose",
@@ -820,19 +825,21 @@ class TestExportDockerCompose:
 # ===========================================================================
 
 class TestExportShell:
-    """GET /api/export/shell — any authenticated user (read-only), hostname required.
-    POST /api/export/shell — operator+ (with discovery)."""
+    """GET /api/export/shell — operator+ (read-only from cache).
+    POST /api/export/shell — operator+ (with optional discovery).
+
+    Tightened from viewer → operator — a shell provisioning script
+    reveals hostnames, installed packages, and service paths.
+    """
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/shell?hostname=h1")
         assert resp.status_code == 401
 
-    def test_viewer_can_read(self, client, viewer_headers):
-        with patch("server.iac_export.generate_shell_script",
-                   return_value="#!/bin/bash\n"):
-            resp = client.get("/api/export/shell?hostname=h1",
-                              headers=viewer_headers)
-        assert resp.status_code == 200
+    def test_viewer_returns_403(self, client, viewer_headers):
+        resp = client.get("/api/export/shell?hostname=h1",
+                          headers=viewer_headers)
+        assert resp.status_code == 403
 
     def test_operator_can_access(self, client, operator_headers):
         with patch("server.iac_export.generate_shell_script",

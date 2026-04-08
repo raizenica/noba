@@ -4,6 +4,7 @@
 """Noba – Authentication, token management, and rate limiting."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -13,7 +14,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from .config import AUTH_CONFIG, USER_DB, TOKEN_TTL_H, _PW_MIN_LEN
+from .config import _PW_MIN_LEN, AUTH_CONFIG, TOKEN_TTL_H, USER_DB
 
 
 def _get_db():
@@ -78,8 +79,13 @@ def verify_password(stored: str, password: str, *, username: str = "") -> bool:
                     "Upgraded PBKDF2 iterations for %s: %d→%d",
                     username, iters, _PBKDF2_ITERS,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # Non-fatal: login still succeeds with the old-iteration
+                # hash; the upgrade will retry on next successful login.
+                logging.getLogger("noba").warning(
+                    "PBKDF2 iteration upgrade failed for %s (will retry on next login): %s",
+                    username, exc,
+                )
         return match
     # legacy sha256 format: salt:hexhash — auto-migrate to pbkdf2 on success
     if ":" not in stored:
@@ -99,8 +105,14 @@ def _migrate_legacy_hash(username: str, password: str) -> None:
         new_hash = pbkdf2_hash(password)
         users.update_password(username, new_hash)
         logging.getLogger("noba").info("Migrated legacy hash for user %s to PBKDF2", username)
-    except Exception:
-        pass  # non-fatal — will retry on next login
+    except Exception as exc:
+        # Non-fatal — login still succeeds with the legacy hash. Log so
+        # operators can investigate persistent migration failures
+        # (typically write-permission issues on users.conf).
+        logging.getLogger("noba").warning(
+            "Legacy hash migration failed for %s (will retry on next login): %s",
+            username, exc,
+        )
 
 
 # ── TOTP helpers ──────────────────────────────────────────────────────────────
@@ -195,10 +207,8 @@ class UserStore:
                 os.replace(tmp, USER_DB)
         except Exception:
             if os.path.exists(tmp):
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(tmp)
-                except OSError:
-                    pass
 
     def get(self, username: str) -> tuple[str, str] | None:
         with self._lock:

@@ -4,8 +4,8 @@
 """Noba – Linked social provider persistence."""
 from __future__ import annotations
 
-import time
 import sqlite3
+import time
 
 
 def _ensure_table(conn):
@@ -25,11 +25,10 @@ def _ensure_table(conn):
 def get_linked_providers(conn, lock, username: str) -> dict:
     """Get all linked providers for a user. Returns {provider: {email, name, linked_at}}."""
     try:
-        with lock:
-            rows = conn.execute(
-                "SELECT provider, provider_email, provider_name, linked_at FROM linked_providers WHERE username = ?",
-                (username,)
-            ).fetchall()
+        rows = conn.execute(
+            "SELECT provider, provider_email, provider_name, linked_at FROM linked_providers WHERE username = ?",
+            (username,)
+        ).fetchall()
     except Exception:
         return {}
     return {
@@ -64,11 +63,10 @@ def unlink_provider(conn, lock, username: str, provider: str) -> bool:
 def find_user_by_provider(conn, lock, provider: str, email: str) -> str | None:
     """Find a NOBA username by their linked provider email. Used for social login."""
     try:
-        with lock:
-            row = conn.execute(
-                "SELECT username FROM linked_providers WHERE provider = ? AND provider_email = ?",
-                (provider, email)
-            ).fetchone()
+        row = conn.execute(
+            "SELECT username FROM linked_providers WHERE provider = ? AND provider_email = ?",
+            (provider, email)
+        ).fetchone()
     except Exception:
         return None
     return row[0] if row else None

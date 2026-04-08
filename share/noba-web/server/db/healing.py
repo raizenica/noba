@@ -9,7 +9,6 @@ import sqlite3
 import threading
 import time
 
-
 # ── Heal Ledger ───────────────────────────────────────────────────────────────
 
 def insert_heal_outcome(

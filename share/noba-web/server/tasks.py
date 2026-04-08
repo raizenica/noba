@@ -69,6 +69,7 @@ if _celery_app:
         """Run a noba script via Celery worker."""
         import shlex
         import subprocess
+
         from .config import SCRIPT_DIR, SCRIPT_MAP
         sfile = os.path.join(SCRIPT_DIR, SCRIPT_MAP.get(script_key, ""))
         if not os.path.isfile(sfile):

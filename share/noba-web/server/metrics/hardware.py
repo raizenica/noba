@@ -15,7 +15,6 @@ import psutil
 
 from .util import _cache, _read_file, _run
 
-
 logger = logging.getLogger("noba")
 
 
