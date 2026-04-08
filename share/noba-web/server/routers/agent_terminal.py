@@ -20,7 +20,7 @@ from ..agent_store import (
     _terminal_subscribers,
 )
 from ..constants import TERMINAL_QUEUE_MAXSIZE
-from ..deps import db, ws_token_store
+from ..deps import check_ws_origin, db, ws_token_store
 
 logger = __import__("logging").getLogger("noba.agent.ws")
 
@@ -98,6 +98,18 @@ async def _dispatch_terminal_command(
 @router.websocket("/api/agents/{hostname}/terminal")
 async def agent_terminal_ws(hostname: str, ws: WebSocket):
     """Browser-facing WebSocket for real-time terminal interaction with an agent."""
+    # CSWSH protection: reject cross-origin WebSocket connections BEFORE
+    # any authentication work happens. Must run first because an attacker
+    # page opening a WS against this endpoint would otherwise reach the
+    # token consume stage with a one-shot URL-param token stolen via some
+    # other vector.
+    if not check_ws_origin(
+        ws.headers.get("origin", ""),
+        ws.headers.get("host", ""),
+    ):
+        await ws.close(code=4003, reason="Origin not allowed")
+        return
+
     # Auth via query param token (WebSocket can't set headers)
     token = ws.query_params.get("token", "")
     if not token:

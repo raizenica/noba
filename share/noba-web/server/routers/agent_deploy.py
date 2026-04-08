@@ -89,6 +89,155 @@ def api_agent_delete(hostname: str, request: Request, auth=Depends(_require_admi
     return {"status": "ok"}
 
 
+# ── Remote uninstall via SSH ─────────────────────────────────────────────────
+
+@router.post("/api/agents/{hostname}/remote-uninstall")
+@handle_errors
+async def api_agent_remote_uninstall(
+    hostname: str, request: Request, auth=Depends(_require_admin),
+):
+    """SSH into a remote host, stop and remove the agent, then delete from dashboard.
+
+    Admin-only counterpart to the per-agent delete above. Removes the
+    systemd service, config, binary, and /opt tree, then cleans the
+    in-memory agent registry and DB row. Requires either an SSH key
+    already trusted by the target or `sshpass` on the server box.
+    """
+    username, _ = auth
+    ip = _client_ip(request)
+    body = await _read_body(request)
+    target_host = body.get("host", "")
+    ssh_user = body.get("ssh_user", "")
+    ssh_pass = body.get("ssh_pass", "")
+    target_port = _safe_int(body.get("ssh_port", 22), 22)
+    if target_port < 1 or target_port > 65535:
+        target_port = 22
+
+    if not target_host or not ssh_user:
+        raise HTTPException(400, "host and ssh_user are required")
+    if not re.match(r"^[a-zA-Z0-9._:-]+$", target_host):
+        raise HTTPException(400, "Invalid hostname")
+    if not re.match(r"^[a-zA-Z0-9._-]+$", ssh_user) or len(ssh_user) > 64:
+        raise HTTPException(400, "Invalid ssh_user")
+
+    target = f"{ssh_user}@{target_host}"
+    env = {**os.environ, "SSHPASS": ssh_pass} if ssh_pass else os.environ
+
+    _ssh_common = [
+        "-F", "/dev/null",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=10",
+    ]
+    if ssh_pass:
+        import shutil as _shutil
+        if not _shutil.which("sshpass"):
+            raise HTTPException(400, "sshpass not installed on server")
+        ssh_cmd = ["sshpass", "-e", "ssh", "-p", str(target_port), *_ssh_common]
+    else:
+        ssh_cmd = ["ssh", "-p", str(target_port), *_ssh_common]
+
+    uninstall_cmds = """
+set -e
+
+# Require sudo
+if [ "$(id -u)" -ne 0 ]; then
+    if ! sudo -n true 2>/dev/null; then
+        echo "UNINSTALL_FAIL: sudo access required"
+        exit 1
+    fi
+fi
+
+# Stop and disable agent service
+if systemctl is-active noba-agent >/dev/null 2>&1; then
+    sudo systemctl stop noba-agent 2>&1
+    echo "UNINSTALL_STEP: service stopped"
+fi
+if systemctl is-enabled noba-agent >/dev/null 2>&1; then
+    sudo systemctl disable noba-agent 2>&1
+    echo "UNINSTALL_STEP: service disabled"
+fi
+
+# Remove files
+sudo rm -f /etc/systemd/system/noba-agent.service
+sudo rm -f /etc/noba-agent.yaml
+sudo rm -rf /opt/noba-agent
+sudo rm -f /tmp/noba-agent.pyz
+sudo systemctl daemon-reload 2>&1
+
+# Verify
+if systemctl is-active noba-agent >/dev/null 2>&1; then
+    echo "UNINSTALL_FAIL: agent still running after cleanup"
+    exit 1
+fi
+
+echo "UNINSTALL_OK: agent fully removed"
+"""
+
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [*ssh_cmd, target, "bash", "-s"],
+            input=uninstall_cmds,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        output = result.stdout + result.stderr
+
+        if "UNINSTALL_FAIL:" in output:
+            fail_msg = ""
+            for line in output.splitlines():
+                if "UNINSTALL_FAIL:" in line:
+                    fail_msg = line.split("UNINSTALL_FAIL:", 1)[1].strip()
+                    break
+            db.audit_log(
+                "agent_remote_uninstall",
+                username,
+                f"host={hostname} fail={fail_msg}",
+                ip,
+            )
+            return {"status": "error", "error": fail_msg}
+
+        if "UNINSTALL_OK:" in output:
+            # Clean up dashboard state so the removed host doesn't
+            # reappear on the next collector cycle.
+            with _agent_data_lock:
+                _agent_data.pop(hostname, None)
+            with _agent_cmd_lock:
+                _agent_commands.pop(hostname, None)
+                _agent_cmd_results.pop(hostname, None)
+            with _agent_ws_lock:
+                _agent_websockets.pop(hostname, None)
+            db.delete_agent(hostname)
+            db.audit_log(
+                "agent_remote_uninstall",
+                username,
+                f"host={hostname} target={target_host} ok=True",
+                ip,
+            )
+            return {
+                "status": "ok",
+                "output": "Agent fully removed from remote host and dashboard",
+            }
+
+        db.audit_log(
+            "agent_remote_uninstall",
+            username,
+            f"host={hostname} target={target_host} unclear",
+            ip,
+        )
+        return {"status": "error", "error": f"Unexpected output: {output[:300]}"}
+
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": "SSH connection timed out"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Remote uninstall failed for %s: %s", hostname, e)
+        return {"status": "error", "error": "Remote uninstall failed — check server logs"}
+
+
 # ── Update / Install script endpoints ────────────────────────────────────────
 
 @router.get("/api/agent/update")

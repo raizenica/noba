@@ -18,7 +18,7 @@ from ..agent_store import (
     register_clipboard_request,
 )
 from ..constants import RDP_QUEUE_MAXSIZE
-from ..deps import ws_token_store
+from ..deps import check_ws_origin, ws_token_store
 
 logger = __import__("logging").getLogger("noba.agent.rdp")
 
@@ -39,6 +39,17 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
     Multiple viewers can connect simultaneously — the agent captures once and the
     server fans frames out to all subscribers (same pattern as terminal PTY output).
     """
+    # CSWSH protection: reject WebSocket connections from cross-origin pages
+    # BEFORE accept(). Must run first because ws.close() only works after
+    # the handshake is complete, and rejecting here means the browser
+    # attacker page gets an immediate 403 instead of a live WS handle.
+    if not check_ws_origin(
+        ws.headers.get("origin", ""),
+        ws.headers.get("host", ""),
+    ):
+        await ws.close(code=4003, reason="Origin not allowed")
+        return
+
     token = ws.query_params.get("token", "")
     if not token:
         await ws.close(code=4001, reason="Missing token")
