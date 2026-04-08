@@ -4,6 +4,34 @@ All notable changes to NOBA Command Center are documented in this file.
 
 ## [Unreleased]
 
+### Fixed (enterprise research back-port)
+- **Pi-hole v6 parsing** — `integrations/pihole.py` now reads `queries.blocked` / `queries.percent_blocked` and derives status from `gravity.domains_being_blocked` instead of the v5-only `ads.*` / `gravity.status` fields that returned zeros on real v6 instances.
+- **InfluxDB v3 support (CF-6, deadline 2026-05-27)** — `query_influxdb` now sniffs query language, dispatches Flux to `/api/v2/query` with `Token` auth, and SQL/InfluxQL to `/api/v3/query_sql` with `Bearer` auth. Retries to v3 on 404/501 and returns a clear migration error when Flux hits a v3 instance. Prevents silent breakage when Docker `influxdb:latest` flips to v3.
+- **Silent health-score failures** — `healing/health_triggers.py` no longer treats categories with missing/unknown scores as a perfect 10/10, which was hiding broken collectors from the healing pipeline.
+- **Pre-action snapshots** — `healing/snapshots.py` now captures real docker/systemd/disk/resolv.conf state pre-heal instead of returning an empty dict (rollback was a no-op).
+- **Live chaos mode** — `healing/chaos.py` now executes the configured injection, waits `settle_seconds`, evaluates expectations against the heal ledger, and runs teardown. Was a `"live_not_implemented"` placeholder.
+- **Real backup trigger** — `_handle_trigger_backup` now looks up a user-defined backup automation or falls back to `SCRIPT_DIR/backup-to-nas.sh` instead of echoing a debug string.
+- **DNS failover via sudo tee** — `_handle_failover_dns` writes through `sudo -n tee /etc/resolv.conf` with graceful FileNotFoundError / permission handling.
+- **fail-closed crypto** — `crypto.encrypt_value` now raises `RuntimeError` when the `cryptography` package is missing instead of silently returning cleartext; `decrypt_value` raises `ValueError` on decrypt failure instead of leaking the ciphertext.
+- **Container name DoS guard** — `routers/containers.py` regexes now cap names at 253 chars (`[a-zA-Z0-9_.-]{0,252}`) to match docker/podman limits and prevent oversized-name abuse.
+- **REST verb correctness** — `PUT /api/status/incidents/{id}/resolve` replaces the prior `POST` (state transition is idempotent per RFC 9110).
+- **OWASP error sanitization** — 58 `str(e)` leaks removed from `integrations/simple_*.py`, `integrations/pihole.py` v6 retry path, `remediation.py` handlers, and collector paths; raw errors stay in server logs, sanitized messages go to clients.
+- **Yaml settings cache invalidation** — `_bust_settings_cache` now resets `_settings_cache_t` too; stale `proxmoxVerifySsl: True` default added.
+- **Honesty contract in health_score** — categories that can't be evaluated (exceptions or empty datasets) now report `status: "unknown"` / `score: None` and are excluded from the normalized denominator; empty installs no longer inherit an undeserved A grade. Test suite rewritten to encode this contract (25 tests).
+- **history prune configurable** — `db/metrics.prune_history` accepts an optional `days` override for tooling that needs shorter retention windows.
+- **Webhook signing helper** — `workflow_engine._sign_request_headers` extracted so any outbound HTTP via `_do_http_request` can pass a `signing_secret` kwarg and get HMAC-SHA256 coverage.
+
+### Fixed (integration_registry corrections — Phase B research)
+- **CF-1/CF-14 git_devops** — Gitea/Forgejo fictional `/git/gc`, `/actions/queue`, `/actions/caches` endpoints replaced with `gitea admin run gc` / `forgejo admin run gc` exec paths. GitLab `/runners/queue` and `/runners/cache` fictional DELETE endpoints replaced with `gitlab-runner cache-cleanup` exec.
+- **CF-2 container_rollback_image** — Kubernetes `/apps/v1/.../rollback` (removed in k8s PR #70039, dead since 1.16) replaced with `kubectl rollout undo`.
+- **CF-3/CF-4/CF-12/CF-13 identity_auth** — All 5 Authelia admin REST entries (the project has no admin REST API) rewritten to `docker exec authelia authelia storage …` CLI. Authentik endpoints updated for 2026.5 removals (`/core/tokens/expire_tokens/` → iterate+delete, `/sources/ldap/{slug}/sync/` → GET status-only). Keycloak `ldap-server-capabilities` + `revoke-refresh-token` replaced with documented alternatives (`PUT components`, `PUT realm notBefore`).
+- **CF-5 mail** — Mailcow `/edit/rspamd/flush_storage` + `/edit/doveadm/reindex` (verified absent from canonical OpenAPI) replaced with `docker exec rspamd-mailcow rspamadm control fuzzy_storage` / `docker exec dovecot-mailcow doveadm index -A '*'`.
+- **CF-7/CF-15 media_management** — Servarr `/queue/failed/{id}` (never existed) replaced with `/queue/grab/{id}` (verified in `QueueActionController.cs`). Prowlarr removed from `servarr_queue_clear` / `servarr_failed_retry` (`supports_queue=False`) and its fictional `/api/v1/cache` entry replaced with `/api/v1/command`.
+- **CF-10 nas** — `nas_cache_clear` truenas/synology/qnap fictional REST cache-flush endpoints replaced with `echo 3 > /proc/sys/vm/drop_caches` (ZFS ARC has no user-flush API). Banner comment flags remaining NAS entries as UNVERIFIED per Phase B finding (~22 of 40 cells fictional).
+- **CF-11 document_wiki** — Paperless `manage.py clearcache` (doesn't exist), Nextcloud `db:optimize` (doesn't exist), BookStack `bookstack:regenerate-thumbnails` (doesn't exist), and Wiki.js `node wiki --clear-cache/--regen-thumbnails/--optimize-storage` flags (don't exist) corrected. Wiki.js thumb regen and storage optimize marked `unsupported` with reason.
+- **CF-16 dns_service_restart** — AdGuard `/control/restart` (fictional) replaced with `systemctl restart AdGuardHome`.
+- **CF-17 database** — Fictional InfluxDB v2 CLI commands `influx admin compact`, `influx admin rebuild-index`, `influx query kill {id}` marked `unsupported` with reason (Enterprise-only or not implemented).
+
 ### Security
 - **PBKDF2 600k iterations** — Upgraded from 200,000 to 600,000 iterations (OWASP minimum for PBKDF2-HMAC-SHA256). Hash format now includes iteration count (`pbkdf2:{iters}:{salt}:{hash}`). Backward-compatible with legacy 3-part hashes (200k assumed). Auto-upgrades password hash on successful login.
 - **TOTP fail-fast** — `generate_totp_secret` now raises RuntimeError when pyotp is missing instead of silently returning a weak fallback.

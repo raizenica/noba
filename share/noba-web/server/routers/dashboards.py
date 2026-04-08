@@ -9,7 +9,14 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import _client_ip, _get_auth, _read_body, _require_operator, db, handle_errors
+from ..deps import (
+    _client_ip,
+    _get_auth,
+    _read_body,
+    _require_operator,
+    db,
+    handle_errors,
+)
 
 logger = logging.getLogger("noba")
 

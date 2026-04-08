@@ -11,12 +11,15 @@ import time
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from ..agent_config import RISK_LEVELS, check_role_permission
-from ..constants import TERMINAL_QUEUE_MAXSIZE
 from ..agent_store import (
-    _agent_cmd_lock, _agent_commands,
-    _agent_websockets, _agent_ws_lock,
-    _terminal_subscribers, _terminal_sub_lock,
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_websockets,
+    _agent_ws_lock,
+    _terminal_sub_lock,
+    _terminal_subscribers,
 )
+from ..constants import TERMINAL_QUEUE_MAXSIZE
 from ..deps import db, ws_token_store
 
 logger = __import__("logging").getLogger("noba.agent.ws")

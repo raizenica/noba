@@ -1418,10 +1418,11 @@ class TestPihole:
             })
             mock_client.post.return_value = auth_resp
 
+            # Pi-hole v6 schema: blocked + percent_blocked live under `queries`,
+            # and status is derived from gravity.domains_being_blocked > 0.
             mock_get.return_value = {
-                "queries": {"total": 50000},
-                "ads": {"blocked": 5000, "percentage": 10.0},
-                "gravity": {"status": "enabled", "domains_being_blocked": 100000},
+                "queries": {"total": 50000, "blocked": 5000, "percent_blocked": 10.0},
+                "gravity": {"domains_being_blocked": 100000},
             }
 
             result = get_pihole("http://pihole:80", "", password="mypassword")
@@ -1429,6 +1430,7 @@ class TestPihole:
             assert result["blocked"] == 5000
             assert result["percent"] == 10.0
             assert result["domains"] == "100,000"
+            assert result["status"] == "enabled"
 
     @patch("server.integrations.pihole._http_get")
     def test_v6_with_token_as_sid(self, mock_get):

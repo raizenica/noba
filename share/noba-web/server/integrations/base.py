@@ -35,9 +35,8 @@ def ssl_verify(setting: bool | str = True):
     - True/False → passed directly (verify or skip)
     - str → treated as a CA bundle file path
     """
-    if isinstance(setting, str) and setting not in ("", "0", "false", "False"):
-        if os.path.isfile(setting):
-            return setting  # CA bundle path
+    if isinstance(setting, str) and setting not in ("", "0", "false", "False") and os.path.isfile(setting):
+        return setting  # CA bundle path
     if isinstance(setting, str):
         return setting.lower() not in ("", "0", "false", "no")
     return bool(setting)

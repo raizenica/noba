@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import logging
+
 import httpx
 
 from .base import ConfigError, TransientError, _http_get
-
 
 logger = logging.getLogger("noba")
 
@@ -34,8 +34,8 @@ def get_adguard(url: str, user: str, password: str):
         return {"queries": queries, "blocked": blocked, "percent": pct, "status": "enabled"}
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, ZeroDivisionError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, ZeroDivisionError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -64,8 +64,8 @@ def get_traefik(url: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -85,8 +85,8 @@ def get_npm(url: str, token: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -117,8 +117,8 @@ def get_cloudflare(token: str, zone_id: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 

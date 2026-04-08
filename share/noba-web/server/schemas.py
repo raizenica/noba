@@ -7,7 +7,6 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-
 _SECRET_PATTERNS = re.compile(
     r"(token|key|pass|secret|password|credential|auth)", re.IGNORECASE
 )

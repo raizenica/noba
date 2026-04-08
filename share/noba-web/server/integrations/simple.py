@@ -2,6 +2,7 @@
 # NOBA Command Center — Licensed under Apache 2.0.
 
 """Noba – Simple integrations (re-exports from category modules)."""
+# isort: skip_file
 from __future__ import annotations
 
 from .base import _client, _http_get

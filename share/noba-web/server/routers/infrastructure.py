@@ -16,18 +16,33 @@ from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import PlainTextResponse
 
 from .. import deps as _deps
-from ..deps import handle_errors
 from ..agent_config import RISK_LEVELS, check_role_permission
 from ..agent_store import (
-    _agent_cmd_lock, _agent_commands,
-    _agent_data, _agent_data_lock, _agent_websockets, _agent_ws_lock,
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_websockets,
+    _agent_ws_lock,
 )
 from ..config import ALLOWED_ACTIONS
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body,
-    _require_admin, _require_operator, db, ws_token_store,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    db,
+    handle_errors,
+    ws_token_store,
 )
-from ..metrics import get_listening_ports, get_network_connections, strip_ansi, validate_service_name
+from ..metrics import (
+    get_listening_ports,
+    get_network_connections,
+    strip_ansi,
+    validate_service_name,
+)
 from ..yaml_config import read_yaml_settings
 
 logger = logging.getLogger("noba")

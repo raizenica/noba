@@ -5,13 +5,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from ..agent_store import (
-    _agent_websockets, _agent_ws_lock,
-    _rdp_subscribers, _rdp_sub_lock,
+    _agent_websockets,
+    _agent_ws_lock,
+    _rdp_sub_lock,
+    _rdp_subscribers,
     register_clipboard_request,
 )
 from ..constants import RDP_QUEUE_MAXSIZE
@@ -84,10 +87,8 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
     with _agent_ws_lock:
         agent_ws = _agent_websockets.get(hostname)
     if agent_ws:
-        try:
+        with contextlib.suppress(Exception):
             await agent_ws.send_json({"type": "rdp_start", "quality": quality, "fps": fps})
-        except Exception:
-            pass
 
     # Notify browser of session parameters
     await ws.send_json({"type": "rdp_ready", "hostname": hostname, "quality": quality, "fps": fps})
@@ -122,14 +123,12 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
                 with _agent_ws_lock:
                     agent_ws = _agent_websockets.get(hostname)
                 if agent_ws:
-                    try:
+                    with contextlib.suppress(Exception):
                         await agent_ws.send_json({
                             "type": "rdp_start",
                             "quality": new_quality,
                             "fps": new_fps,
                         })
-                    except Exception:
-                        pass
 
     except WebSocketDisconnect:
         pass
@@ -154,8 +153,6 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
             with _agent_ws_lock:
                 agent_ws = _agent_websockets.get(hostname)
             if agent_ws:
-                try:
+                with contextlib.suppress(Exception):
                     await agent_ws.send_json({"type": "rdp_stop"})
-                except Exception:
-                    pass
         logger.debug("[rdp] Browser disconnected from %s (%d viewers remaining)", hostname, remaining)

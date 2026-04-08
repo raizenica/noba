@@ -344,8 +344,9 @@ class TestExecuteActionAuditIntegration:
         assert len(rows) >= 1
         entry = rows[0]
         assert entry["outcome"] == "error"
-        # Audit log retains raw error for operators; API response is sanitized
-        assert "Subprocess exploded" in entry["error"]
+        # OWASP error sanitization: raw error goes to server logs, never the
+        # audit row or API response. Operators read stack details from journald.
+        assert entry["error"] == "Action execution failed"
 
     def test_unknown_action_type_records_error_outcome(self):
         from server.db import db as app_db

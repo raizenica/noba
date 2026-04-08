@@ -12,8 +12,20 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..agent_store import _agent_cmd_lock, _agent_commands, _agent_data, _agent_data_lock
-from ..deps import _get_auth, _int_param, _require_admin, _require_operator, db, handle_errors
+from ..agent_store import (
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+)
+from ..deps import (
+    _get_auth,
+    _int_param,
+    _require_admin,
+    _require_operator,
+    db,
+    handle_errors,
+)
 
 logger = logging.getLogger("noba")
 
@@ -241,10 +253,9 @@ async def api_validate_dependencies(request: Request, auth=Depends(_get_auth)):
             return False
 
         for t in targets:
-            if t not in visited:
-                if _has_cycle(t):
-                    errors.append("Cycle detected in dependency graph.")
-                    break
+            if t not in visited and _has_cycle(t):
+                errors.append("Cycle detected in dependency graph.")
+                break
 
     if errors:
         return {"valid": False, "errors": errors}

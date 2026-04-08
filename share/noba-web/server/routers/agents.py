@@ -4,35 +4,56 @@
 """Noba – Agent management: report, list, detail, bulk command, WebSocket."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import secrets
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
 from ..agent_config import (
-    RISK_LEVELS, check_role_permission,
+    RISK_LEVELS,
+    check_role_permission,
     validate_command_params,
+)
+from ..agent_store import (
+    _AGENT_MAX_AGE,
+    _COMMAND_DELIVERY_TIMEOUT,
+    _STREAM_LINES_MAX,
+    _agent_cmd_lock,
+    _agent_cmd_ready,
+    _agent_cmd_results,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_stream_lines,
+    _agent_stream_lines_lock,
+    _agent_websockets,
+    _agent_ws_lock,
+    _delivered_commands,
+    notify_rdp_subscribers,
+    notify_terminal_subscribers,
+    pop_clipboard_request,
 )
 from ..constants import (
     STREAM_BUFFER_MAX,
     WS_CLOSE_NORMAL,
 )
-from ..agent_store import (
-    _agent_cmd_lock, _agent_cmd_ready, _agent_cmd_results, _agent_commands,
-    _delivered_commands, _COMMAND_DELIVERY_TIMEOUT,
-    _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
-    _agent_stream_lines, _agent_stream_lines_lock, _STREAM_LINES_MAX,
-    _agent_websockets, _agent_ws_lock,
-    notify_rdp_subscribers,
-    notify_terminal_subscribers,
-    pop_clipboard_request,
-)
 from ..deps import (
-    _client_ip, _get_auth, _read_body,
-    _require_operator, db,
+    _client_ip,
+    _get_auth,
+    _read_body,
+    _require_operator,
+    db,
     handle_errors,
 )
 from ..yaml_config import read_yaml_settings
@@ -447,10 +468,8 @@ async def agent_websocket(ws: WebSocket):
                     target_q = pop_clipboard_request(req_id)
                     if target_q is not None:
                         import asyncio as _asyncio
-                        try:
+                        with contextlib.suppress(_asyncio.QueueFull):
                             target_q.put_nowait(msg)
-                        except _asyncio.QueueFull:
-                            pass
                 else:
                     # No request_id — fall back to broadcast (older agents)
                     notify_rdp_subscribers(hostname, msg)
@@ -479,7 +498,7 @@ def api_agents(auth=Depends(_get_auth)):
     now = time.time()
     with _agent_data_lock:
         agents = []
-        for hostname, data in sorted(_agent_data.items()):
+        for _hostname, data in sorted(_agent_data.items()):
             age = now - data.get("_received", 0)
             agents.append({
                 **{k: v for k, v in data.items() if not k.startswith("_")},

@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import json
-import time
 import sqlite3
+import time
 
 
 def record_verification(

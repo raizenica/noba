@@ -8,7 +8,6 @@ import hashlib
 import json
 import logging
 
-
 logger = logging.getLogger("noba")
 
 _LOW_RISK_TYPES = frozenset({"restart_container", "restart_service", "clear_cache", "flush_dns"})

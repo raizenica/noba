@@ -16,18 +16,27 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from .. import deps as _deps
-from ..deps import handle_errors
 from ..agent_config import RISK_LEVELS, check_role_permission
 from ..agent_store import (
-    _agent_cmd_lock, _agent_commands,
-    _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
-    _agent_websockets, _agent_ws_lock,
+    _AGENT_MAX_AGE,
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_websockets,
+    _agent_ws_lock,
 )
-
 from ..config import VERSION
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body,
-    _require_admin, _require_operator, _safe_int, db,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    _safe_int,
+    db,
+    handle_errors,
 )
 from ..metrics import collect_smart
 from ..yaml_config import read_yaml_settings
@@ -150,9 +159,8 @@ def api_journal(request: Request, auth=Depends(_require_operator)):
         if priority in ("0", "1", "2", "3", "4", "5", "6", "7",
                         "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"):
             cmd += ["-p", priority]
-    if since:
-        if re.match(r'^\d+\s*(min|hour|day|sec)\s*ago$', since):
-            cmd += ["--since", since]
+    if since and re.match(r'^\d+\s*(min|hour|day|sec)\s*ago$', since):
+        cmd += ["--since", since]
     if grep_pattern:
         # Reject patterns with nested quantifiers (ReDoS risk)
         if re.search(r'\([^)]*[+*][^)]*\)[+*]', grep_pattern):
@@ -377,7 +385,7 @@ async def _ensure_agent_discovery(hostname: str, timeout: float = 15.0) -> str |
     Returns None on success, or a warning string if discovery timed out.
     Skips silently if agent is offline or already has data.
     """
-    from ..agent_store import _agent_cmd_results, _agent_cmd_lock
+    from ..agent_store import _agent_cmd_lock, _agent_cmd_results
 
     with _agent_data_lock:
         agent = _agent_data.get(hostname)
@@ -444,7 +452,11 @@ async def _run_export_with_discovery(
     request: Request, fmt: str, hostname: str | None, discover: bool,
 ) -> PlainTextResponse:
     """Shared logic for IaC export endpoints (all formats)."""
-    from ..iac_export import generate_ansible, generate_docker_compose, generate_shell_script
+    from ..iac_export import (
+        generate_ansible,
+        generate_docker_compose,
+        generate_shell_script,
+    )
 
     if fmt in ("docker-compose", "shell") and not hostname:
         raise HTTPException(400, "hostname parameter is required")

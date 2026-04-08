@@ -47,4 +47,4 @@ def collect_n8n(base_url: str, api_key: str) -> dict | None:
         }
     except Exception as e:
         logger.debug("n8n collection failed: %s", e)
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": "Connection failed"}

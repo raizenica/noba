@@ -4,6 +4,7 @@
 """Noba – Alert rule evaluation, notifications, and self-healing engine."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import subprocess
@@ -509,10 +510,8 @@ def evaluate_alert_rules(stats: dict, read_settings_fn) -> None:
             if incident_id:
                 for window in active_windows:
                     if window.get("auto_close_alerts"):
-                        try:
+                        with contextlib.suppress(Exception):
                             _db.resolve_incident(incident_id)
-                        except Exception:
-                            pass
                         break
 
             # Check escalation policies
@@ -637,8 +636,8 @@ def _emit_threshold_heal_event(
     """
     try:
         from .healing import get_pipeline
-        from .healing.models import HealEvent
         from .healing.default_rules import get_chain_for_rule_id
+        from .healing.models import HealEvent
 
         chain = get_chain_for_rule_id(rule_id)
         if not chain:

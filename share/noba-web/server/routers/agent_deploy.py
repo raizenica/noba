@@ -19,19 +19,29 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
 from ..agent_store import (
-    _agent_cmd_lock, _agent_cmd_results, _agent_commands,
-    _agent_data, _agent_data_lock,
-    _agent_websockets, _agent_ws_lock,
-    _CHUNK_SIZE, _MAX_TRANSFER_SIZE, _TRANSFER_DIR,
-    _transfer_lock, _transfers,
+    _CHUNK_SIZE,
+    _MAX_TRANSFER_SIZE,
+    _TRANSFER_DIR,
+    _agent_cmd_lock,
+    _agent_cmd_results,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_websockets,
+    _agent_ws_lock,
+    _transfer_lock,
+    _transfers,
 )
 from ..constants import (
     DEPLOY_ERROR_TRUNCATE,
     DEPLOY_OUTPUT_TRUNCATE,
 )
 from ..deps import (
-    _client_ip, _read_body,
-    _require_admin, _safe_int, db,
+    _client_ip,
+    _read_body,
+    _require_admin,
+    _safe_int,
+    db,
     handle_errors,
 )
 from . import agents as _agents_mod

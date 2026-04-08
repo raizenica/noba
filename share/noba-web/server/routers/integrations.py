@@ -12,7 +12,12 @@ import subprocess
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..deps import (
-    _client_ip, _get_auth, _read_body, _require_admin, _require_operator, db,
+    _client_ip,
+    _get_auth,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    db,
     handle_errors,
 )
 from ..metrics import get_rclone_remotes

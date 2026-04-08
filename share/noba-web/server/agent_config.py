@@ -189,9 +189,8 @@ def validate_command_params(cmd_type: str, params: dict) -> str | None:  # noqa:
     # ── Log retrieval ──────────────────────────────────────────────────────────
     elif cmd_type == "get_logs":
         svc = params.get("service")
-        if svc is not None:
-            if not _RE_SERVICE.match(str(svc)):
-                return f"Invalid service name '{svc}'"
+        if svc is not None and not _RE_SERVICE.match(str(svc)):
+            return f"Invalid service name '{svc}'"
         lines = params.get("lines")
         if lines is not None:
             try:

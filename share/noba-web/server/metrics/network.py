@@ -12,7 +12,6 @@ import psutil
 
 from .util import _fmt_bytes, _run, validate_ip
 
-
 logger = logging.getLogger("noba")
 
 # ── Network I/O ───────────────────────────────────────────────────────────────
@@ -230,8 +229,8 @@ def check_device_presence(ips: list[str]) -> list[dict]:
 
 # ── Certificate expiry ────────────────────────────────────────────────────────
 def check_cert_expiry(hosts: list[str]) -> list[dict]:
-    import ssl
     import socket as _socket
+    import ssl
     from datetime import datetime, timezone
     results = []
     for host in hosts:

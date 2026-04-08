@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
+
 import httpx
 
 from .base import ConfigError, TransientError, _http_get
-
 
 logger = logging.getLogger("noba")
 
@@ -29,8 +29,8 @@ def get_plex(url: str, token: str) -> dict | None:
         return {"sessions": sessions, "activities": activities, "status": "online"}
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"sessions": 0, "activities": 0, "status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"sessions": 0, "activities": 0, "status": "offline", "error": "Connection failed"}
 
 
 
@@ -55,8 +55,8 @@ def get_jellyfin(url: str, key: str):
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"streams": 0, "status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"streams": 0, "status": "offline", "error": "Connection failed"}
 
 
 # ── Tautulli ─────────────────────────────────────────────────────────────────
@@ -109,8 +109,8 @@ def get_tautulli(url: str, key: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 # ── Overseerr ────────────────────────────────────────────────────────────────
@@ -134,8 +134,8 @@ def get_overseerr(url: str, key: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -154,8 +154,8 @@ def get_prowlarr(url: str, key: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -171,8 +171,8 @@ def get_servarr(url: str, key: str) -> dict | None:
         return {"queue_count": data.get("totalRecords", 0), "status": "online"}
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"queue_count": 0, "status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"queue_count": 0, "status": "offline", "error": "Connection failed"}
 
 
 
@@ -211,8 +211,8 @@ def get_servarr_extended(url: str, key: str, service: str = "radarr") -> dict | 
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -243,8 +243,8 @@ def get_servarr_calendar(url: str, key: str, days: int = 7) -> list | None:
         return items
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -280,8 +280,8 @@ def get_nextcloud(url: str, user: str, password: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 

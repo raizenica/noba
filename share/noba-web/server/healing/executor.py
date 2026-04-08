@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from .condition_eval import flatten_metrics, safe_eval
 from .models import HealOutcome, HealPlan
@@ -101,7 +101,7 @@ class HealExecutor:
         self, plan: HealPlan,
         on_complete: Callable[[HealOutcome], None],
     ) -> None:
-        from ..remediation import execute_action, FALLBACK_CHAINS
+        from ..remediation import FALLBACK_CHAINS, execute_action
         from .preflight import run_preflight
 
         start = time.time()

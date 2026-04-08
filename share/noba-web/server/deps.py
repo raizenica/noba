@@ -12,7 +12,12 @@ import subprocess
 
 from fastapi import HTTPException, Request
 
-from .auth import authenticate, has_permission, token_store, ws_token_store  # noqa: F401
+from .auth import (  # noqa: F401
+    authenticate,
+    has_permission,
+    token_store,
+    ws_token_store,
+)
 from .config import MAX_BODY_BYTES, TRUST_PROXY
 from .db import db  # noqa: F401  -- re-exported for route modules
 

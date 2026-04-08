@@ -818,8 +818,9 @@ def _get_active_maintenance_windows(
       matches the cron expression.
     Disabled windows (enabled=0) are never returned.
     """
-    from ..scheduler import _match_cron
     from datetime import datetime, timezone
+
+    from ..scheduler import _match_cron
 
     now = int(time.time())
     try:

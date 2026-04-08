@@ -9,8 +9,8 @@ from live agent data (services, containers, config baselines).
 from __future__ import annotations
 
 import logging
-import time
 import threading
+import time
 
 from .db.core import Database
 

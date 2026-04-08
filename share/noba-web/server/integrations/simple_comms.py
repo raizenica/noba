@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import logging
+
 import httpx
 
 from .base import ConfigError, TransientError, _http_get
-
 
 logger = logging.getLogger("noba")
 
@@ -35,8 +35,8 @@ def get_authentik(url: str, token: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 

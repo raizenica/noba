@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from ..deps import _get_auth, handle_errors
 from .. import workflow_nodes as wn
+from ..deps import _get_auth, handle_errors
 
 router = APIRouter()
 

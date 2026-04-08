@@ -4,6 +4,7 @@
 """Noba – Authentication, token management, and rate limiting."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -13,7 +14,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from .config import AUTH_CONFIG, USER_DB, TOKEN_TTL_H, _PW_MIN_LEN
+from .config import _PW_MIN_LEN, AUTH_CONFIG, TOKEN_TTL_H, USER_DB
 
 
 def _get_db():
@@ -195,10 +196,8 @@ class UserStore:
                 os.replace(tmp, USER_DB)
         except Exception:
             if os.path.exists(tmp):
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(tmp)
-                except OSError:
-                    pass
 
     def get(self, username: str) -> tuple[str, str] | None:
         with self._lock:
