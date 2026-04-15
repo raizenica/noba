@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -81,7 +83,8 @@ async function connect() {
   }
 
   ws.onmessage = async (e) => {
-    const msg = JSON.parse(e.data)
+    let msg
+    try { msg = JSON.parse(e.data) } catch { return }
 
     if (msg.type === 'rdp_frame') {
       frameW.value = msg.w

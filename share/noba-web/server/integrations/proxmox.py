@@ -1,9 +1,16 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Proxmox VE integration (PVEAPIToken auth)."""
 from __future__ import annotations
+
+import logging
 
 import httpx
 
 from .base import _http_get
+
+logger = logging.getLogger("noba")
 
 
 # ── Proxmox VE ────────────────────────────────────────────────────────────
@@ -20,7 +27,10 @@ def get_proxmox(url: str, user: str, token_name: str, token_value: str,
     hdrs      = {"Authorization": auth_hdr, "Accept": "application/json"}
     result    = {"nodes": [], "vms": [], "status": "offline"}
     try:
-        nodes_data = _http_get(f"{base}/api2/json/nodes", hdrs, timeout=5, verify=verify_ssl).get("data", [])
+        nodes_data = _http_get(
+            f"{base}/api2/json/nodes", hdrs,
+            timeout=5, verify=verify_ssl, category="hypervisor",
+        ).get("data", [])
         for node in nodes_data:
             node_name = node.get("node", "unknown")
             maxmem    = node.get("maxmem", 1) or 1
@@ -34,7 +44,7 @@ def get_proxmox(url: str, user: str, token_name: str, token_value: str,
                 try:
                     for vm in _http_get(
                         f"{base}/api2/json/nodes/{node_name}/{ep}", hdrs,
-                        timeout=4, verify=verify_ssl,
+                        timeout=4, verify=verify_ssl, category="hypervisor",
                     ).get("data", [])[:30]:
                         mmem = vm.get("maxmem", 1) or 1
                         result["vms"].append({
@@ -46,9 +56,13 @@ def get_proxmox(url: str, user: str, token_name: str, token_value: str,
                             "cpu":         round(vm.get("cpu", 0) * 100, 1),
                             "mem_percent": round(vm.get("mem", 0) / mmem * 100, 1),
                         })
-                except (httpx.HTTPError, KeyError, ValueError):
-                    pass
+                except (httpx.HTTPError, KeyError, ValueError) as exc:
+                    logger.debug(
+                        "Proxmox %s listing failed on node %s: %s",
+                        vtype, node_name, exc,
+                    )
         result["status"] = "online"
-    except (httpx.HTTPError, KeyError, ValueError):
-        pass
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        logger.debug("Proxmox node list failed: %s", exc)
+        result["error"] = "Connection failed"
     return result

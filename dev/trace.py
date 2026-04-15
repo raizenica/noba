@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """trace.py — Debug trace middleware for NOBA server.
 
 Adds request/response logging, performance profiling, and error tracing.

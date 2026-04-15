@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useApprovalsStore } from '../../stores/approvals'
@@ -12,7 +14,6 @@ const authStore = useAuthStore()
 const notifStore = useNotificationsStore()
 
 const historyExpanded = ref(false)
-const timers = ref({})
 const now = ref(Date.now())
 
 let clockInterval = null

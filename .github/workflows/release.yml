@@ -104,7 +104,7 @@ jobs:
           Depends: python3 (>= 3.10), bash (>= 4.0)
           Recommends: python3-pip, rsync, git
           Maintainer: Raizen <admin@example.com>
-          Homepage: https://github.com/raizenica/noba
+          Homepage: https://github.com/raizenica/noba-ce
           Description: ${APP_DESC}
            Self-hosted infrastructure management with real-time monitoring,
            self-healing automation, remote agents, and 40+ integrations.
@@ -163,7 +163,7 @@ jobs:
           pkgrel=1
           pkgdesc="${APP_DESC}"
           arch=('any')
-          url="https://github.com/raizenica/noba"
+          url="https://github.com/raizenica/noba-ce"
           license=('MIT')
           depends=('python' 'bash')
           optdepends=('python-pip: for installing Python dependencies'
@@ -203,7 +203,7 @@ jobs:
     needs: [version, tarball, rpm, deb, arch]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
 

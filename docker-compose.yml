@@ -8,7 +8,7 @@
 #
 services:
   noba:
-    image: ghcr.io/raizenica/noba:latest
+    image: ghcr.io/raizenica/noba-ce:latest
     # To build from source instead, comment the line above and uncomment:
     # build: .
     container_name: noba

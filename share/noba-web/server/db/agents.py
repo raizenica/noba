@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Agent registry persistence."""
 from __future__ import annotations
 
@@ -5,6 +8,7 @@ import json
 import logging
 import sqlite3
 import time
+
 logger = logging.getLogger("noba")
 
 

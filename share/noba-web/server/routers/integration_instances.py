@@ -1,6 +1,10 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Integration instance management API."""
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import logging
@@ -11,7 +15,14 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import _get_auth, _read_body, _require_admin, _require_operator, db, handle_errors
+from ..deps import (
+    _get_auth,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    db,
+    handle_errors,
+)
 
 logger = logging.getLogger("noba")
 router = APIRouter(tags=["integrations"])
@@ -45,7 +56,7 @@ def _is_safe_url(url: str) -> bool:
         # If it's a hostname (not an IP), resolve it and check the resolved IP
         try:
             resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for family, _, _, _, sockaddr in resolved:
+            for _family, _, _, _, sockaddr in resolved:
                 ip_str = sockaddr[0]
                 try:
                     ip = ipaddress.ip_address(ip_str)
@@ -92,10 +103,8 @@ def api_get_instance(instance_id: str, auth=Depends(_get_auth)):
     # Parse JSON fields
     for field in ("auth_config", "tags"):
         if field in result and isinstance(result[field], str):
-            try:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
                 result[field] = json.loads(result[field])
-            except (json.JSONDecodeError, TypeError):
-                pass
     username, role = auth
     if role != "admin":
         result["auth_config"] = {"redacted": True}
@@ -259,8 +268,8 @@ async def api_instance_truenas_vm(
 
 @router.post("/api/integrations/instances/test-connection")
 @handle_errors
-async def api_test_connection(request: Request, auth=Depends(_require_operator)):
-    """Test connectivity to an integration platform."""
+async def api_test_connection(request: Request, auth=Depends(_require_admin)):
+    """Test connectivity to an integration platform (admin-only: makes outbound requests)."""
     body = await _read_body(request)
 
     url = body.get("url", "")

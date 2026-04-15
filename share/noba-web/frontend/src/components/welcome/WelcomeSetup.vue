@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
@@ -141,7 +143,7 @@ onMounted(fetchData)
         :key="step.key"
         class="step-card"
         :class="{ done: step.done, auto: step.auto }"
-        @click="!step.done && !step.auto && openStep(step.key)"
+        @click="!step.auto && openStep(step.key)"
       >
         <div class="step-check">
           <i v-if="step.done" class="fas fa-check-circle"></i>
@@ -156,7 +158,7 @@ onMounted(fetchData)
           <button class="btn btn-sm btn-primary">Set Up</button>
         </div>
         <div v-else-if="step.done && !step.auto" class="step-action">
-          <span class="step-done-label">Done</span>
+          <button class="btn btn-xs">Edit</button>
         </div>
       </div>
     </div>
@@ -281,14 +283,13 @@ onMounted(fetchData)
   transition: border-color .2s, background .2s, opacity .2s;
 }
 
-.step-card:hover:not(.done):not(.auto) {
+.step-card:hover:not(.auto) {
   border-color: var(--accent);
   background: var(--surface-2);
 }
 
 .step-card.done {
   opacity: .65;
-  cursor: default;
 }
 
 .step-card.auto {

@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – DB alert and incident functions."""
 from __future__ import annotations
 
@@ -95,7 +98,7 @@ def get_sla(
     lock: threading.Lock,
     rule_id: str,
     window_hours: int = 720,
-) -> float:
+) -> float | None:
     """Calculate uptime percentage for a rule over the given window.
 
     Counts total seconds in the window minus seconds where an alert was
@@ -120,13 +123,16 @@ def get_sla(
             end = min(end, now)
             if end > start:
                 downtime += end - start
-        if window_seconds == 0:
-            return 100.0
+        if window_seconds <= 0:
+            # Caller passed a non-positive window — we have no basis to
+            # compute SLA. Return None (unknown), never a fake 100%.
+            return None
         uptime = max(0.0, (window_seconds - downtime) / window_seconds * 100)
         return round(uptime, 4)
     except Exception as e:
         logger.error("get_sla failed: %s", e)
-        return 100.0
+        # Honesty contract: DB failure → unknown, not a fake 100% SLA.
+        return None
 
 
 # ── Incidents ─────────────────────────────────────────────────────────────────
@@ -233,7 +239,7 @@ class _AlertsMixin:
     def resolve_alert(self, rule_id: str) -> None:
         resolve_alert(self._get_conn(), self._lock, rule_id)
 
-    def get_sla(self, rule_id: str, window_hours: int = 720) -> float:
+    def get_sla(self, rule_id: str, window_hours: int = 720) -> float | None:
         return get_sla(self._get_read_conn(), self._read_lock, rule_id, window_hours=window_hours)
 
     def insert_incident(self, severity: str, source: str, title: str, details: str = "") -> int:

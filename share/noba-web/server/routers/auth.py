@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Authentication, user management, and profile endpoints."""
 from __future__ import annotations
 
@@ -10,8 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from ..auth import (
-    check_password_strength, load_legacy_user, pbkdf2_hash,
-    rate_limiter, token_store, users, valid_username, verify_password,
+    check_password_strength,
+    load_legacy_user,
+    pbkdf2_hash,
+    rate_limiter,
+    token_store,
+    users,
+    valid_username,
+    verify_password,
     ws_token_store,
 )
 from ..config import VALID_ROLES
@@ -640,7 +649,8 @@ async def api_oidc_exchange(request: Request):
 def api_profile(auth=Depends(_get_auth)):
     """Get current user's profile with activity summary."""
     username, role = auth
-    from ..auth import get_permissions, users as _users  # noqa: PLC0415
+    from ..auth import get_permissions  # noqa: PLC0415
+    from ..auth import users as _users
     has_2fa = _users.has_totp(username)
     logins = db.get_audit(limit=10, username_filter=username, action_filter="login")
     failed = db.get_audit(limit=5, username_filter=username, action_filter="login_failed")

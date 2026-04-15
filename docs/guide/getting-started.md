@@ -9,7 +9,7 @@
 ## Bare Metal Install
 
 ```bash
-git clone https://github.com/raizenica/noba.git
+git clone https://github.com/raizenica/noba-ce.git
 cd noba
 bash install.sh
 ```
@@ -26,7 +26,7 @@ Open `http://localhost:8080` and log in.
 ## Docker Install
 
 ```bash
-git clone https://github.com/raizenica/noba.git
+git clone https://github.com/raizenica/noba-ce.git
 cd noba
 docker compose up -d
 ```

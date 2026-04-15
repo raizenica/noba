@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – MaintenanceManager for the self-healing pipeline.
 
 Maintenance windows pause or queue healing for specific targets or globally.

@@ -1,11 +1,14 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Shared agent data stores and their locks."""
 from __future__ import annotations
 
+import asyncio  # noqa: F401 – used at runtime for _transfer_lock
 import logging
 import os
 import secrets
 import tempfile
-import asyncio  # noqa: F401 – used at runtime for _transfer_lock
 import threading
 import time
 

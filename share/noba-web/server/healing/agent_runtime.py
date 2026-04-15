@@ -1,10 +1,12 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Agent heal runtime: policy distribution and report ingestion."""
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
-
 
 logger = logging.getLogger("noba")
 

@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # service-watch.sh – Check, report, and restart failed system services & containers
 # Version: 2.4.0
 

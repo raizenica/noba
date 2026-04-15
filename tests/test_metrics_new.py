@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for v2.0.0 metric functions: cert expiry, domain expiry, VPN, governor, WOL, game probe."""
 from __future__ import annotations
 

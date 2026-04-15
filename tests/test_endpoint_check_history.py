@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for endpoint check history DB functions and per-service health scoring."""
 from __future__ import annotations
 
@@ -128,10 +131,11 @@ class TestGetEndpointUptime:
         uptime = self.db.get_endpoint_uptime(mid)
         assert abs(uptime - 50.0) < 0.1
 
-    def test_no_history_returns_100(self):
+    def test_no_history_returns_none(self):
+        """Honesty contract: no history = unknown (None), not a free 100/100."""
         mid = self.db.create_endpoint_monitor("NoHist", "https://example.com")
         uptime = self.db.get_endpoint_uptime(mid)
-        assert uptime == 100.0
+        assert uptime is None
 
     def test_degraded_counts_as_non_up(self):
         mid = self.db.create_endpoint_monitor("Degraded", "https://example.com")
@@ -254,10 +258,11 @@ class TestCalcUptimeScore:
     def teardown_method(self):
         _cleanup(self.tmp)
 
-    def test_no_history_returns_100(self):
+    def test_no_history_returns_none(self):
+        """Honesty contract: no history = unknown (None), not a free 100/100."""
         mid = self.db.create_endpoint_monitor("U", "https://example.com")
         score = _calc_uptime_score(self.db, mid)
-        assert score == 100.0
+        assert score is None
 
     def test_all_up_returns_100(self):
         mid = self.db.create_endpoint_monitor("U", "https://example.com")
@@ -290,10 +295,11 @@ class TestCalcLatencyScore:
     def teardown_method(self):
         _cleanup(self.tmp)
 
-    def test_no_history_returns_100(self):
+    def test_no_history_returns_none(self):
+        """Honesty contract: no history = unknown, not a free 100/100."""
         mid = self.db.create_endpoint_monitor("L", "https://example.com")
         score = _calc_latency_score(self.db, mid)
-        assert score == 100.0
+        assert score is None
 
     def test_zero_latency_returns_100(self):
         mid = self.db.create_endpoint_monitor("L", "https://example.com")
@@ -341,19 +347,22 @@ class TestCalcErrorRateScore:
         score = _calc_error_rate_score(self.db, mid)
         assert score == 0.0
 
-    def test_no_history_returns_100(self):
+    def test_no_history_returns_none(self):
+        """Honesty contract: no history = unknown, not a free 100/100."""
         mid = self.db.create_endpoint_monitor("E", "https://example.com")
         score = _calc_error_rate_score(self.db, mid)
-        assert score == 100.0
+        assert score is None
 
 
 class TestCalcHeadroomScore:
-    def test_no_last_ms_returns_100(self):
+    def test_no_last_ms_returns_none(self):
+        """Honesty contract: never probed = unknown, not a free 100/100."""
         monitor = {"timeout": 10, "last_response_ms": None}
         score = _calc_headroom_score(monitor)
-        assert score == 100.0
+        assert score is None
 
     def test_zero_last_ms_returns_100(self):
+        """A real probe that came back in 0ms (from cache) IS a full-headroom answer."""
         monitor = {"timeout": 10, "last_response_ms": 0}
         score = _calc_headroom_score(monitor)
         assert score == 100.0
@@ -388,11 +397,13 @@ class TestComputeServiceHealthScores:
     def teardown_method(self):
         _cleanup(self.tmp)
 
-    def test_no_monitors_returns_overall_100(self):
+    def test_no_monitors_returns_overall_none(self):
+        """Honesty contract: empty install is N/A, not a free A grade."""
         result = compute_service_health_scores(self.db)
-        assert result["overall"] == 100.0
-        assert result["grade"] == "A"
+        assert result["overall"] is None
+        assert result["grade"] == "N/A"
         assert result["services"] == []
+        assert result["unknown_count"] == 0
 
     def test_returns_correct_structure(self):
         mid = self.db.create_endpoint_monitor("Web", "https://example.com")
@@ -428,34 +439,48 @@ class TestComputeServiceHealthScores:
 
     def test_down_service_gets_low_score(self):
         mid = self.db.create_endpoint_monitor("Down", "https://example.com")
+        # Record both live check (gives headroom data) + history (gives uptime data)
+        self.db.record_endpoint_check(mid, status="down", response_ms=9500)
         for _ in range(20):
-            self.db.record_endpoint_check_history(mid, status="down")
+            self.db.record_endpoint_check_history(mid, status="down", response_ms=9500)
         result = compute_service_health_scores(self.db)
         svc = result["services"][0]
+        assert svc["composite_score"] is not None, (
+            "down service must be scorable — missing last_response_ms would "
+            "make it 'unknown' instead"
+        )
         assert svc["composite_score"] < 50
         assert svc["grade"] in ("D", "F")
 
     def test_services_sorted_by_score_ascending(self):
         mid1 = self.db.create_endpoint_monitor("AAA", "https://a.example.com")
         mid2 = self.db.create_endpoint_monitor("BBB", "https://b.example.com")
-        # mid1 all up, mid2 all down
+        # mid1 all up, mid2 all down — both need live check data for headroom.
+        self.db.record_endpoint_check(mid1, status="up", response_ms=50)
+        self.db.record_endpoint_check(mid2, status="down", response_ms=9500)
         for _ in range(10):
             self.db.record_endpoint_check_history(mid1, status="up", response_ms=50)
         for _ in range(10):
-            self.db.record_endpoint_check_history(mid2, status="down")
+            self.db.record_endpoint_check_history(mid2, status="down", response_ms=9500)
         result = compute_service_health_scores(self.db)
         scores = [s["composite_score"] for s in result["services"]]
+        assert all(s is not None for s in scores), (
+            "both monitors should be scorable — unknowns break the sort premise"
+        )
         assert scores == sorted(scores)
 
     def test_overall_is_mean_of_service_scores(self):
         mid1 = self.db.create_endpoint_monitor("S1", "https://s1.example.com")
         mid2 = self.db.create_endpoint_monitor("S2", "https://s2.example.com")
+        self.db.record_endpoint_check(mid1, status="up", response_ms=100)
+        self.db.record_endpoint_check(mid2, status="up", response_ms=100)
         for _ in range(10):
             self.db.record_endpoint_check_history(mid1, status="up", response_ms=100)
         for _ in range(10):
             self.db.record_endpoint_check_history(mid2, status="up", response_ms=100)
         result = compute_service_health_scores(self.db)
-        service_scores = [s["composite_score"] for s in result["services"]]
+        service_scores = [s["composite_score"] for s in result["services"] if s["composite_score"] is not None]
+        assert len(service_scores) == 2, "both monitors must be scorable"
         expected_overall = round(sum(service_scores) / len(service_scores), 1)
         assert abs(result["overall"] - expected_overall) < 0.2
 
@@ -487,21 +512,33 @@ class TestComputeServiceHealthScores:
 
     def test_grade_matches_composite_score(self):
         mid = self.db.create_endpoint_monitor("Grade", "https://g.example.com")
+        self.db.record_endpoint_check(mid, status="up", response_ms=50)
         for _ in range(10):
             self.db.record_endpoint_check_history(mid, status="up", response_ms=50)
         result = compute_service_health_scores(self.db)
         svc = result["services"][0]
+        assert svc["composite_score"] is not None
         assert svc["grade"] == _score_to_grade(svc["composite_score"])
 
-    def test_empty_data_returns_sensible_defaults(self):
-        """Monitor with no history should default to 100 on all sub-scores."""
+    def test_empty_data_is_marked_unknown(self):
+        """Honesty contract: a monitor with no history is unknown, not a free A.
+
+        The service entry is still emitted (so the UI can show the gap), but
+        composite_score=None, grade="N/A", status="unknown" — and it does NOT
+        contribute to the overall score.
+        """
         self.db.create_endpoint_monitor("New", "https://new.example.com")
         result = compute_service_health_scores(self.db)
         svc = result["services"][0]
-        # All sub-scores should be at max (no data = assume OK)
-        assert svc["breakdown"]["uptime"] == 100.0
-        assert svc["breakdown"]["latency"] == 100.0
-        assert svc["breakdown"]["error_rate"] == 100.0
-        # composite should be perfect
-        assert svc["composite_score"] == 100.0
-        assert svc["grade"] == "A"
+        assert svc["composite_score"] is None
+        assert svc["grade"] == "N/A"
+        assert svc["status"] == "unknown"
+        # All sub-scores should be None (not a free 100).
+        assert svc["breakdown"]["uptime"] is None
+        assert svc["breakdown"]["latency"] is None
+        assert svc["breakdown"]["error_rate"] is None
+        assert svc["breakdown"]["headroom"] is None
+        # Overall collapses to N/A because no real scores to average.
+        assert result["overall"] is None
+        assert result["grade"] == "N/A"
+        assert result["unknown_count"] == 1

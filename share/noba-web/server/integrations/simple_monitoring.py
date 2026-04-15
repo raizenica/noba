@@ -1,19 +1,24 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Monitoring integrations."""
 from __future__ import annotations
 
 import logging
-import httpx
 import re
 
-try:
-    from . import simple
-    _http_get = simple._http_get
-    _client = simple._client
-except ImportError:
-    from .base import ConfigError, TransientError, _client, _http_get
-    # If simple not available, use base directly (shouldn't happen in tests)
-from .base import ConfigError, TransientError
+import httpx
 
+from .base import ConfigError, TransientError, _http_get, get_category_client
+
+# CF-9: dedicated per-category pool so a slow monitoring target (Grafana
+# behind a bad datasource, Graylog doing a 30s scroll query, Kuma under load)
+# can't starve dns/nas/hypervisor collectors. `_client` is the module-level
+# name tests patch; it's bound to the monitoring pool.
+_client = get_category_client("monitoring")
+
+# Shelly energy meters are smart_home, not monitoring — isolated separately.
+_smart_home_client = get_category_client("smart_home")
 
 logger = logging.getLogger("noba")
 
@@ -40,8 +45,8 @@ def get_kuma(url: str) -> list:
         return monitors
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -52,7 +57,7 @@ def get_scrutiny(url: str) -> dict | None:
         return None
     try:
         base = url.rstrip("/")
-        data = _http_get(f"{base}/api/summary", timeout=10)
+        data = _http_get(f"{base}/api/summary", timeout=10, category="monitoring")
         summary = data.get("data", {}).get("summary", {})
         if not summary:
             return None
@@ -101,8 +106,8 @@ def get_scrutiny(url: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -115,7 +120,7 @@ def get_scrutiny_intelligence(url: str) -> list[dict] | None:
         return None
     base = url.rstrip("/")
     try:
-        summary_data = _http_get(f"{base}/api/summary", timeout=10)
+        summary_data = _http_get(f"{base}/api/summary", timeout=10, category="monitoring")
         summary = summary_data.get("data", {}).get("summary", {})
         if not summary:
             return None
@@ -131,7 +136,7 @@ def get_scrutiny_intelligence(url: str) -> list[dict] | None:
             growth_rate = 0.0
             estimated = ""
             try:
-                detail = _http_get(f"{base}/api/device/{wwn}/details", timeout=8)
+                detail = _http_get(f"{base}/api/device/{wwn}/details", timeout=8, category="monitoring")
                 results = detail.get("data", {}).get("smart_results", [])
                 if len(results) >= 2:
                     # Check reallocated sectors (attr 5) trend
@@ -152,7 +157,8 @@ def get_scrutiny_intelligence(url: str) -> list[dict] | None:
                             remaining = max(0, 4000 - attr5_vals[-1][1])
                             months_to_fail = remaining / growth_rate if growth_rate > 0 else 999
                             if months_to_fail < 120:
-                                from datetime import datetime, timedelta as td  # noqa: PLC0415
+                                from datetime import datetime  # noqa: PLC0415
+                                from datetime import timedelta as td
                                 est_date = datetime.now() + td(days=months_to_fail * 30)
                                 estimated = est_date.strftime("%Y-%m")
                     elif status >= 2:
@@ -176,8 +182,8 @@ def get_scrutiny_intelligence(url: str) -> list[dict] | None:
         return predictions
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -189,7 +195,7 @@ def get_speedtest(url: str):
         return None
     try:
         base = url.rstrip("/")
-        data = _http_get(f"{base}/api/speedtest/latest")
+        data = _http_get(f"{base}/api/speedtest/latest", category="monitoring")
         if not data or not data.get("data"):
             return None
         r = data["data"]
@@ -202,8 +208,8 @@ def get_speedtest(url: str):
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -216,8 +222,8 @@ def get_frigate(url: str) -> dict | None:
         return None
     base = url.rstrip("/")
     try:
-        stats = _http_get(f"{base}/api/stats", timeout=6)
-        config = _http_get(f"{base}/api/config", timeout=6)
+        stats = _http_get(f"{base}/api/stats", timeout=6, category="monitoring")
+        config = _http_get(f"{base}/api/config", timeout=6, category="monitoring")
         cameras = []
         cam_configs = config.get("cameras", {})
         for name, cfg in cam_configs.items():
@@ -240,8 +246,8 @@ def get_frigate(url: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -289,53 +295,133 @@ def get_graylog(url: str, token: str, query: str = "*", hours: int = 1) -> dict 
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
 
 
-# ── InfluxDB v2 ─────────────────────────────────────────────────────────────
-def query_influxdb(url: str, token: str, org: str, query: str) -> list[dict] | None:
-    """Execute a Flux query against InfluxDB v2 and return results."""
-    if not url or not token or not query:
-        return None
-    base = url.rstrip("/")
+# ── InfluxDB (v2 Flux + v3 SQL) ─────────────────────────────────────────────
+#
+# CF-6 (Phase B research, 2026-04-08): Docker tag `influxdb:latest` flips from
+# v2 to v3 on 2026-05-27. In v3 Core:
+#   - /api/v2/query returns 501 Not Implemented (Flux is not supported)
+#   - /api/v3/query_sql is the SQL query endpoint
+#   - Authorization header format: Bearer <t>  (v2 used Token <t>)
+# See docs.influxdata.com/influxdb/v3/reference/release-notes/
+#
+# Strategy: sniff the query language ("from(" → Flux → v2; otherwise → v3 SQL).
+# On a 404/501 from the v2 path, retry against v3. Any callers still passing
+# Flux to a v3 instance get a clear error instead of a silent empty result.
+
+def _looks_like_flux(query: str) -> bool:
+    """True if query text looks like a Flux pipeline (v2) rather than SQL."""
+    q = query.lstrip()
+    return q.startswith("from(") or "|>" in q
+
+
+def _query_influxdb_v3(base: str, token: str, query: str) -> list[dict] | None:
+    """Execute a SQL/InfluxQL query against InfluxDB v3 Core."""
     try:
         r = _client.post(
-            f"{base}/api/v2/query",
-            params={"org": org},
+            f"{base}/api/v3/query_sql",
             headers={
-                "Authorization": f"Token {token}",
-                "Content-Type": "application/vnd.flux",
-                "Accept": "application/csv",
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
             },
-            content=query,
+            json={"q": query, "format": "json"},
             timeout=15,
         )
         r.raise_for_status()
-        # Parse CSV response
-        lines = r.text.strip().split("\n")
-        if len(lines) < 2:
-            return []
-        headers = lines[0].split(",")
-        results = []
-        for line in lines[1:]:
-            if not line.strip() or line.startswith(",result"):
-                continue
-            cols = line.split(",")
-            row = {}
-            for i, h in enumerate(headers):
-                if i < len(cols) and h.strip() and h.strip() not in ("", "result", "table"):
-                    row[h.strip()] = cols[i].strip()
-            if row:
-                results.append(row)
-        return results[:1000]  # Limit to 1000 rows
+        data = r.json()
+        # v3 returns a JSON array of row objects
+        if isinstance(data, list):
+            return data[:1000]
+        if isinstance(data, dict) and isinstance(data.get("data"), list):
+            return data["data"][:1000]
+        return []
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
+
+
+def _query_influxdb_v2(base: str, token: str, org: str, query: str) -> list[dict] | None:
+    """Execute a Flux query against InfluxDB v2 and return parsed rows."""
+    r = _client.post(
+        f"{base}/api/v2/query",
+        params={"org": org},
+        headers={
+            "Authorization": f"Token {token}",
+            "Content-Type": "application/vnd.flux",
+            "Accept": "application/csv",
+        },
+        content=query,
+        timeout=15,
+    )
+    r.raise_for_status()
+    # Parse CSV response
+    lines = r.text.strip().split("\n")
+    if len(lines) < 2:
+        return []
+    headers = lines[0].split(",")
+    results = []
+    for line in lines[1:]:
+        if not line.strip() or line.startswith(",result"):
+            continue
+        cols = line.split(",")
+        row = {}
+        for i, h in enumerate(headers):
+            if i < len(cols) and h.strip() and h.strip() not in ("", "result", "table"):
+                row[h.strip()] = cols[i].strip()
+        if row:
+            results.append(row)
+    return results[:1000]  # Limit to 1000 rows
+
+
+def query_influxdb(url: str, token: str, org: str, query: str) -> list[dict] | None:
+    """Execute a query against InfluxDB v2 (Flux) or v3 (SQL/InfluxQL).
+
+    Routes by query-language sniff:
+      - Flux (``from(...) |> ...``) → v2 `/api/v2/query` with `Token` auth
+      - SQL / InfluxQL              → v3 `/api/v3/query_sql` with `Bearer` auth
+
+    On a 404/501 from v2 (endpoint removed on a v3-upgraded instance), retries
+    once against v3. CF-6: Docker `influxdb:latest` flips to v3 on 2026-05-27.
+    """
+    if not url or not token or not query:
+        return None
+    base = url.rstrip("/")
+
+    # Route SQL queries directly to v3 — they're incompatible with /api/v2/query.
+    if not _looks_like_flux(query):
+        return _query_influxdb_v3(base, token, query)
+
+    try:
+        return _query_influxdb_v2(base, token, org, query)
+    except httpx.HTTPStatusError as exc:
+        # v3 returns 404/501 on /api/v2/query. Only retry-to-v3 if caller
+        # explicitly sent a Flux query — the retry will almost certainly fail
+        # because v3 doesn't speak Flux, but the error message will at least
+        # be honest about the migration.
+        if exc.response is not None and exc.response.status_code in (404, 501):
+            logger.warning(
+                "InfluxDB v2 query endpoint missing (HTTP %s) — instance likely "
+                "upgraded to v3; Flux is not supported on v3 (CF-6 deadline "
+                "2026-05-27). Caller should migrate to SQL/InfluxQL.",
+                exc.response.status_code,
+            )
+            return {
+                "status": "offline",
+                "error": "InfluxDB v3 does not support Flux — migrate query to SQL or InfluxQL",
+            }
+        return {"status": "offline", "error": "Connection failed"}
+    except ConfigError:
+        raise
+    except (TransientError, httpx.HTTPError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 # ── Weather (OpenWeatherMap) ─────────────────────────────────────────────────
@@ -360,8 +446,8 @@ def get_weather(api_key: str, city: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -380,7 +466,7 @@ def get_energy_shelly(urls: list[str]) -> list[dict]:
         base = (url if url.startswith("http") else "http://" + url).rstrip("/")
         try:
             # Shelly Gen2 API
-            data = _http_get(f"{base}/rpc/Switch.GetStatus?id=0", timeout=3)
+            data = _http_get(f"{base}/rpc/Switch.GetStatus?id=0", timeout=3, category="smart_home")
             results.append({
                 "name": name,
                 "power_w": round(data.get("apower", 0), 1),
@@ -393,7 +479,7 @@ def get_energy_shelly(urls: list[str]) -> list[dict]:
         except (httpx.HTTPError, KeyError, ValueError):
             try:
                 # Shelly Gen1 API fallback
-                data = _http_get(f"{base}/status", timeout=3)
+                data = _http_get(f"{base}/status", timeout=3, category="smart_home")
                 meter = data.get("meters", [{}])[0] if data.get("meters") else {}
                 relay = data.get("relays", [{}])[0] if data.get("relays") else {}
                 results.append({

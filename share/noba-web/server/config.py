@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Central configuration & constants."""
 from __future__ import annotations
 
@@ -142,17 +145,24 @@ HISTORY_METRICS = [
 
 # ── Security headers ──────────────────────────────────────────────────────────
 SECURITY_HEADERS = {
-    "X-Content-Type-Options":  "nosniff",
-    "X-Frame-Options":         "SAMEORIGIN",
-    "Referrer-Policy":         "same-origin",
+    "X-Content-Type-Options":            "nosniff",
+    "X-Frame-Options":                   "DENY",
+    "X-XSS-Protection":                  "0",
+    "Referrer-Policy":                   "strict-origin-when-cross-origin",
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "font-src 'self' data:; "
-        "img-src 'self' data: blob:; connect-src 'self' wss: ws:"
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' wss: ws:; "
+        "frame-ancestors 'none'"
     ),
-    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "Permissions-Policy":                "geolocation=(), microphone=(), camera=()",
+    "Strict-Transport-Security":         "max-age=63072000; includeSubDomains",
+    "Cross-Origin-Opener-Policy":        "same-origin",
+    "Cross-Origin-Embedder-Policy":      "credentialless",
+    "Cross-Origin-Resource-Policy":      "same-site",
 }
 
 # ── Stdout buffering ──────────────────────────────────────────────────────────

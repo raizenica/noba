@@ -1,3 +1,5 @@
+// Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+// NOBA Command Center — Licensed under Apache 2.0.
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useNotificationsStore } from '../../stores/notifications'

@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Security posture scoring and scanning endpoints."""
 from __future__ import annotations
 
@@ -9,11 +12,24 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..agent_config import RISK_LEVELS, check_role_permission
 from ..agent_store import (
-    _agent_cmd_lock, _agent_commands,
-    _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
-    _agent_websockets, _agent_ws_lock,
+    _AGENT_MAX_AGE,
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_websockets,
+    _agent_ws_lock,
 )
-from ..deps import _client_ip, _get_auth, _read_body, _require_admin, _require_operator, _safe_int, db, handle_errors
+from ..deps import (
+    _client_ip,
+    _get_auth,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    _safe_int,
+    db,
+    handle_errors,
+)
 
 logger = logging.getLogger("noba")
 

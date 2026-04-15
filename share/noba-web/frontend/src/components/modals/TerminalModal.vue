@@ -1,14 +1,12 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, watch, onUnmounted } from 'vue'
 import AppModal from '../ui/AppModal.vue'
 import { useModalsStore } from '../../stores/modals'
-import { useAuthStore } from '../../stores/auth'
-import { useNotificationsStore } from '../../stores/notifications'
 import { useApi } from '../../composables/useApi'
 
 const modals = useModalsStore()
-const auth = useAuthStore()
-const notif = useNotificationsStore()
 const api = useApi()
 
 // ── WebSocket state ───────────────────────────────────────────────────────────

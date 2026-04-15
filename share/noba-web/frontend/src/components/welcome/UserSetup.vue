@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref } from 'vue'
 import { useApi } from '../../composables/useApi'
@@ -32,7 +34,7 @@ async function addUser() {
       role: role.value,
     })
     emit('done')
-  } catch (e) {
+  } catch {
     error.value = 'Failed to create user. Username may already exist.'
   } finally {
     saving.value = false

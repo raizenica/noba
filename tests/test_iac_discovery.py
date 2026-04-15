@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for IaC export auto-discovery and Graylog auth fallback."""
 from __future__ import annotations
 
@@ -9,7 +12,9 @@ class TestIaCExportEndpoints:
         resp = client.get("/api/export/ansible")
         assert resp.status_code == 401
 
-    def test_ansible_viewer_can_not_access(self, client, viewer_headers):
+    def test_ansible_viewer_returns_403(self, client, viewer_headers):
+        # IaC export tightened to operator+ — an Ansible playbook reveals
+        # full infrastructure topology, viewers no longer have access.
         resp = client.get("/api/export/ansible", headers=viewer_headers)
         assert resp.status_code == 403
 
@@ -17,8 +22,9 @@ class TestIaCExportEndpoints:
         resp = client.get("/api/export/ansible", headers=operator_headers)
         assert resp.status_code == 200
 
-    def test_ansible_with_discover_param(self, client, operator_headers):
-        resp = client.get("/api/export/ansible?discover=true", headers=operator_headers)
+    def test_ansible_post_discover(self, client, operator_headers):
+        resp = client.post("/api/export/ansible",
+                           json={"discover": True}, headers=operator_headers)
         assert resp.status_code == 200
 
     def test_docker_compose_requires_hostname(self, client, operator_headers):
@@ -29,9 +35,10 @@ class TestIaCExportEndpoints:
         resp = client.get("/api/export/docker-compose?hostname=test", headers=operator_headers)
         assert resp.status_code == 200
 
-    def test_docker_compose_with_discover(self, client, operator_headers):
-        resp = client.get(
-            "/api/export/docker-compose?hostname=test&discover=true",
+    def test_docker_compose_post_discover(self, client, operator_headers):
+        resp = client.post(
+            "/api/export/docker-compose",
+            json={"hostname": "test", "discover": True},
             headers=operator_headers,
         )
         assert resp.status_code == 200
@@ -40,9 +47,10 @@ class TestIaCExportEndpoints:
         resp = client.get("/api/export/shell", headers=operator_headers)
         assert resp.status_code == 400
 
-    def test_shell_with_discover(self, client, operator_headers):
-        resp = client.get(
-            "/api/export/shell?hostname=test&discover=true",
+    def test_shell_post_discover(self, client, operator_headers):
+        resp = client.post(
+            "/api/export/shell",
+            json={"hostname": "test", "discover": True},
             headers=operator_headers,
         )
         assert resp.status_code == 200

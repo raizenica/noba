@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – System metrics package. Re-exports all public symbols for backward compatibility."""
 from __future__ import annotations
 
@@ -8,9 +11,9 @@ from .network import (
     check_domain_expiry,
     collect_network,
     collect_per_interface_net,
+    get_listening_ports,
     get_net_io,
     get_network_connections,
-    get_listening_ports,
     get_tailscale_status,
     get_vpn_status,
     human_bps,

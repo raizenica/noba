@@ -1,9 +1,12 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Endpoint monitor CRUD and check-result persistence."""
 from __future__ import annotations
 
 import logging
-import time
 import sqlite3
+import time
 
 logger = logging.getLogger("noba")
 
@@ -192,8 +195,15 @@ def get_endpoint_check_history(conn, lock, monitor_id: int, hours: int = 720) ->
         return []
 
 
-def get_endpoint_uptime(conn, lock, monitor_id: int, hours: int = 720) -> float:
-    """Calculate uptime percentage from check history (returns 0-100)."""
+def get_endpoint_uptime(conn, lock, monitor_id: int, hours: int = 720) -> float | None:
+    """Calculate uptime percentage from check history (returns 0-100 or None).
+
+    Honesty contract: a monitor with zero history rows in the window returns
+    ``None`` (unknown), NOT a fake 100% "assume OK". The caller decides how
+    to surface unknown uptime — typically by skipping the monitor from any
+    aggregated score. Same applies to DB failures: exception → None, not a
+    silent fake-100.
+    """
     cutoff = int(time.time()) - hours * 3600
     try:
         with lock:
@@ -206,11 +216,11 @@ def get_endpoint_uptime(conn, lock, monitor_id: int, hours: int = 720) -> float:
         total = row[0] or 0
         up_count = row[1] or 0
         if total == 0:
-            return 100.0  # No data — assume OK
+            return None  # No data yet — unknown, not a free A
         return round((up_count / total) * 100, 2)
     except Exception as e:
         logger.error("get_endpoint_uptime failed: %s", e)
-        return 100.0
+        return None
 
 
 def get_endpoint_avg_latency(conn, lock, monitor_id: int, hours: int = 720) -> float | None:
@@ -345,7 +355,7 @@ class _EndpointsMixin:
         return get_endpoint_check_history(self._get_read_conn(), self._read_lock,
                                           monitor_id, hours=hours)
 
-    def get_endpoint_uptime(self, monitor_id: int, hours: int = 720) -> float:
+    def get_endpoint_uptime(self, monitor_id: int, hours: int = 720) -> float | None:
         return get_endpoint_uptime(self._get_read_conn(), self._read_lock,
                                    monitor_id, hours=hours)
 

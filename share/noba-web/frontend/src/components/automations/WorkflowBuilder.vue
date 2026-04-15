@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import WorkflowNode from './WorkflowNode.vue'
@@ -8,7 +10,7 @@ import WorkflowRawEditor from './workflow/WorkflowRawEditor.vue'
 const props = defineProps({
   modelValue: { type: Object, default: () => ({ nodes: [], edges: [], entry: '' }) },
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'close'])
 
 // ── Local state ─────────────────────────────────────────────────────────────
 const nodes = ref([]);         const edges = ref([]);         const entry = ref('')

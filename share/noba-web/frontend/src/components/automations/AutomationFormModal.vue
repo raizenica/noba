@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, computed, watch } from 'vue'
 import AppModal from '../ui/AppModal.vue'
@@ -29,6 +31,11 @@ const form = ref({
 // Per-type config fields (string representations)
 const configScript   = ref('')   // script: path
 const configWebhook  = ref('')   // webhook: url
+const configWebhookMethod  = ref('POST')  // webhook: HTTP method
+const configWebhookBody    = ref('')      // webhook: request body (raw or JSON string)
+const configWebhookHeaders = ref('')      // webhook: custom headers ("Key: value" per line)
+const configWebhookSecret  = ref('')      // webhook: HMAC-SHA256 signing secret (optional)
+const showWebhookSecret    = ref(false)   // toggle password visibility for the secret field
 const configWorkflow = ref('[]') // workflow: steps JSON
 const configCron     = ref('')   // cron: expression
 const configAlert    = ref('')   // alert: condition
@@ -68,7 +75,23 @@ function applyTemplate(tpl) {
 function syncConfigFromObject(cfg, type) {
   const t = type || form.value.type
   if (t === 'script')   configScript.value   = cfg.path || ''
-  if (t === 'webhook')  configWebhook.value  = cfg.url || ''
+  if (t === 'webhook')  {
+    configWebhook.value        = cfg.url || ''
+    configWebhookMethod.value  = (cfg.method || 'POST').toUpperCase()
+    // Serialise body back to string for the textarea — object/array → pretty JSON,
+    // string → as-is so users can round-trip raw templates.
+    if (cfg.body == null) {
+      configWebhookBody.value  = ''
+    } else if (typeof cfg.body === 'string') {
+      configWebhookBody.value  = cfg.body
+    } else {
+      configWebhookBody.value  = JSON.stringify(cfg.body, null, 2)
+    }
+    // Headers stored as {key: value} object; render as "Key: value" per line.
+    const hdrs = cfg.headers || {}
+    configWebhookHeaders.value = Object.entries(hdrs).map(([k, v]) => `${k}: ${v}`).join('\n')
+    configWebhookSecret.value  = cfg.secret || ''
+  }
   if (t === 'workflow') {
     // Support both legacy steps-array format and new graph format
     if (cfg.nodes) {
@@ -87,7 +110,31 @@ function syncConfigFromObject(cfg, type) {
 function buildConfigObject() {
   const t = form.value.type
   if (t === 'script')   return { path: configScript.value.trim() }
-  if (t === 'webhook')  return { url: configWebhook.value.trim() }
+  if (t === 'webhook')  {
+    const cfg = { url: configWebhook.value.trim(), method: configWebhookMethod.value }
+    // Parse body: try JSON first, fall back to raw string. Empty body is omitted.
+    const bodyStr = configWebhookBody.value
+    if (bodyStr && bodyStr.trim()) {
+      try { cfg.body = JSON.parse(bodyStr) } catch { cfg.body = bodyStr }
+    }
+    // Parse headers: one "Key: value" per line. Silently skip malformed lines.
+    const hdrs = {}
+    for (const line of configWebhookHeaders.value.split(/\r?\n/)) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      const idx = trimmed.indexOf(':')
+      if (idx < 1) continue
+      const key = trimmed.slice(0, idx).trim()
+      const val = trimmed.slice(idx + 1).trim()
+      if (key) hdrs[key] = val
+    }
+    if (Object.keys(hdrs).length) cfg.headers = hdrs
+    // Signing secret: when present, the backend computes X-Noba-Signature
+    // (HMAC-SHA256) over the request body.
+    const secret = configWebhookSecret.value.trim()
+    if (secret) cfg.secret = secret
+    return cfg
+  }
   if (t === 'workflow') {
     if (workflowTab.value === 'code') {
       // Code tab is authoritative if user was editing there
@@ -143,6 +190,11 @@ watch(() => props.show, (v) => {
     form.value = { id: '', name: '', type: 'script', config: {}, schedule: '', enabled: true }
     configScript.value   = ''
     configWebhook.value  = ''
+    configWebhookMethod.value  = 'POST'
+    configWebhookBody.value    = ''
+    configWebhookHeaders.value = ''
+    configWebhookSecret.value  = ''
+    showWebhookSecret.value    = false
     configWorkflow.value = '[]'
     configCron.value     = ''
     configAlert.value    = ''
@@ -299,6 +351,64 @@ function handleClose() { emit('close') }
           placeholder="https://example.com/hook"
           style="width:100%"
         />
+
+        <label class="field-label" style="margin-top:.6rem">HTTP method</label>
+        <select v-model="configWebhookMethod" class="field-input" style="width:100%">
+          <option value="POST">POST</option>
+          <option value="PUT">PUT</option>
+          <option value="PATCH">PATCH</option>
+          <option value="GET">GET</option>
+          <option value="DELETE">DELETE</option>
+        </select>
+
+        <label class="field-label" style="margin-top:.6rem">
+          Request body <small style="font-weight:normal;color:var(--text-muted)">(JSON or raw — leave blank for empty body)</small>
+        </label>
+        <textarea
+          v-model="configWebhookBody"
+          class="field-input"
+          rows="4"
+          placeholder='{"event":"heal","target":"..."}'
+          style="width:100%;font-family:monospace;font-size:.8rem"
+        />
+
+        <label class="field-label" style="margin-top:.6rem">
+          Extra headers <small style="font-weight:normal;color:var(--text-muted)">(one "Key: value" per line)</small>
+        </label>
+        <textarea
+          v-model="configWebhookHeaders"
+          class="field-input"
+          rows="3"
+          placeholder="Authorization: Bearer xyz&#10;X-Event: noba-heal"
+          style="width:100%;font-family:monospace;font-size:.8rem"
+        />
+
+        <label class="field-label" style="margin-top:.6rem">
+          HMAC-SHA256 signing secret <small style="font-weight:normal;color:var(--text-muted)">(optional — adds X-Noba-Signature header)</small>
+        </label>
+        <div style="display:flex;gap:.4rem">
+          <input
+            v-model="configWebhookSecret"
+            :type="showWebhookSecret ? 'text' : 'password'"
+            class="field-input"
+            placeholder="share this with the receiving endpoint to verify request origin"
+            style="flex:1"
+            autocomplete="new-password"
+          />
+          <button
+            type="button"
+            class="btn btn-sm"
+            :title="showWebhookSecret ? 'Hide' : 'Show'"
+            @click="showWebhookSecret = !showWebhookSecret"
+          >
+            <i class="fas" :class="showWebhookSecret ? 'fa-eye-slash' : 'fa-eye'"></i>
+          </button>
+        </div>
+        <div style="font-size:.7rem;color:var(--text-muted);margin-top:.3rem">
+          When set, every outbound request is signed with
+          <code>X-Noba-Signature: sha256=HMAC(secret, body)</code>.
+          Verify on the receiving side to confirm the request originated from this NOBA instance.
+        </div>
       </div>
 
       <!-- Config: workflow -->

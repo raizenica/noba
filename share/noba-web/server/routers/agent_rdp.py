@@ -1,18 +1,24 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Agent remote desktop browser WebSocket endpoint."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from ..agent_store import (
-    _agent_websockets, _agent_ws_lock,
-    _rdp_subscribers, _rdp_sub_lock,
+    _agent_websockets,
+    _agent_ws_lock,
+    _rdp_sub_lock,
+    _rdp_subscribers,
     register_clipboard_request,
 )
 from ..constants import RDP_QUEUE_MAXSIZE
-from ..deps import ws_token_store
+from ..deps import check_ws_origin, ws_token_store
 
 logger = __import__("logging").getLogger("noba.agent.rdp")
 
@@ -33,6 +39,17 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
     Multiple viewers can connect simultaneously — the agent captures once and the
     server fans frames out to all subscribers (same pattern as terminal PTY output).
     """
+    # CSWSH protection: reject WebSocket connections from cross-origin pages
+    # BEFORE accept(). Must run first because ws.close() only works after
+    # the handshake is complete, and rejecting here means the browser
+    # attacker page gets an immediate 403 instead of a live WS handle.
+    if not check_ws_origin(
+        ws.headers.get("origin", ""),
+        ws.headers.get("host", ""),
+    ):
+        await ws.close(code=4003, reason="Origin not allowed")
+        return
+
     token = ws.query_params.get("token", "")
     if not token:
         await ws.close(code=4001, reason="Missing token")
@@ -41,6 +58,11 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
     username, role = ws_token_store.consume(token)
     if not username:
         await ws.close(code=4001, reason="Invalid or expired token")
+        return
+
+    # RDP desktop viewing requires at least operator role
+    if role not in ("operator", "admin"):
+        await ws.close(code=4003, reason="Operator access required")
         return
 
     await ws.accept()
@@ -76,10 +98,8 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
     with _agent_ws_lock:
         agent_ws = _agent_websockets.get(hostname)
     if agent_ws:
-        try:
+        with contextlib.suppress(Exception):
             await agent_ws.send_json({"type": "rdp_start", "quality": quality, "fps": fps})
-        except Exception:
-            pass
 
     # Notify browser of session parameters
     await ws.send_json({"type": "rdp_ready", "hostname": hostname, "quality": quality, "fps": fps})
@@ -114,14 +134,12 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
                 with _agent_ws_lock:
                     agent_ws = _agent_websockets.get(hostname)
                 if agent_ws:
-                    try:
+                    with contextlib.suppress(Exception):
                         await agent_ws.send_json({
                             "type": "rdp_start",
                             "quality": new_quality,
                             "fps": new_fps,
                         })
-                    except Exception:
-                        pass
 
     except WebSocketDisconnect:
         pass
@@ -146,8 +164,6 @@ async def agent_rdp_ws(hostname: str, ws: WebSocket):
             with _agent_ws_lock:
                 agent_ws = _agent_websockets.get(hostname)
             if agent_ws:
-                try:
+                with contextlib.suppress(Exception):
                     await agent_ws.send_json({"type": "rdp_stop"})
-                except Exception:
-                    pass
         logger.debug("[rdp] Browser disconnected from %s (%d viewers remaining)", hostname, remaining)

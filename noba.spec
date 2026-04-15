@@ -3,7 +3,7 @@ Version:        2.0.0
 Release:        1%{?dist}
 Summary:        NOBA Command Center - Infrastructure management platform
 License:        MIT
-URL:            https://github.com/raizenica/noba
+URL:            https://github.com/raizenica/noba-ce
 Source0:        %{name}-%{version}.tar.gz
 BuildArch:      noarch
 Requires:       python3 >= 3.10, bash >= 4.0

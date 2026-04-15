@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Integration tests for the admin router (share/noba-web/server/routers/admin.py)."""
 from __future__ import annotations
 
@@ -1071,19 +1074,27 @@ class TestGrafanaDashboard:
 # ===========================================================================
 
 class TestPluginsAvailable:
-    """Available plugins catalog — admin only."""
+    """Available plugins catalog — any authenticated user."""
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/plugins/available")
         assert resp.status_code == 401
 
-    def test_viewer_returns_403(self, client, viewer_headers):
-        resp = client.get("/api/plugins/available", headers=viewer_headers)
-        assert resp.status_code == 403
+    def test_viewer_can_access(self, client, viewer_headers):
+        with patch("server.routers.admin.read_yaml_settings", return_value={}), \
+             patch.object(
+                 __import__("server.routers.admin", fromlist=["plugin_manager"]).plugin_manager,
+                 "get_available", return_value=[]):
+            resp = client.get("/api/plugins/available", headers=viewer_headers)
+            assert resp.status_code == 200
 
-    def test_operator_returns_403(self, client, operator_headers):
-        resp = client.get("/api/plugins/available", headers=operator_headers)
-        assert resp.status_code == 403
+    def test_operator_can_access(self, client, operator_headers):
+        with patch("server.routers.admin.read_yaml_settings", return_value={}), \
+             patch.object(
+                 __import__("server.routers.admin", fromlist=["plugin_manager"]).plugin_manager,
+                 "get_available", return_value=[]):
+            resp = client.get("/api/plugins/available", headers=operator_headers)
+            assert resp.status_code == 200
 
     def test_admin_can_access(self, client, admin_headers):
         with patch("server.routers.admin.read_yaml_settings", return_value={}), \
@@ -1099,19 +1110,25 @@ class TestPluginsAvailable:
 # ===========================================================================
 
 class TestPluginsBundled:
-    """Bundled plugins catalog — admin only."""
+    """Bundled plugins catalog — any authenticated user."""
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/plugins/bundled")
         assert resp.status_code == 401
 
-    def test_viewer_returns_403(self, client, viewer_headers):
-        resp = client.get("/api/plugins/bundled", headers=viewer_headers)
-        assert resp.status_code == 403
+    def test_viewer_can_access(self, client, viewer_headers):
+        with patch.object(
+                __import__("server.routers.admin", fromlist=["plugin_manager"]).plugin_manager,
+                "get_bundled_catalog", return_value=[]):
+            resp = client.get("/api/plugins/bundled", headers=viewer_headers)
+            assert resp.status_code == 200
 
-    def test_operator_returns_403(self, client, operator_headers):
-        resp = client.get("/api/plugins/bundled", headers=operator_headers)
-        assert resp.status_code == 403
+    def test_operator_can_access(self, client, operator_headers):
+        with patch.object(
+                __import__("server.routers.admin", fromlist=["plugin_manager"]).plugin_manager,
+                "get_bundled_catalog", return_value=[]):
+            resp = client.get("/api/plugins/bundled", headers=operator_headers)
+            assert resp.status_code == 200
 
     def test_admin_can_access(self, client, admin_headers):
         with patch.object(

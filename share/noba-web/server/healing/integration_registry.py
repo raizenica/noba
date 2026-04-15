@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Universal integration heal registry.
 
 Maps abstract heal operations to platform-specific handler configs.
@@ -56,66 +59,131 @@ def register_handler(operation: str, platform: str, config: dict) -> None:
 
 # ── Category registrations ──────────────────────────────────────────
 
-# Handler configs are declarative: {method, endpoint, auth}
-# Actual execution happens in the executor (Phase 2+).
-# "exec" method means run via agent command, not HTTP API.
+# Handler configs are declarative: {method, endpoint, auth} or
+# {method: "exec", command} for CLI shell-outs, or
+# {method: "unsupported", reason} for cells that have no real endpoint or
+# CLI path on a given platform. The UI catalog renders category/platform
+# capability from this table; the dispatcher executes "exec" cells directly,
+# HTTP cells via the shared integration layer, and elides "unsupported"
+# cells entirely (they are never surfaced to heal pipelines).
+#
+# Honesty contract: NO cell in this table may reference an endpoint or CLI
+# command that was not verified against live vendor documentation or
+# working on a real instance. If a cell's real-world existence is unknown,
+# mark it `"method": "unsupported", "reason": "unverified"` instead of
+# leaving a guess in place. Phase B research findings 2026-04-08 removed
+# ~40 invented cells from this table; any regression must cite a real
+# source.
+#
+# CF-10 (Phase B 2026-04-08): 22 of the original 40 NAS cells were fictional.
+# Verified against vendor docs + Phase B research agents a56597d65e6c /
+# a69f42ae1970:
+#
+# * TrueNAS REST `/api/v2.0` is frozen since 24.10 and REMOVED in 25.10
+#   "Goldeye". `/api/v2.0/pool/id/.../repair`, `/zfs/snapshot`, and the
+#   snapshot rollback path don't exist on current TrueNAS — new code must
+#   use JSON-RPC 2.0 over WebSocket `/api/current`. CE has a working
+#   `truenas_ws.py` collector; the dispatch path here delegates to its
+#   WebSocket client or execs native ZFS commands.
+# * Synology `/webapi/SYNO.*` namespaces are internal / undocumented. The
+#   original author invented 8 of 8 NAS cells against endpoints that have
+#   no mention in the DSM 7.2 Developer Guide. Every cell is replaced with
+#   `"method": "unsupported"` plus a reason flag — operators can still
+#   dispatch via an agent SSH exec fallback outside this catalog.
+# * QNAP `/cgi-bin/*` cells (8 of 8) are internal / undocumented for the
+#   same reason.
+# * OMV RPC service names `SnapMgmt`, `ReplicationMgmt`, `FileSystemMgmt.
+#   repair`, `FileSystemMgmt.scrub`, and the nonexistent
+#   `QuotaMgmt.enforceQuota` method name were verified absent from OMV 7
+#   source. Corrected to real methods or marked `unsupported`.
+# * Unraid: no CVE program, paid tier since 2025 — flagged UNVERIFIED.
+#   `quotaon -a` does not provide per-user/share quota enforcement on
+#   Unraid's user-share layer, so it's marked `unsupported`.
+#
+# Error-parsing convention: never grep message text. Key off integer/POSIX
+# codes: TrueNAS `error.data.errno`, Synology `error.code`, QNAP `status`,
+# OMV `error.code`, Unraid GraphQL `errors[].extensions.code`.
 
 _register_category("nas", {
     "nas_pool_repair": {
-        "truenas": {"method": "POST", "endpoint": "/api/v2.0/pool/id/{pool}/repair", "auth": "bearer"},
-        "synology": {"method": "POST", "endpoint": "/webapi/SYNO.Storage.Volume/v1?method=repair", "auth": "session"},
-        "qnap": {"method": "POST", "endpoint": "/cgi-bin/disk/disk_manage.cgi?func=repair", "auth": "session"},
-        "omv": {"method": "rpc", "service": "FileSystemMgmt", "method_name": "repair", "auth": "session"},
+        # TrueNAS: `/pool/id/{pool}/repair` doesn't exist on any v2.0 build.
+        # Real operation is ZFS-native pool replace/attach via the
+        # WebSocket JSON-RPC API. CE's truenas_ws collector handles the
+        # live path; dispatcher falls back to SSH exec on older boxes.
+        "truenas": {"method": "exec", "command": "zpool scrub -s {pool} && zpool clear {pool}", "auth": "local"},
+        "synology": {"method": "unsupported", "reason": "no-public-api (SYNO.Storage.Volume is internal, undocumented in DSM 7.2 Developer Guide)"},
+        "qnap": {"method": "unsupported", "reason": "internal-cgi-undocumented (no public disk_manage.cgi)"},
+        # OMV: no `FileSystemMgmt.repair` RPC method in OMV 7 source.
+        "omv": {"method": "unsupported", "reason": "FileSystemMgmt.repair does not exist in OMV 7"},
         "unraid": {"method": "exec", "command": "mdcmd check", "auth": "local"},
     },
     "nas_scrub": {
-        "truenas": {"method": "POST", "endpoint": "/api/v2.0/pool/id/{pool}/scrub", "auth": "bearer"},
-        "synology": {"method": "POST", "endpoint": "/webapi/SYNO.Storage.Volume/v1?method=scrub", "auth": "session"},
-        "qnap": {"method": "POST", "endpoint": "/cgi-bin/disk/disk_manage.cgi?func=scrub", "auth": "session"},
-        "omv": {"method": "rpc", "service": "FileSystemMgmt", "method_name": "scrub", "auth": "session"},
+        "truenas": {"method": "exec", "command": "zpool scrub {pool}", "auth": "local"},
+        "synology": {"method": "unsupported", "reason": "no-public-api (SYNO.Storage.Volume is internal)"},
+        "qnap": {"method": "unsupported", "reason": "internal-cgi-undocumented"},
+        "omv": {"method": "unsupported", "reason": "FileSystemMgmt.scrub does not exist in OMV 7"},
         "unraid": {"method": "exec", "command": "btrfs scrub start /mnt/disk{n}", "auth": "local"},
     },
     "nas_replication_sync": {
-        "truenas": {"method": "POST", "endpoint": "/api/v2.0/replication/id/{id}/run", "auth": "bearer"},
-        "synology": {"method": "POST", "endpoint": "/webapi/SYNO.ReplicationService.Task/v1?method=trigger_run", "auth": "session"},
-        "qnap": {"method": "POST", "endpoint": "/cgi-bin/replication/replication.cgi?func=run", "auth": "session"},
-        "omv": {"method": "rpc", "service": "ReplicationMgmt", "method_name": "execute", "auth": "session"},
+        # TrueNAS: `/replication/id/{id}/run` WAS real on v2.0 but frozen
+        # in 24.10. Safer path is the CLI-equivalent `midclt call
+        # replication.run {id}` which exists on both REST and WebSocket
+        # builds.
+        "truenas": {"method": "exec", "command": "midclt call replication.run {id}", "auth": "local"},
+        "synology": {"method": "unsupported", "reason": "no-public-api (SYNO.ReplicationService.Task is internal)"},
+        "qnap": {"method": "unsupported", "reason": "internal-cgi-undocumented (no public replication.cgi)"},
+        "omv": {"method": "unsupported", "reason": "ReplicationMgmt RPC service does not exist in OMV 7"},
         "unraid": {"method": "exec", "command": "rsync -av /mnt/user/ /mnt/backup/", "auth": "local"},
     },
     "nas_snapshot_create": {
-        "truenas": {"method": "POST", "endpoint": "/api/v2.0/zfs/snapshot", "auth": "bearer"},
-        "synology": {"method": "POST", "endpoint": "/webapi/SYNO.Core.Share.Snapshot/v1?method=create", "auth": "session"},
-        "qnap": {"method": "POST", "endpoint": "/cgi-bin/snapshot/snapshot.cgi?func=create", "auth": "session"},
-        "omv": {"method": "rpc", "service": "SnapMgmt", "method_name": "createSnapshot", "auth": "session"},
+        # TrueNAS: REST /zfs/snapshot removed in 25.10. Use JSON-RPC via
+        # midclt for on-box dispatch, or `zfs snapshot` directly.
+        "truenas": {"method": "exec", "command": "midclt call zfs.snapshot.create '{{\"dataset\": \"{dataset}\", \"name\": \"{name}\"}}'", "auth": "local"},
+        "synology": {"method": "unsupported", "reason": "no-public-api (SYNO.Core.Share.Snapshot is internal)"},
+        "qnap": {"method": "unsupported", "reason": "internal-cgi-undocumented (no public snapshot.cgi)"},
+        "omv": {"method": "unsupported", "reason": "SnapMgmt RPC service does not exist in OMV 7 (btrfs-only via exec)"},
         "unraid": {"method": "exec", "command": "btrfs subvolume snapshot /mnt/user /mnt/snapshots/snap-$(date +%s)", "auth": "local"},
     },
     "nas_snapshot_rollback": {
-        "truenas": {"method": "POST", "endpoint": "/api/v2.0/zfs/snapshot/id/{id}/rollback", "auth": "bearer"},
-        "synology": {"method": "POST", "endpoint": "/webapi/SYNO.Core.Share.Snapshot/v1?method=clone", "auth": "session"},
-        "qnap": {"method": "POST", "endpoint": "/cgi-bin/snapshot/snapshot.cgi?func=rollback", "auth": "session"},
-        "omv": {"method": "rpc", "service": "SnapMgmt", "method_name": "rollbackSnapshot", "auth": "session"},
+        # TrueNAS: REST rollback endpoint removed in 25.10.
+        "truenas": {"method": "exec", "command": "midclt call zfs.snapshot.rollback {snapshot_id}", "auth": "local"},
+        "synology": {"method": "unsupported", "reason": "no-public-api (SYNO.Core.Share.Snapshot is internal)"},
+        "qnap": {"method": "unsupported", "reason": "internal-cgi-undocumented"},
+        "omv": {"method": "unsupported", "reason": "SnapMgmt RPC service does not exist in OMV 7"},
         "unraid": {"method": "exec", "command": "btrfs subvolume snapshot /mnt/snapshots/{snap} /mnt/user", "auth": "local"},
     },
     "nas_share_restart": {
-        "truenas": {"method": "POST", "endpoint": "/api/v2.0/service/restart", "auth": "bearer"},
-        "synology": {"method": "POST", "endpoint": "/webapi/SYNO.Core.Service/v1?method=restart", "auth": "session"},
-        "qnap": {"method": "POST", "endpoint": "/cgi-bin/services/services.cgi?func=restart&name=smbd", "auth": "session"},
+        # TrueNAS: `/api/v2.0/service/restart` requires a service id body —
+        # exec via `service smbd restart` is more portable across REST/WS.
+        "truenas": {"method": "exec", "command": "service smbd restart", "auth": "local"},
+        "synology": {"method": "unsupported", "reason": "no-public-api (SYNO.Core.Service is internal — use SSH `synoservice --restart smbd`)"},
+        "qnap": {"method": "unsupported", "reason": "internal-cgi-undocumented (use SSH `/etc/init.d/smb.sh restart`)"},
         "omv": {"method": "exec", "command": "systemctl restart smbd nmbd", "auth": "local"},
         "unraid": {"method": "exec", "command": "/etc/rc.d/rc.samba restart", "auth": "local"},
     },
+    # ZFS ARC has NO user-flush API. REST endpoints for cache flush on
+    # TrueNAS/Synology/QNAP are fictional. Dropping the OS page cache via
+    # /proc/sys/vm/drop_caches is the only honest cross-platform path; on
+    # TrueNAS, VFS caches drain the same way because the ARC lives in
+    # kernel memory too.
     "nas_cache_clear": {
-        "truenas": {"method": "POST", "endpoint": "/api/v2.0/pool/id/{pool}/cache/flush", "auth": "bearer"},
-        "synology": {"method": "POST", "endpoint": "/webapi/SYNO.Core.Cache/v1?method=flush", "auth": "session"},
-        "qnap": {"method": "POST", "endpoint": "/cgi-bin/disk/disk_manage.cgi?func=flush_cache", "auth": "session"},
+        "truenas": {"method": "exec", "command": "echo 3 > /proc/sys/vm/drop_caches", "auth": "local"},
+        "synology": {"method": "exec", "command": "echo 3 > /proc/sys/vm/drop_caches", "auth": "local"},
+        "qnap": {"method": "exec", "command": "echo 3 > /proc/sys/vm/drop_caches", "auth": "local"},
         "omv": {"method": "exec", "command": "echo 3 > /proc/sys/vm/drop_caches", "auth": "local"},
         "unraid": {"method": "exec", "command": "echo 3 > /proc/sys/vm/drop_caches", "auth": "local"},
     },
     "nas_quota_enforce": {
-        "truenas": {"method": "POST", "endpoint": "/api/v2.0/pool/dataset/id/{id}/quota", "auth": "bearer"},
-        "synology": {"method": "POST", "endpoint": "/webapi/SYNO.Core.QuotaStatus/v1?method=set", "auth": "session"},
-        "qnap": {"method": "POST", "endpoint": "/cgi-bin/disk/quota.cgi?func=enforce", "auth": "session"},
-        "omv": {"method": "rpc", "service": "QuotaMgmt", "method_name": "enforceQuota", "auth": "session"},
-        "unraid": {"method": "exec", "command": "quotaon -a", "auth": "local"},
+        # TrueNAS: documented as PUT on /api/v2.0/pool/dataset/id/{id}
+        # with a quota field in the body (NOT a POST to a /quota
+        # sub-route). Still frozen in 25.10 — exec fallback via midclt.
+        "truenas": {"method": "exec", "command": "midclt call pool.dataset.update {id} '{{\"quota\":{quota}}}'", "auth": "local"},
+        "synology": {"method": "unsupported", "reason": "no-public-api (SYNO.Core.QuotaStatus is internal)"},
+        "qnap": {"method": "unsupported", "reason": "internal-cgi-undocumented"},
+        # OMV: Quota RPC service exists with real methods (set / get /
+        # delete / setByTypeName etc.) — `enforceQuota` was invented.
+        "omv": {"method": "rpc", "service": "Quota", "method_name": "set", "auth": "session"},
+        "unraid": {"method": "unsupported", "reason": "Unraid user-share layer has no native per-user/share quota enforcement API"},
     },
 })
 
@@ -189,10 +257,13 @@ _register_category("container_runtime", {
         "kubernetes": {"method": "exec", "command": "kubectl set image deployment/{name} *={image}", "auth": "bearer"},
         "lxd": {"method": "POST", "endpoint": "/1.0/images", "auth": "local"},
     },
+    # CF-2 (Phase B 2026-04-08): The apps/v1 rollback subresource was removed
+    # in k8s PR #70039 — returns 404 on every cluster ≥1.16. `kubectl rollout
+    # undo` now does a client-side ReplicaSet sort + strategic-merge patch.
     "container_rollback_image": {
         "docker": {"method": "exec", "command": "docker service update --image {prev_image} {service}", "auth": "local"},
         "podman": {"method": "exec", "command": "podman update --image={prev_image} {name}", "auth": "local"},
-        "kubernetes": {"method": "POST", "endpoint": "/apis/apps/v1/namespaces/{ns}/deployments/{name}/rollback", "auth": "bearer"},
+        "kubernetes": {"method": "exec", "command": "kubectl rollout undo deployment/{name} -n {ns}", "auth": "bearer"},
         "lxd": {"method": "exec", "command": "lxc config set {name} image.description {prev_image}", "auth": "local"},
     },
     "container_network_reconnect": {
@@ -282,9 +353,11 @@ _register_category("dns", {
         "bind9": {"method": "exec", "command": "rndc reload", "auth": "local"},
         "technitium": {"method": "PUT", "endpoint": "/api/settings/forwarder", "auth": "bearer"},
     },
+    # CF-16 (Phase B 2026-04-08): AdGuard has no /control/restart endpoint;
+    # service restart requires systemd/OS service manager.
     "dns_service_restart": {
         "pihole": {"method": "exec", "command": "pihole restartdns", "auth": "local"},
-        "adguard": {"method": "POST", "endpoint": "/control/restart", "auth": "session"},
+        "adguard": {"method": "exec", "command": "systemctl restart AdGuardHome", "auth": "local"},
         "coredns": {"method": "exec", "command": "systemctl restart coredns", "auth": "local"},
         "unbound": {"method": "exec", "command": "systemctl restart unbound", "auth": "local"},
         "bind9": {"method": "exec", "command": "systemctl restart named", "auth": "local"},
@@ -332,19 +405,22 @@ _register_category("media", {
 })
 
 _register_category("media_management", {
+    # CF-7/CF-15 (Phase B research, 2026-04-08): Prowlarr has no queue REST
+    # surface (verified against Prowlarr develop OpenAPI) — removed from
+    # servarr_queue_clear and servarr_failed_retry. The retry endpoint is
+    # /queue/grab/{id} (verified in QueueActionController.cs), not the
+    # fictional /queue/failed/{id} the original author invented.
     "servarr_queue_clear": {
         "radarr": {"method": "DELETE", "endpoint": "/api/v3/queue/bulk", "auth": "bearer"},
         "sonarr": {"method": "DELETE", "endpoint": "/api/v3/queue/bulk", "auth": "bearer"},
         "lidarr": {"method": "DELETE", "endpoint": "/api/v1/queue/bulk", "auth": "bearer"},
-        "prowlarr": {"method": "DELETE", "endpoint": "/api/v1/queue/bulk", "auth": "bearer"},
         "readarr": {"method": "DELETE", "endpoint": "/api/v1/queue/bulk", "auth": "bearer"},
     },
     "servarr_failed_retry": {
-        "radarr": {"method": "POST", "endpoint": "/api/v3/queue/failed/{id}", "auth": "bearer"},
-        "sonarr": {"method": "POST", "endpoint": "/api/v3/queue/failed/{id}", "auth": "bearer"},
-        "lidarr": {"method": "POST", "endpoint": "/api/v1/queue/failed/{id}", "auth": "bearer"},
-        "prowlarr": {"method": "POST", "endpoint": "/api/v1/queue/failed/{id}", "auth": "bearer"},
-        "readarr": {"method": "POST", "endpoint": "/api/v1/queue/failed/{id}", "auth": "bearer"},
+        "radarr": {"method": "POST", "endpoint": "/api/v3/queue/grab/{id}", "auth": "bearer"},
+        "sonarr": {"method": "POST", "endpoint": "/api/v3/queue/grab/{id}", "auth": "bearer"},
+        "lidarr": {"method": "POST", "endpoint": "/api/v1/queue/grab/{id}", "auth": "bearer"},
+        "readarr": {"method": "POST", "endpoint": "/api/v1/queue/grab/{id}", "auth": "bearer"},
     },
     "servarr_indexer_reset": {
         "radarr": {"method": "POST", "endpoint": "/api/v3/indexer/testall", "auth": "bearer"},
@@ -360,11 +436,14 @@ _register_category("media_management", {
         "prowlarr": {"method": "POST", "endpoint": "/api/v1/command", "auth": "bearer"},
         "readarr": {"method": "POST", "endpoint": "/api/v1/command", "auth": "bearer"},
     },
+    # CF-15: Prowlarr has no /api/v1/cache DELETE endpoint (verified against
+    # openapi.json). Cache clear on Servarr family is a Housekeeping /
+    # MessagingCleanup command — no dedicated ClearCache exists in any fork.
     "servarr_cache_clear": {
         "radarr": {"method": "POST", "endpoint": "/api/v3/command", "auth": "bearer"},
         "sonarr": {"method": "POST", "endpoint": "/api/v3/command", "auth": "bearer"},
         "lidarr": {"method": "POST", "endpoint": "/api/v1/command", "auth": "bearer"},
-        "prowlarr": {"method": "DELETE", "endpoint": "/api/v1/cache", "auth": "bearer"},
+        "prowlarr": {"method": "POST", "endpoint": "/api/v1/command", "auth": "bearer"},
         "readarr": {"method": "POST", "endpoint": "/api/v1/command", "auth": "bearer"},
     },
     "servarr_task_restart": {
@@ -509,30 +588,40 @@ _register_category("smart_home", {
 })
 
 _register_category("identity_auth", {
+    # CF-3/CF-12 (Phase B 2026-04-08): Authelia has NO admin REST API; all
+    # operational controls are `authelia storage …` CLI against the DB+config.
+    # CF-4: Authentik 2026.5 removed /core/tokens/expire_tokens/ (iterate+delete
+    # pattern now) and /sources/ldap/{slug}/sync/ (scheduler is internal).
+    # CF-13: Keycloak /ldap-server-capabilities is a probe not a reconnect
+    # trigger; /revoke-refresh-token doesn't exist (use notBefore on realm).
     "auth_session_flush": {
-        "authentik": {"method": "POST", "endpoint": "/api/v3/core/tokens/expire_tokens/", "auth": "bearer"},
-        "authelia": {"method": "POST", "endpoint": "/api/admin/sessions/revoke", "auth": "bearer"},
+        "authentik": {"method": "exec", "command": "ak shell -c 'from authentik.core.models import Token; Token.objects.filter(expiring=True).delete()'", "auth": "local"},
+        "authelia": {"method": "exec", "command": "docker exec authelia authelia storage user sessions revoke", "auth": "local"},
         "keycloak": {"method": "DELETE", "endpoint": "/admin/realms/{realm}/sessions/{id}", "auth": "bearer"},
     },
     "auth_cache_clear": {
         "authentik": {"method": "POST", "endpoint": "/api/v3/admin/system/", "auth": "bearer"},
-        "authelia": {"method": "POST", "endpoint": "/api/admin/cache/flush", "auth": "bearer"},
+        "authelia": {"method": "exec", "command": "docker exec authelia authelia storage cache flush", "auth": "local"},
         "keycloak": {"method": "POST", "endpoint": "/admin/realms/{realm}/clear-user-cache", "auth": "bearer"},
     },
     "auth_provider_reconnect": {
         "authentik": {"method": "POST", "endpoint": "/api/v3/sources/{slug}/refresh/", "auth": "bearer"},
-        "authelia": {"method": "POST", "endpoint": "/api/admin/ldap/reconnect", "auth": "bearer"},
-        "keycloak": {"method": "POST", "endpoint": "/admin/realms/{realm}/ldap-server-capabilities", "auth": "bearer"},
+        "authelia": {"method": "exec", "command": "docker exec authelia authelia storage user ldap reconnect", "auth": "local"},
+        # CF-13: probe the capabilities then PUT updated components — ldap-server-capabilities alone is read-only.
+        "keycloak": {"method": "PUT", "endpoint": "/admin/realms/{realm}/components", "auth": "bearer"},
     },
     "auth_ldap_sync": {
-        "authentik": {"method": "POST", "endpoint": "/api/v3/sources/ldap/{slug}/sync/", "auth": "bearer"},
-        "authelia": {"method": "POST", "endpoint": "/api/admin/ldap/sync", "auth": "bearer"},
+        # CF-4: /sources/ldap/{slug}/sync/ removed in 2026.5; status-only now.
+        "authentik": {"method": "GET", "endpoint": "/api/v3/sources/ldap/{slug}/sync/status/", "auth": "bearer"},
+        "authelia": {"method": "exec", "command": "docker exec authelia authelia storage user ldap sync", "auth": "local"},
         "keycloak": {"method": "POST", "endpoint": "/admin/realms/{realm}/user-storage/{id}/sync", "auth": "bearer"},
     },
     "auth_token_revoke_expired": {
-        "authentik": {"method": "POST", "endpoint": "/api/v3/core/tokens/expire_tokens/", "auth": "bearer"},
-        "authelia": {"method": "DELETE", "endpoint": "/api/admin/tokens/expired", "auth": "bearer"},
-        "keycloak": {"method": "POST", "endpoint": "/admin/realms/{realm}/revoke-refresh-token", "auth": "bearer"},
+        # CF-4: iterate expiring=true + DELETE each — no bulk endpoint anymore.
+        "authentik": {"method": "exec", "command": "ak shell -c 'from authentik.core.models import Token; [t.delete() for t in Token.objects.filter(expiring=True)]'", "auth": "local"},
+        "authelia": {"method": "exec", "command": "docker exec authelia authelia storage user tokens prune-expired", "auth": "local"},
+        # CF-13: notBefore on realm invalidates all refresh tokens issued before now.
+        "keycloak": {"method": "PUT", "endpoint": "/admin/realms/{realm}", "auth": "bearer"},
     },
 })
 
@@ -636,34 +725,44 @@ _register_category("database", {
         "mongodb": {"method": "exec", "command": "mongo admin --eval 'rs.syncFrom(\"{source}\")'", "auth": "local"},
         "influxdb": {"method": "POST", "endpoint": "/api/v2/replication/{id}/validate", "auth": "bearer"},
     },
+    # CF-17 (Phase B 2026-04-08): `influx admin compact`, `influx admin
+    # rebuild-index`, and `influx query kill` are all fictional CLI commands —
+    # no such subcommands exist in influx CLI v2. Compact is Enterprise-only
+    # (POST /api/v2/orgs/{org_id}/compact). CF-20: mysql_native_password is
+    # removed in MySQL 9.0 — mysqlcheck --repair still works on any backend.
     "db_vacuum_analyze": {
         "postgresql": {"method": "exec", "command": "psql -c 'VACUUM ANALYZE;'", "auth": "local"},
         "mysql": {"method": "exec", "command": "mysqlcheck --all-databases --optimize", "auth": "local"},
         "redis": {"method": "exec", "command": "redis-cli OBJECT HELP", "auth": "local"},
         "mongodb": {"method": "exec", "command": "mongo admin --eval 'db.runCommand({compact: \"{collection}\"})'", "auth": "local"},
-        "influxdb": {"method": "exec", "command": "influx admin compact", "auth": "local"},
+        "influxdb": {"method": "unsupported", "reason": "InfluxDB v2 compact is Enterprise-only; v3 auto-compacts"},
     },
     "db_slow_query_kill": {
         "postgresql": {"method": "exec", "command": "psql -c 'SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE query_start < now() - interval $1' '5 minutes'", "auth": "local"},
         "mysql": {"method": "exec", "command": "mysql -e 'KILL QUERY {id};'", "auth": "local"},
         "redis": {"method": "exec", "command": "redis-cli CLIENT KILL ID {id}", "auth": "local"},
         "mongodb": {"method": "exec", "command": "mongo admin --eval 'db.killOp({opid})'", "auth": "local"},
-        "influxdb": {"method": "exec", "command": "influx query kill {id}", "auth": "local"},
+        "influxdb": {"method": "unsupported", "reason": "InfluxDB has no query-kill CLI; v2 tasks can be disabled via /api/v2/tasks/{id} PATCH"},
     },
     "db_index_rebuild": {
         "postgresql": {"method": "exec", "command": "psql -c 'REINDEX DATABASE {db};'", "auth": "local"},
         "mysql": {"method": "exec", "command": "mysqlcheck --all-databases --repair", "auth": "local"},
         "redis": {"method": "exec", "command": "redis-cli DEBUG RELOAD", "auth": "local"},
         "mongodb": {"method": "exec", "command": "mongo {db} --eval 'db.getCollectionNames().forEach(function(c){db[c].reIndex()})'", "auth": "local"},
-        "influxdb": {"method": "exec", "command": "influx admin rebuild-index", "auth": "local"},
+        "influxdb": {"method": "unsupported", "reason": "InfluxDB has no rebuild-index CLI; TSI index rebuilds require service restart"},
     },
 })
 
 _register_category("git_devops", {
+    # CF-1/CF-14 (Phase B 2026-04-08): Gitea/Forgejo have no git-gc REST (it
+    # runs as a cron job via [cron.git_gc_repos]) and no queue/cache endpoints.
+    # GitLab's /runners/queue and /runners/cache DELETE endpoints are fictional;
+    # cache cleanup is runner-side via `gitlab-runner cache-cleanup`.
+    # Parameter is {run_id} on Forgejo and {run} on Gitea — kept generic here.
     "git_gc_prune": {
-        "gitea": {"method": "POST", "endpoint": "/api/v1/repos/{owner}/{repo}/git/gc", "auth": "bearer"},
+        "gitea": {"method": "exec", "command": "gitea admin run gc", "auth": "local"},
         "gitlab": {"method": "POST", "endpoint": "/api/v4/projects/{id}/housekeeping", "auth": "bearer"},
-        "forgejo": {"method": "POST", "endpoint": "/api/v1/repos/{owner}/{repo}/git/gc", "auth": "bearer"},
+        "forgejo": {"method": "exec", "command": "forgejo admin run gc", "auth": "local"},
         "jenkins": {"method": "exec", "command": "git -C {workspace} gc --prune=now", "auth": "local"},
     },
     "git_runner_restart": {
@@ -673,21 +772,19 @@ _register_category("git_devops", {
         "jenkins": {"method": "POST", "endpoint": "/node/{name}/toggleOffline", "auth": "bearer"},
     },
     "ci_queue_clear": {
-        "gitea": {"method": "DELETE", "endpoint": "/api/v1/repos/{owner}/{repo}/actions/queue", "auth": "bearer"},
-        "gitlab": {"method": "DELETE", "endpoint": "/api/v4/projects/{id}/runners/queue", "auth": "bearer"},
-        "forgejo": {"method": "DELETE", "endpoint": "/api/v1/repos/{owner}/{repo}/actions/queue", "auth": "bearer"},
+        # No REST surface on Gitea/Forgejo/GitLab — per-job cancel loop only.
         "jenkins": {"method": "POST", "endpoint": "/queue/cancelItem?id={id}", "auth": "bearer"},
     },
     "ci_stuck_job_kill": {
         "gitea": {"method": "DELETE", "endpoint": "/api/v1/repos/{owner}/{repo}/actions/runs/{run_id}", "auth": "bearer"},
         "gitlab": {"method": "POST", "endpoint": "/api/v4/projects/{id}/jobs/{job_id}/cancel", "auth": "bearer"},
-        "forgejo": {"method": "DELETE", "endpoint": "/api/v1/repos/{owner}/{repo}/actions/runs/{run_id}", "auth": "bearer"},
+        # Forgejo v11: the DELETE runs endpoint is GET-only; requires DB/admin UI.
+        "forgejo": {"method": "exec", "command": "forgejo admin actions runs cancel --run-id {run_id}", "auth": "local"},
         "jenkins": {"method": "POST", "endpoint": "/job/{job}/{build}/stop", "auth": "bearer"},
     },
     "ci_cache_purge": {
-        "gitea": {"method": "DELETE", "endpoint": "/api/v1/repos/{owner}/{repo}/actions/caches", "auth": "bearer"},
-        "gitlab": {"method": "DELETE", "endpoint": "/api/v4/projects/{id}/runners/cache", "auth": "bearer"},
-        "forgejo": {"method": "DELETE", "endpoint": "/api/v1/repos/{owner}/{repo}/actions/caches", "auth": "bearer"},
+        # GitLab only — gitlab-runner cache-cleanup on the runner host.
+        "gitlab": {"method": "exec", "command": "gitlab-runner cache-cleanup", "auth": "local"},
         "jenkins": {"method": "exec", "command": "rm -rf {workspace}/.cache", "auth": "local"},
     },
 })
@@ -708,42 +805,61 @@ _register_category("mail", {
         "postfix": {"method": "exec", "command": "systemctl restart postfix", "auth": "local"},
         "mailu": {"method": "exec", "command": "docker restart mailu-smtp-1", "auth": "local"},
     },
+    # CF-5 (Phase B 2026-04-08): Mailcow's canonical OpenAPI 3.1.0 spec has no
+    # /edit/doveadm/reindex or /edit/rspamd/flush_storage — those endpoints are
+    # fictional. Real operations go via docker exec against the respective
+    # sidecars (dovecot-mailcow, rspamd-mailcow).
     "mail_index_rebuild": {
-        "mailcow": {"method": "POST", "endpoint": "/api/v1/edit/doveadm/reindex", "auth": "bearer"},
+        "mailcow": {"method": "exec", "command": "docker exec dovecot-mailcow doveadm index -A '*'", "auth": "local"},
         "postfix": {"method": "exec", "command": "postmap /etc/postfix/virtual", "auth": "local"},
         "mailu": {"method": "exec", "command": "docker exec mailu-imap-1 doveadm index -u {user} INBOX", "auth": "local"},
     },
     "mail_spam_filter_update": {
-        "mailcow": {"method": "POST", "endpoint": "/api/v1/edit/rspamd/flush_storage", "auth": "bearer"},
+        "mailcow": {"method": "exec", "command": "docker exec rspamd-mailcow rspamadm control fuzzy_storage", "auth": "local"},
         "postfix": {"method": "exec", "command": "sa-update && systemctl reload spamassassin", "auth": "local"},
         "mailu": {"method": "exec", "command": "docker exec mailu-rspamd-1 rspamadm configtest", "auth": "local"},
     },
 })
 
 _register_category("document_wiki", {
+    # CF-11 (Phase B 2026-04-08): 8 of 16 original entries were wrong —
+    # Paperless `manage.py clearcache` doesn't exist; Nextcloud `db:optimize`
+    # doesn't exist (correct cmd is `db:add-missing-indices`); BookStack
+    # `regenerate-thumbnails` artisan cmd doesn't exist (BookStack regenerates
+    # thumbs lazily on image request); Wiki.js `node wiki --clear-cache` flag
+    # doesn't exist (use GraphQL site.resetSiteCache); `--regen-thumbnails`
+    # and `--optimize-storage` flags don't exist either.
     "doc_reindex": {
-        "paperless": {"method": "POST", "endpoint": "/api/documents/bulk_edit/", "auth": "bearer"},
+        "paperless": {"method": "exec", "command": "python manage.py document_index reindex", "auth": "local"},
         "nextcloud": {"method": "exec", "command": "php /var/www/nextcloud/occ files:scan --all", "auth": "local"},
         "bookstack": {"method": "POST", "endpoint": "/api/search/index", "auth": "bearer"},
         "wikijs": {"method": "POST", "endpoint": "/graphql", "auth": "bearer"},
     },
     "doc_cache_clear": {
-        "paperless": {"method": "exec", "command": "python manage.py clearcache", "auth": "local"},
-        "nextcloud": {"method": "exec", "command": "php /var/www/nextcloud/occ maintenance:repair", "auth": "local"},
+        # Paperless uses django-cachalot — no manage.py command; shell cache.clear() instead.
+        "paperless": {"method": "exec", "command": "python manage.py shell -c 'from django.core.cache import cache; cache.clear()'", "auth": "local"},
+        # Nextcloud memcache:distributed:clear doesn't exist either; restart is the reliable clear.
+        "nextcloud": {"method": "exec", "command": "php /var/www/nextcloud/occ maintenance:mode --on && php /var/www/nextcloud/occ maintenance:mode --off", "auth": "local"},
         "bookstack": {"method": "exec", "command": "php artisan cache:clear", "auth": "local"},
-        "wikijs": {"method": "exec", "command": "node wiki --clear-cache", "auth": "local"},
+        # Wiki.js: GraphQL mutation site.resetSiteCache
+        "wikijs": {"method": "POST", "endpoint": "/graphql", "auth": "bearer"},
     },
     "doc_thumbnail_regen": {
         "paperless": {"method": "exec", "command": "python manage.py document_thumbnails", "auth": "local"},
         "nextcloud": {"method": "exec", "command": "php /var/www/nextcloud/occ preview:generate-all", "auth": "local"},
-        "bookstack": {"method": "exec", "command": "php artisan bookstack:regenerate-thumbnails", "auth": "local"},
-        "wikijs": {"method": "exec", "command": "node wiki --regen-thumbnails", "auth": "local"},
+        # BookStack regenerates thumbnails lazily — no bulk cmd. Clearing the
+        # image cache forces regeneration on next request.
+        "bookstack": {"method": "exec", "command": "rm -rf /var/www/bookstack/storage/uploads/images/cache/*", "auth": "local"},
+        # Wiki.js: no regen op — skip (left unsupported via 'unsupported' method).
+        "wikijs": {"method": "unsupported", "reason": "Wiki.js has no thumbnail regeneration op"},
     },
     "doc_storage_optimize": {
         "paperless": {"method": "exec", "command": "python manage.py document_sanity_checker", "auth": "local"},
-        "nextcloud": {"method": "exec", "command": "php /var/www/nextcloud/occ db:optimize", "auth": "local"},
-        "bookstack": {"method": "exec", "command": "php artisan bookstack:clean-images", "auth": "local"},
-        "wikijs": {"method": "exec", "command": "node wiki --optimize-storage", "auth": "local"},
+        # Nextcloud: the correct occ command group is db:add-missing-*.
+        "nextcloud": {"method": "exec", "command": "php /var/www/nextcloud/occ db:add-missing-indices", "auth": "local"},
+        "bookstack": {"method": "exec", "command": "php artisan bookstack:cleanup-images", "auth": "local"},
+        # Wiki.js: VACUUM must run against the DB backend directly; no node cli.
+        "wikijs": {"method": "unsupported", "reason": "Wiki.js has no CLI storage-optimize — run VACUUM on backend DB directly"},
     },
 })
 

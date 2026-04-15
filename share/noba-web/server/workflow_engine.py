@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Workflow engine: automation builders, validation, and workflow execution."""
 from __future__ import annotations
 
@@ -64,9 +67,8 @@ def _validate_auto_config(atype: str, config: dict) -> None:
             raise HTTPException(400, "agent_command requires 'hostname' in config")
         if not config.get("command"):
             raise HTTPException(400, "agent_command requires 'command' in config")
-    elif atype == "remediation":
-        if not config.get("remediation_type"):
-            raise HTTPException(400, "Remediation automation requires 'remediation_type' in config")
+    elif atype == "remediation" and not config.get("remediation_type"):
+        raise HTTPException(400, "Remediation automation requires 'remediation_type' in config")
 
 
 # ── Builder functions ─────────────────────────────────────────────────────────
@@ -109,6 +111,20 @@ class _HttpResult:
         pass
 
 
+def _sign_request_headers(secret: str | None, body: bytes) -> dict:
+    """Compute HMAC-SHA256 signature header for outbound webhooks.
+
+    Returns a dict with 'X-Noba-Signature' header, or empty dict if no secret.
+    """
+    if not secret:
+        return {}
+    import hashlib
+    import hmac as _hmac
+
+    sig = "sha256=" + _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return {"X-Noba-Signature": sig}
+
+
 def _do_http_request(
     url: str,
     method: str = "GET",
@@ -116,17 +132,24 @@ def _do_http_request(
     body: str | bytes | None = None,
     auth: tuple[str, str] | None = None,
     timeout: float = 30,
+    signing_secret: str | None = None,
 ) -> _HttpResult:
     """Perform an HTTP request via httpx and return a Popen-compatible result."""
-    import httpx
     import time as _time
+
+    import httpx
+
+    merged_headers = dict(headers or {})
+    if body is not None and signing_secret:
+        raw = body.encode() if isinstance(body, str) else body
+        merged_headers.update(_sign_request_headers(signing_secret, raw))
 
     t0 = _time.monotonic()
     try:
         r = httpx.request(
             method,
             url,
-            headers=headers,
+            headers=merged_headers,
             content=body,
             auth=auth,
             timeout=timeout,
@@ -148,12 +171,15 @@ def _build_auto_webhook_process(config: dict) -> _HttpResult | None:
     body = config.get("body")
     content = None
     if body:
-        if isinstance(body, (dict, list)):
+        if isinstance(body, dict | list):
             headers["Content-Type"] = "application/json"
             content = json.dumps(body).encode()
         elif isinstance(body, str):
             content = body.encode()
-    return _do_http_request(url, method, headers=headers, body=content)
+    return _do_http_request(
+        url, method, headers=headers, body=content,
+        signing_secret=config.get("secret", ""),
+    )
 
 
 def _build_auto_service_process(config: dict) -> subprocess.Popen | None:

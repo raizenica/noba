@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for action_audit DB functions, API endpoint, and execute_action integration."""
 from __future__ import annotations
 
@@ -336,12 +339,14 @@ class TestExecuteActionAuditIntegration:
             )
 
         assert result["success"] is False
-        assert "Subprocess exploded" in result["error"]
+        assert result["error"] == "Action execution failed"
         rows = app_db.get_action_audit(trigger_type="test_integration_exc", limit=500)
         assert len(rows) >= 1
         entry = rows[0]
         assert entry["outcome"] == "error"
-        assert "Subprocess exploded" in entry["error"]
+        # OWASP error sanitization: raw error goes to server logs, never the
+        # audit row or API response. Operators read stack details from journald.
+        assert entry["error"] == "Action execution failed"
 
     def test_unknown_action_type_records_error_outcome(self):
         from server.db import db as app_db

@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Read-only data endpoints (stats, history, metrics, alerts, notifications, dashboard)."""
 from __future__ import annotations
 
@@ -11,12 +14,18 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from .. import deps as _deps  # noqa: F401 – runtime access to bg_collector
-from ..deps import handle_errors
 from ..collector import collect_stats, get_shutdown_flag
 from ..config import HISTORY_METRICS
 from ..deps import (
-    _client_ip, _get_auth, _get_auth_sse, _int_param, _read_body,
-    _require_admin, _safe_int, db,
+    _client_ip,
+    _get_auth,
+    _get_auth_sse,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _safe_int,
+    db,
+    handle_errors,
 )
 from ..plugins import plugin_manager
 from ..yaml_config import read_yaml_settings, write_yaml_settings

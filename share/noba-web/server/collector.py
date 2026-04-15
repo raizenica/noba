@@ -1,32 +1,82 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Background stats collector and assembly."""
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait as _wait_futures
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import wait as _wait_futures
 from datetime import datetime
 
-from .config import STATS_INTERVAL, _WORKER_THREADS
-from .db import db
-from .metrics import (
-    collect_system, collect_hardware, collect_storage, collect_network,
-    get_cpu_percent, get_cpu_history, get_service_status, ping_host, get_containers,
-    collect_disk_io, collect_per_interface_net,
-    check_cert_expiry, check_device_presence, check_domain_expiry, get_vpn_status,
-    check_docker_updates, snapshot_top_processes, get_tailscale_status,
-)
-from .integrations import (
-    get_pihole, get_plex, get_kuma, get_truenas, get_servarr, get_qbit, get_proxmox,
-    get_adguard, get_jellyfin, get_hass, get_unifi, get_speedtest,
-    get_tautulli, get_overseerr, get_prowlarr, get_servarr_extended, get_servarr_calendar,
-    get_nextcloud, get_traefik, get_npm, get_authentik, get_cloudflare, get_omv, get_xcpng,
-    get_homebridge, get_z2m, get_esphome, get_unifi_protect, get_pikvm, get_k8s,
-    get_gitea, get_gitlab, get_github, get_paperless, get_vaultwarden, get_weather,
-    get_energy_shelly, get_scrutiny, get_frigate,
-)
-from .cache import cache as _cache
 from .alerts import build_threshold_alerts, check_anomalies, evaluate_alert_rules
+from .cache import cache as _cache
+from .config import _WORKER_THREADS, STATS_INTERVAL
+from .db import db
+from .integrations import (
+    get_adguard,
+    get_authentik,
+    get_cloudflare,
+    get_energy_shelly,
+    get_esphome,
+    get_frigate,
+    get_gitea,
+    get_github,
+    get_gitlab,
+    get_hass,
+    get_homebridge,
+    get_jellyfin,
+    get_k8s,
+    get_kuma,
+    get_nextcloud,
+    get_npm,
+    get_omv,
+    get_overseerr,
+    get_paperless,
+    get_pihole,
+    get_pikvm,
+    get_plex,
+    get_prowlarr,
+    get_proxmox,
+    get_qbit,
+    get_scrutiny,
+    get_servarr,
+    get_servarr_calendar,
+    get_servarr_extended,
+    get_speedtest,
+    get_tautulli,
+    get_traefik,
+    get_truenas,
+    get_unifi,
+    get_unifi_protect,
+    get_vaultwarden,
+    get_weather,
+    get_xcpng,
+    get_z2m,
+)
+from .metrics import (
+    check_cert_expiry,
+    check_device_presence,
+    check_docker_updates,
+    check_domain_expiry,
+    collect_disk_io,
+    collect_hardware,
+    collect_network,
+    collect_per_interface_net,
+    collect_storage,
+    collect_system,
+    get_containers,
+    get_cpu_history,
+    get_cpu_percent,
+    get_service_status,
+    get_tailscale_status,
+    get_vpn_status,
+    ping_host,
+    snapshot_top_processes,
+)
 from .plugins import plugin_manager
 from .yaml_config import read_yaml_settings
 
@@ -318,10 +368,10 @@ def collect_stats(qs: dict) -> dict:
             return res
         except ConfigError as e:
             logger.error("Config error in %s: %s", name or "integration", e)
-            return {"status": "unauthorized", "error": str(e)}
+            return {"status": "unauthorized", "error": "Configuration error"}
         except (TransientError, Exception) as e:
             logger.warning("Transient error in %s: %s", name or "integration", e)
-            return {"status": "offline", "error": str(e)}
+            return {"status": "offline", "error": "Connection failed"}
 
     def _cached_get(fut, cache_key, name=None, default=None, ttl=30):
         """Get a future result with optional cache layer."""
@@ -331,9 +381,11 @@ def collect_stats(qs: dict) -> dict:
                 return cached
         result = _get(fut, name=name, default=default)
         # Cache successful or offline results, but not ConfigErrors (which require user action)
-        if _cache.is_redis and cache_key and result is not None:
-            if isinstance(result, dict) and result.get("status") != "unauthorized":
-                _cache.set(cache_key, result, ttl=ttl)
+        if (
+            _cache.is_redis and cache_key and result is not None
+            and isinstance(result, dict) and result.get("status") != "unauthorized"
+        ):
+            _cache.set(cache_key, result, ttl=ttl)
         return result
 
     stats["kuma"]       = _get(kuma_fut, name="Uptime Kuma", default=[])
@@ -518,7 +570,15 @@ def collect_stats(qs: dict) -> dict:
             _raw_ac = _inst.get("auth_config", "{}")
             try:
                 _ac = _json.loads(_raw_ac) if isinstance(_raw_ac, str) else (_raw_ac or {})
-            except Exception:
+            except Exception as _ac_exc:
+                # Honesty contract: broken auth_config is an operator-fixable
+                # problem, not silently survivable. Log so the instance shows
+                # up in journald; the fetcher will then likely return a
+                # 401/403 and surface in the UI as "offline".
+                logger.warning(
+                    "Managed instance %s: auth_config JSON parse failed: %s",
+                    _inst.get("id"), _ac_exc,
+                )
                 _ac = {}
             if _url:
                 _inst_futs[_inst["id"]] = _pool.submit(_fetcher, _url, _ac)
@@ -540,7 +600,7 @@ def collect_stats(qs: dict) -> dict:
 
     # ── Agent data ────────────────────────────────────────────────────────────
     try:
-        from .agent_store import _agent_data, _agent_data_lock, _AGENT_MAX_AGE
+        from .agent_store import _AGENT_MAX_AGE, _agent_data, _agent_data_lock
         now_a = time.time()
         with _agent_data_lock:
             agent_list = []
@@ -620,10 +680,8 @@ def collect_stats(qs: dict) -> dict:
         logger.error("History insert failed: %s", e)
 
     # Snapshot top processes for history
-    try:
+    with contextlib.suppress(Exception):
         snapshot_top_processes()
-    except Exception:
-        pass
 
     return stats
 

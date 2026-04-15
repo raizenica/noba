@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – System operations, recovery, journal, backups, and IaC export endpoints."""
 from __future__ import annotations
 
@@ -13,18 +16,27 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from .. import deps as _deps
-from ..deps import handle_errors
 from ..agent_config import RISK_LEVELS, check_role_permission
 from ..agent_store import (
-    _agent_cmd_lock, _agent_commands,
-    _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
-    _agent_websockets, _agent_ws_lock,
+    _AGENT_MAX_AGE,
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_websockets,
+    _agent_ws_lock,
 )
-
 from ..config import VERSION
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body,
-    _require_admin, _require_operator, _safe_int, db,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    _safe_int,
+    db,
+    handle_errors,
 )
 from ..metrics import collect_smart
 from ..yaml_config import read_yaml_settings
@@ -49,7 +61,8 @@ async def api_recovery_tailscale(request: Request, auth=Depends(_require_operato
         return {"status": "ok" if result.returncode == 0 else "error",
                 "output": result.stdout[:500], "error": result.stderr[:500]}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error("tailscale-reconnect failed: %s", e)
+        return {"status": "error", "error": "Operation failed"}
 
 
 @router.post("/api/recovery/dns-flush")
@@ -70,7 +83,8 @@ async def api_recovery_dns(request: Request, auth=Depends(_require_operator)):
         return {"status": "ok" if result.returncode == 0 else "error",
                 "output": result.stdout[:500], "error": result.stderr[:500]}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error("dns-flush failed: %s", e)
+        return {"status": "error", "error": "Operation failed"}
 
 
 @router.post("/api/recovery/service-restart")
@@ -92,7 +106,8 @@ async def api_recovery_service(request: Request, auth=Depends(_require_operator)
         return {"status": "ok" if result.returncode == 0 else "error",
                 "service": service, "output": result.stdout[:500]}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error("service-restart %s failed: %s", service, e)
+        return {"status": "error", "error": "Operation failed"}
 
 
 # ── /api/sites/sync-status ───────────────────────────────────────────────────
@@ -147,9 +162,8 @@ def api_journal(request: Request, auth=Depends(_require_operator)):
         if priority in ("0", "1", "2", "3", "4", "5", "6", "7",
                         "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"):
             cmd += ["-p", priority]
-    if since:
-        if re.match(r'^\d+\s*(min|hour|day|sec)\s*ago$', since):
-            cmd += ["--since", since]
+    if since and re.match(r'^\d+\s*(min|hour|day|sec)\s*ago$', since):
+        cmd += ["--since", since]
     if grep_pattern:
         # Reject patterns with nested quantifiers (ReDoS risk)
         if re.search(r'\([^)]*[+*][^)]*\)[+*]', grep_pattern):
@@ -159,14 +173,14 @@ def api_journal(request: Request, auth=Depends(_require_operator)):
         try:
             _re.compile(grep_pattern[:100])
         except _re.error:
-            raise HTTPException(400, "Invalid regex pattern")
+            raise HTTPException(400, "Invalid regex pattern") from None
         cmd += ["-g", grep_pattern[:100]]
 
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         return PlainTextResponse(r.stdout[-65536:] or "No entries.")
     except subprocess.TimeoutExpired:
-        raise HTTPException(504, "Journal query timed out")
+        raise HTTPException(504, "Journal query timed out") from None
     except FileNotFoundError:
         return PlainTextResponse("journalctl not available")
 
@@ -374,7 +388,7 @@ async def _ensure_agent_discovery(hostname: str, timeout: float = 15.0) -> str |
     Returns None on success, or a warning string if discovery timed out.
     Skips silently if agent is offline or already has data.
     """
-    from ..agent_store import _agent_cmd_results, _agent_cmd_lock
+    from ..agent_store import _agent_cmd_lock, _agent_cmd_results
 
     with _agent_data_lock:
         agent = _agent_data.get(hostname)
@@ -437,19 +451,23 @@ async def _ensure_agent_discovery(hostname: str, timeout: float = 15.0) -> str |
     return None
 
 
-@router.get("/api/export/ansible")
-@handle_errors
-async def api_export_ansible(request: Request, auth=Depends(_require_operator)):
-    """Generate an Ansible playbook from live agent data."""
-    from ..iac_export import generate_ansible
+async def _run_export_with_discovery(
+    request: Request, fmt: str, hostname: str | None, discover: bool,
+) -> PlainTextResponse:
+    """Shared logic for IaC export endpoints (all formats)."""
+    from ..iac_export import (
+        generate_ansible,
+        generate_docker_compose,
+        generate_shell_script,
+    )
 
-    hostname = request.query_params.get("hostname") or None
-    discover = request.query_params.get("discover", "").lower() in ("1", "true", "yes")
+    if fmt in ("docker-compose", "shell") and not hostname:
+        raise HTTPException(400, "hostname parameter is required")
+
     warning = None
     if discover and hostname:
         warning = await _ensure_agent_discovery(hostname)
     elif discover and not hostname:
-        # Discover for all online agents
         with _agent_data_lock:
             hosts = list(_agent_data.keys())
         warnings = []
@@ -459,59 +477,88 @@ async def api_export_ansible(request: Request, auth=Depends(_require_operator)):
                 warnings.append(f"{h}: {w}")
         warning = "; ".join(warnings) if warnings else None
 
-    output = generate_ansible(
-        db, _agent_data, _agent_data_lock, _AGENT_MAX_AGE, hostname,
-    )
-    resp = PlainTextResponse(output, media_type="text/yaml")
+    generators = {
+        "ansible": (generate_ansible, "text/yaml"),
+        "docker-compose": (generate_docker_compose, "text/yaml"),
+        "shell": (generate_shell_script, "text/x-shellscript"),
+    }
+    gen_fn, media = generators[fmt]
+    output = gen_fn(db, _agent_data, _agent_data_lock, _AGENT_MAX_AGE, hostname)
+    resp = PlainTextResponse(output, media_type=media)
     if warning:
         resp.headers["X-Noba-Discovery-Warning"] = warning
     return resp
+
+
+@router.get("/api/export/ansible")
+@handle_errors
+async def api_export_ansible(request: Request, auth=Depends(_require_operator)):
+    """Generate an Ansible playbook from cached agent data (read-only).
+
+    Auth: operator+ (raised from viewer). An Ansible playbook reveals the
+    full infrastructure topology (hostnames, services, ports, paths) —
+    info disclosure risk, so viewers no longer have access. Use the POST
+    sibling endpoint if you also need to trigger fresh discovery.
+    """
+    hostname = request.query_params.get("hostname") or None
+    return await _run_export_with_discovery(request, "ansible", hostname, discover=False)
+
+
+@router.post("/api/export/ansible")
+@handle_errors
+async def api_export_ansible_discover(request: Request, auth=Depends(_require_operator)):
+    """Generate an Ansible playbook, optionally running agent discovery first."""
+    body = await _read_body(request)
+    hostname = body.get("hostname") or None
+    discover = body.get("discover", False)
+    return await _run_export_with_discovery(request, "ansible", hostname, discover=bool(discover))
 
 
 @router.get("/api/export/docker-compose")
 @handle_errors
 async def api_export_docker_compose(request: Request, auth=Depends(_require_operator)):
-    """Generate a docker-compose.yml from live agent container data."""
-    from ..iac_export import generate_docker_compose
+    """Generate a docker-compose.yml from cached agent container data.
 
+    Auth: operator+ (raised from viewer). A docker-compose file reveals
+    full container topology (images, volumes, networks, env files, ports)
+    and must not be readable by viewer-role accounts. Use the POST sibling
+    endpoint if you also need to trigger fresh discovery.
+    """
     hostname = request.query_params.get("hostname") or None
-    if not hostname:
-        raise HTTPException(400, "hostname parameter is required")
-    discover = request.query_params.get("discover", "").lower() in ("1", "true", "yes")
-    if discover:
-        warning = await _ensure_agent_discovery(hostname)
-    else:
-        warning = None
-    output = generate_docker_compose(
-        db, _agent_data, _agent_data_lock, _AGENT_MAX_AGE, hostname,
-    )
-    resp = PlainTextResponse(output, media_type="text/yaml")
-    if warning:
-        resp.headers["X-Noba-Discovery-Warning"] = warning
-    return resp
+    return await _run_export_with_discovery(request, "docker-compose", hostname, discover=False)
+
+
+@router.post("/api/export/docker-compose")
+@handle_errors
+async def api_export_docker_compose_discover(request: Request, auth=Depends(_require_operator)):
+    """Generate a docker-compose.yml, optionally running agent discovery first."""
+    body = await _read_body(request)
+    hostname = body.get("hostname") or None
+    discover = body.get("discover", False)
+    return await _run_export_with_discovery(request, "docker-compose", hostname, discover=bool(discover))
 
 
 @router.get("/api/export/shell")
 @handle_errors
 async def api_export_shell(request: Request, auth=Depends(_require_operator)):
-    """Generate a bash setup script from live agent data."""
-    from ..iac_export import generate_shell_script
+    """Generate a bash setup script from cached agent data.
 
+    Auth: operator+ (raised from viewer). A shell provisioning script
+    reveals hostnames, installed packages, and service paths — not
+    something viewer accounts should read.
+    """
     hostname = request.query_params.get("hostname") or None
-    if not hostname:
-        raise HTTPException(400, "hostname parameter is required")
-    discover = request.query_params.get("discover", "").lower() in ("1", "true", "yes")
-    if discover:
-        warning = await _ensure_agent_discovery(hostname)
-    else:
-        warning = None
-    output = generate_shell_script(
-        db, _agent_data, _agent_data_lock, _AGENT_MAX_AGE, hostname,
-    )
-    resp = PlainTextResponse(output, media_type="text/x-shellscript")
-    if warning:
-        resp.headers["X-Noba-Discovery-Warning"] = warning
-    return resp
+    return await _run_export_with_discovery(request, "shell", hostname, discover=False)
+
+
+@router.post("/api/export/shell")
+@handle_errors
+async def api_export_shell_discover(request: Request, auth=Depends(_require_operator)):
+    """Generate a bash setup script, optionally running agent discovery first."""
+    body = await _read_body(request)
+    hostname = body.get("hostname") or None
+    discover = body.get("discover", False)
+    return await _run_export_with_discovery(request, "shell", hostname, discover=bool(discover))
 
 
 # ── Backup Verification (Feature 4) ───────────────────────────────────────
@@ -655,7 +702,7 @@ async def api_update_check(auth=Depends(_require_operator)):
             import httpx as _httpx
             r = await asyncio.to_thread(
                 _httpx.get,
-                "https://api.github.com/repos/raizenica/noba/releases/latest",
+                "https://api.github.com/repos/raizenica/noba-ce/releases/latest",
                 timeout=10,
             )
             if r.status_code == 200:
@@ -668,11 +715,11 @@ async def api_update_check(auth=Depends(_require_operator)):
             "current_version": VERSION,
             "remote_version": latest or VERSION,
             "docker": True,
-            "docker_image": "ghcr.io/raizenica/noba",
+            "docker_image": "ghcr.io/raizenica/noba-ce",
             "docker_instructions": [
-                "docker pull ghcr.io/raizenica/noba:latest",
+                "docker pull ghcr.io/raizenica/noba-ce:latest",
                 "docker stop noba && docker rm noba",
-                "docker run -d --name noba -p 8080:8080 -v noba-data:/app/config ghcr.io/raizenica/noba:latest",
+                "docker run -d --name noba -p 8080:8080 -v noba-data:/app/config ghcr.io/raizenica/noba-ce:latest",
             ],
         }
 
@@ -823,7 +870,7 @@ async def api_update_apply(request: Request, auth=Depends(_require_admin)):
         }
 
     except subprocess.TimeoutExpired:
-        raise HTTPException(500, "Update step timed out")
+        raise HTTPException(500, "Update step timed out") from None
     except Exception as exc:
-        logger.exception("Update apply failed: %s", exc)
-        raise HTTPException(500, f"Update failed: {exc}")
+        logger.error("System update failed: %s", exc)
+        raise HTTPException(500, "Update failed — check server logs") from None

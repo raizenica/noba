@@ -1,3 +1,5 @@
+// Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+// NOBA Command Center — Licensed under Apache 2.0.
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import DashboardCard from '../../components/cards/DashboardCard.vue'

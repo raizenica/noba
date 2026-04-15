@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Infrastructure management: network, K8s, Proxmox, services, terminal."""
 from __future__ import annotations
 
@@ -13,18 +16,33 @@ from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import PlainTextResponse
 
 from .. import deps as _deps
-from ..deps import handle_errors
 from ..agent_config import RISK_LEVELS, check_role_permission
 from ..agent_store import (
-    _agent_cmd_lock, _agent_commands,
-    _agent_data, _agent_data_lock, _agent_websockets, _agent_ws_lock,
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_websockets,
+    _agent_ws_lock,
 )
 from ..config import ALLOWED_ACTIONS
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body,
-    _require_admin, _require_operator, db, ws_token_store,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    db,
+    handle_errors,
+    ws_token_store,
 )
-from ..metrics import get_listening_ports, get_network_connections, strip_ansi, validate_service_name
+from ..metrics import (
+    get_listening_ports,
+    get_network_connections,
+    strip_ansi,
+    validate_service_name,
+)
 from ..yaml_config import read_yaml_settings
 
 logger = logging.getLogger("noba")
@@ -85,7 +103,7 @@ async def api_service_control(request: Request, auth=Depends(_require_operator))
     except Exception as e:
         logger.error("Service control error: %s", e)
         db.audit_log("service_control", username, f"{action} {svc} failed: {e}", ip)
-        raise HTTPException(500, "Service control error")
+        raise HTTPException(500, "Service control error") from None
 
 
 # ── Network analysis ─────────────────────────────────────────────────────────
@@ -98,7 +116,7 @@ def api_network_connections(auth=Depends(_require_operator)):
 
 @router.get("/api/network/ports")
 @handle_errors
-def api_network_ports(auth=Depends(_get_auth)):
+def api_network_ports(auth=Depends(_require_operator)):
     """List listening ports with process info."""
     return get_listening_ports()
 
@@ -235,7 +253,8 @@ def api_k8s_namespaces(auth=Depends(_get_auth)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"K8s API error: {e}")
+        logger.error("K8s API error: %s", e)
+        raise HTTPException(502, "K8s API error") from None
 
 
 @router.get("/api/k8s/pods")
@@ -283,7 +302,8 @@ def api_k8s_pods(request: Request, auth=Depends(_get_auth)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"K8s API error: {e}")
+        logger.error("K8s API error: %s", e)
+        raise HTTPException(502, "K8s API error") from None
 
 
 @router.get("/api/k8s/pods/{namespace}/{name}/logs")
@@ -312,7 +332,8 @@ def api_k8s_pod_logs(namespace: str, name: str, request: Request, auth=Depends(_
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"K8s log fetch failed: {e}")
+        logger.error("K8s log fetch failed: %s", e)
+        raise HTTPException(502, "K8s log fetch failed") from None
 
 
 @router.get("/api/k8s/deployments")
@@ -344,7 +365,8 @@ def api_k8s_deployments(request: Request, auth=Depends(_get_auth)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"K8s API error: {e}")
+        logger.error("K8s API error: %s", e)
+        raise HTTPException(502, "K8s API error") from None
 
 
 @router.post("/api/k8s/deployments/{namespace}/{name}/scale")
@@ -376,7 +398,8 @@ async def api_k8s_scale(namespace: str, name: str, request: Request, auth=Depend
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"K8s scale failed: {e}")
+        logger.error("K8s scale failed: %s", e)
+        raise HTTPException(502, "K8s scale failed") from None
 
 
 # ── Proxmox deep management ─────────────────────────────────────────────
@@ -425,8 +448,11 @@ def api_pmx_node_vms(node: str, auth=Depends(_get_auth)):
                 })
         except HTTPException:
             raise
-        except Exception:
-            pass
+        except Exception as exc:
+            # Per-node failure is non-fatal — continue with other nodes so
+            # a single down node doesn't blank the whole dashboard. Log for
+            # operators rather than silently dropping the error.
+            logger.debug("Proxmox node VM fetch failed: %s", exc)
     return results
 
 
@@ -454,7 +480,8 @@ def api_pmx_snapshots(node: str, vmid: int, request: Request, auth=Depends(_get_
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"Proxmox API error: {e}")
+        logger.error("Proxmox API error: %s", e)
+        raise HTTPException(502, "Proxmox API error") from None
 
 
 @router.post("/api/proxmox/nodes/{node}/vms/{vmid}/snapshot")
@@ -487,7 +514,8 @@ async def api_pmx_create_snapshot(node: str, vmid: int, request: Request, auth=D
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"Snapshot creation failed: {e}")
+        logger.error("Snapshot creation failed: %s", e)
+        raise HTTPException(502, "Snapshot creation failed") from None
 
 
 @router.get("/api/proxmox/nodes/{node}/vms/{vmid}/console")

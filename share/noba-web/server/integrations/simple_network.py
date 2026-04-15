@@ -1,11 +1,14 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Network integrations."""
 from __future__ import annotations
 
 import logging
+
 import httpx
 
 from .base import ConfigError, TransientError, _http_get
-
 
 logger = logging.getLogger("noba")
 
@@ -22,7 +25,7 @@ def get_adguard(url: str, user: str, password: str):
             import base64
             cred = base64.b64encode(f"{user}:{password}".encode()).decode()
             hdrs["Authorization"] = f"Basic {cred}"
-        data = _http_get(f"{base}/control/stats", hdrs)
+        data = _http_get(f"{base}/control/stats", hdrs, category="dns")
         if not data:
             return None
         queries = data.get("num_dns_queries", 0)
@@ -31,8 +34,8 @@ def get_adguard(url: str, user: str, password: str):
         return {"queries": queries, "blocked": blocked, "percent": pct, "status": "enabled"}
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, ZeroDivisionError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, ZeroDivisionError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -44,8 +47,8 @@ def get_traefik(url: str) -> dict | None:
         return None
     try:
         base = url.rstrip("/")
-        routers = _http_get(f"{base}/api/http/routers")
-        services = _http_get(f"{base}/api/http/services")
+        routers = _http_get(f"{base}/api/http/routers", category="reverse_proxy")
+        services = _http_get(f"{base}/api/http/services", category="reverse_proxy")
         router_list = routers if isinstance(routers, list) else []
         service_list = services if isinstance(services, list) else []
         errors = sum(
@@ -61,8 +64,8 @@ def get_traefik(url: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -75,15 +78,15 @@ def get_npm(url: str, token: str) -> dict | None:
     try:
         base = url.rstrip("/")
         hdrs = {"Authorization": f"Bearer {token}"}
-        data = _http_get(f"{base}/api/nginx/proxy-hosts", hdrs)
+        data = _http_get(f"{base}/api/nginx/proxy-hosts", hdrs, category="reverse_proxy")
         return {
             "proxy_hosts": len(data) if isinstance(data, list) else 0,
             "status": "online",
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 
@@ -97,7 +100,7 @@ def get_cloudflare(token: str, zone_id: str) -> dict | None:
         hdrs = {"Authorization": f"Bearer {token}"}
         data = _http_get(
             f"https://api.cloudflare.com/client/v4/zones/{zone_id}/analytics/dashboard?since=-1440",
-            hdrs, timeout=6,
+            hdrs, timeout=6, category="cloud",
         )
         totals = data.get("result", {}).get("totals", {})
         requests = totals.get("requests", {}).get("all", 0)
@@ -114,8 +117,8 @@ def get_cloudflare(token: str, zone_id: str) -> dict | None:
         }
     except ConfigError:
         raise
-    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError) as e:
-        return {"status": "offline", "error": str(e)}
+    except (TransientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+        return {"status": "offline", "error": "Connection failed"}
 
 
 

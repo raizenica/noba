@@ -1,9 +1,12 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Service dependency CRUD and impact analysis."""
 from __future__ import annotations
 
 import logging
-import time
 import sqlite3
+import time
 
 logger = logging.getLogger("noba")
 

@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # noba-tui.sh – Terminal UI (dialog) for launching Noba scripts
 # Version: 2.4.0
 
@@ -57,20 +59,20 @@ run_script() {
     local extra_args=()
 
     if [[ ! -x "$script" ]]; then
-        $DIALOG --title "Error" --msgbox \
+        "$DIALOG" --title "Error" --msgbox \
             "Script not found or not executable:\n\n$script" 8 65
         return 1
     fi
 
-    if $DIALOG --title "$title Options" --yesno "Run with --dry-run?" 7 40; then
+    if "$DIALOG" --title "$title Options" --yesno "Run with --dry-run?" 7 40; then
         extra_args+=("--dry-run")
     fi
-    if $DIALOG --title "$title Options" --yesno "Run with --verbose?" 7 40; then
+    if "$DIALOG" --title "$title Options" --yesno "Run with --verbose?" 7 40; then
         extra_args+=("--verbose")
     fi
 
     "$script" "${extra_args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | \
-        $DIALOG --title "Running: $title" --programbox 22 80
+        "$DIALOG" --title "Running: $title" --programbox 22 80
 }
 
 # -------------------------------------------------------------------
@@ -84,7 +86,7 @@ fi
 # Main menu
 # -------------------------------------------------------------------
 while true; do
-    if ! choice=$($DIALOG --clear --title "Noba Automation Suite" \
+    if ! choice=$("$DIALOG" --clear --title "Noba Automation Suite" \
         --cancel-label "Exit" \
         --menu "Choose a script to execute:" 22 65 15 \
         "Backup"      "Run backup-to-nas.sh" \
@@ -122,12 +124,12 @@ while true; do
         CronSetup)   run_script "$SCRIPT_DIR/noba-cron-setup.sh"     "Cron Setup" ;;
         MOTD)
             if [[ ! -x "$SCRIPT_DIR/motd-generator.sh" ]]; then
-                $DIALOG --title "Error" --msgbox \
+                "$DIALOG" --title "Error" --msgbox \
                     "Script not found or not executable:\n\n$SCRIPT_DIR/motd-generator.sh" 8 65
             else
                 "$SCRIPT_DIR/motd-generator.sh" \
                     | sed 's/\x1b\[[0-9;]*m//g' \
-                    | $DIALOG --title "MOTD" --programbox 22 75
+                    | "$DIALOG" --title "MOTD" --programbox 22 75
             fi
             ;;
         Web)
@@ -141,10 +143,10 @@ while true; do
 
             if [[ -n "$WEB_BIN" ]]; then
                 "$WEB_BIN" &
-                $DIALOG --title "Web Dashboard" \
+                "$DIALOG" --title "Web Dashboard" \
                     --msgbox "Dashboard started in the background.\nCheck http://localhost:8080" 7 45
             else
-                $DIALOG --title "Error" --msgbox \
+                "$DIALOG" --title "Error" --msgbox \
                     "noba-web launcher not found in PATH or ~/.local/bin/.\nPlease run install.sh to deploy the Web UI." 8 65
             fi
             ;;

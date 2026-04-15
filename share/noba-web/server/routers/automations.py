@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Automation, workflow, and script execution endpoints."""
 from __future__ import annotations
 
@@ -14,13 +17,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from ..auth import authenticate
 from ..config import ALLOWED_AUTO_TYPES, SCRIPT_DIR, SCRIPT_MAP
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body, _require_admin,
-    _require_operator, _safe_int, db,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    _safe_int,
+    db,
     handle_errors,
 )
 from ..runner import job_runner
 from ..workflow_engine import (
-    _AUTO_BUILDERS, _run_graph_workflow, _run_parallel_workflow, _run_workflow,
+    _AUTO_BUILDERS,
+    _run_graph_workflow,
+    _run_parallel_workflow,
+    _run_workflow,
     _validate_auto_config,
 )
 from ..yaml_config import read_yaml_settings
@@ -416,6 +428,7 @@ def api_automations_export(auth=Depends(_require_admin)):
 @handle_errors
 async def api_automations_import(request: Request, auth=Depends(_require_admin)):
     import uuid
+
     import yaml
     username, _ = auth
     ip = _client_ip(request)
@@ -846,6 +859,7 @@ async def api_decide_approval(approval_id: int, request: Request, auth=Depends(_
         # Gate on `ok` to prevent double execution if two concurrent approvals
         # race — only the one that successfully transitioned status executes.
         import json as _json
+
         from ..remediation import execute_action
         action_params = approval.get("action_params") or {}
         if isinstance(action_params, str):

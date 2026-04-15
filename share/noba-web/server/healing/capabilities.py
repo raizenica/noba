@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Capability manifest model and handler resolution.
 
 Capability-based dispatch: never trust OS labels, verify what tools
@@ -32,9 +35,7 @@ class CapabilityManifest:
             return False
         if not cap.get("available", False):
             return False
-        if cap.get("state") == "degraded" and not allow_degraded:
-            return False
-        return True
+        return not (cap.get("state") == "degraded" and not allow_degraded)
 
     def mark_degraded(self, name: str) -> None:
         """Mark a capability as degraded after a pre-flight failure."""

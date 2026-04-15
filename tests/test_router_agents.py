@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Integration tests for the agents router (share/noba-web/server/routers/agents.py)."""
 from __future__ import annotations
 
@@ -427,9 +430,9 @@ class TestAgentResults:
         assert resp.status_code == 200
         assert resp.json() == []
 
-    def test_viewer_can_access(self, client, viewer_headers):
+    def test_viewer_returns_403(self, client, viewer_headers):
         resp = client.get("/api/agents/h/results", headers=viewer_headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 403
 
     def test_results_populated_after_report(
         self, client, mock_agent_key, agent_key_headers, admin_headers

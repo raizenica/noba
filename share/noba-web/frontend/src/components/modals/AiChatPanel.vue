@@ -1,5 +1,8 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
+import DOMPurify from 'dompurify'
 import { useModalsStore } from '../../stores/modals'
 import { useApi } from '../../composables/useApi'
 import { useNotificationsStore } from '../../stores/notifications'
@@ -47,11 +50,15 @@ function formatMessage(text) {
   // Code blocks first (multi-line); skip empty blocks the LLM sometimes emits
   const withBlocks = escaped.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
     code.trim() ? `<pre class="ai-code">${code}</pre>` : '')
-  return withBlocks
+  const html = withBlocks
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\[ACTION:[^\]]+\]/g, '')  // strip raw action tags from display
     .replace(/\n/g, '<br>')
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['pre', 'code', 'strong', 'br'],
+    ALLOWED_ATTR: ['class'],
+  })
 }
 
 async function send() {

@@ -1,5 +1,10 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """UniFi Controller and UniFi Protect integrations (dedicated httpx clients)."""
 from __future__ import annotations
+
+import contextlib
 
 import httpx
 
@@ -25,10 +30,8 @@ def get_unifi(url: str, user: str, password: str, site: str = "default", *, veri
             clients = sta_r.json().get("data", []) if sta_r.status_code == 200 else []
             adopted = sum(1 for d in devices if d.get("adopted"))
             # Logout — release the session on the controller
-            try:
+            with contextlib.suppress(Exception):
                 uclient.post(f"{base}/api/logout", cookies=cookies)
-            except Exception:
-                pass
         return {
             "devices": len(devices), "adopted": adopted,
             "clients": len(clients), "status": "online",

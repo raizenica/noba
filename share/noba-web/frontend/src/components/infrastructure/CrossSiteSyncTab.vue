@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref } from 'vue'
 import { useApi } from '../../composables/useApi'
@@ -10,7 +12,7 @@ const syncLoading = ref(false)
 async function fetchSyncStatus() {
   syncLoading.value = true
   try {
-    const data = await get('/api/site-sync/status')
+    const data = await get('/api/sites/sync-status')
     syncStatus.value = data
   } catch { syncStatus.value = null }
   finally { syncLoading.value = false }

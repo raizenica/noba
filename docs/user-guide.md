@@ -62,7 +62,7 @@ NOBA // Command Center is a self-hosted infrastructure management platform built
 ### Docker
 
 ```bash
-git clone https://github.com/raizenica/noba.git
+git clone https://github.com/raizenica/noba-ce.git
 cd noba
 docker compose up -d
 ```
@@ -77,7 +77,7 @@ Open `http://localhost:8080`.
 ### Bare-Metal
 
 ```bash
-git clone https://github.com/raizenica/noba.git
+git clone https://github.com/raizenica/noba-ce.git
 cd noba
 bash install.sh
 ```
@@ -225,7 +225,7 @@ Configured integrations appear as dashboard cards automatically.
 
 Media, Infrastructure, Network, IoT & Home, DevOps, Auth, Monitoring — covering 40+ platforms including Pi-hole, AdGuard, UniFi, TrueNAS, Proxmox, Plex, Jellyfin, Home Assistant, Frigate, qBittorrent, Vaultwarden, Uptime Kuma, Tailscale, and more.
 
-See the [main README](https://github.com/raizenica/noba#-40-integrations) for the full integration table.
+See the [main README](https://github.com/raizenica/noba-ce#-40-integrations) for the full integration table.
 
 ### Graylog
 

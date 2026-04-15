@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Health score integration with healing pipeline.
 
 Evaluates health score categories against configurable thresholds.
@@ -56,7 +59,13 @@ def evaluate_health_thresholds(
     now = time.time()
 
     for cat_name, cat_data in categories.items():
-        score = cat_data.get("score", 10)
+        score = cat_data.get("score")
+        # Categories reporting score=None (unknown/failed) are intentionally
+        # skipped -- we cannot trigger healing on data we do not have.
+        if score is None:
+            continue
+        if cat_data.get("status") == "unknown":
+            continue
         threshold = effective_thresholds.get(cat_name, 5)
         details = cat_data.get("details", "")
 

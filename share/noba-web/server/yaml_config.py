@@ -1,6 +1,10 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – YAML configuration read/write helpers."""
 from __future__ import annotations
 
+import contextlib
 import glob
 import logging
 import os
@@ -10,7 +14,7 @@ import time
 
 import yaml
 
-from .config import NOBA_YAML, WEB_KEYS, _BACKUP_WEB_KEYS, _NOTIF_WEB_KEYS
+from .config import _BACKUP_WEB_KEYS, _NOTIF_WEB_KEYS, NOBA_YAML, WEB_KEYS
 from .crypto import decrypt_value, encrypt_value
 from .schemas import is_secret_key
 
@@ -26,9 +30,10 @@ _SETTINGS_CACHE_TTL = 2.0
 
 def _bust_settings_cache() -> None:
     """Invalidate the read cache (called after writes)."""
-    global _settings_cache
+    global _settings_cache, _settings_cache_t
     with _settings_cache_lock:
         _settings_cache = None
+        _settings_cache_t = 0.0
 
 
 def read_yaml_settings() -> dict:
@@ -52,6 +57,7 @@ def read_yaml_settings() -> dict:
         "customActions": [], "automations": [], "wanTestIp": "8.8.8.8", "lanTestIp": "",
         "notifications": {}, "alertRules": [],
         "proxmoxUrl": "", "proxmoxUser": "", "proxmoxTokenName": "", "proxmoxTokenValue": "",
+        "proxmoxVerifySsl": True,
         "pushoverEnabled": False, "pushoverAppToken": "", "pushoverUserKey": "",
         "gotifyEnabled": False,   "gotifyUrl": "",        "gotifyAppToken": "",
         # ── Existing integrations (already in WEB_KEYS) ────────────────────
@@ -301,7 +307,5 @@ def write_yaml_settings(settings: dict) -> bool:
         return False
     finally:
         if tmp_path and os.path.exists(tmp_path):
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass

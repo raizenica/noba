@@ -1,9 +1,12 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Security posture scoring persistence."""
 from __future__ import annotations
 
 import json
-import time
 import sqlite3
+import time
 
 
 def record_scan(conn, lock, hostname: str, score: int, findings: list[dict]) -> int | None:

@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Agent browser terminal WebSocket endpoint."""
 from __future__ import annotations
 
@@ -8,13 +11,16 @@ import time
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from ..agent_config import RISK_LEVELS, check_role_permission
-from ..constants import TERMINAL_QUEUE_MAXSIZE
 from ..agent_store import (
-    _agent_cmd_lock, _agent_commands,
-    _agent_websockets, _agent_ws_lock,
-    _terminal_subscribers, _terminal_sub_lock,
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_websockets,
+    _agent_ws_lock,
+    _terminal_sub_lock,
+    _terminal_subscribers,
 )
-from ..deps import db, ws_token_store
+from ..constants import TERMINAL_QUEUE_MAXSIZE
+from ..deps import check_ws_origin, db, ws_token_store
 
 logger = __import__("logging").getLogger("noba.agent.ws")
 
@@ -92,6 +98,18 @@ async def _dispatch_terminal_command(
 @router.websocket("/api/agents/{hostname}/terminal")
 async def agent_terminal_ws(hostname: str, ws: WebSocket):
     """Browser-facing WebSocket for real-time terminal interaction with an agent."""
+    # CSWSH protection: reject cross-origin WebSocket connections BEFORE
+    # any authentication work happens. Must run first because an attacker
+    # page opening a WS against this endpoint would otherwise reach the
+    # token consume stage with a one-shot URL-param token stolen via some
+    # other vector.
+    if not check_ws_origin(
+        ws.headers.get("origin", ""),
+        ws.headers.get("host", ""),
+    ):
+        await ws.close(code=4003, reason="Origin not allowed")
+        return
+
     # Auth via query param token (WebSocket can't set headers)
     token = ws.query_params.get("token", "")
     if not token:

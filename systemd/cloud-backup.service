@@ -3,7 +3,7 @@ Description=Daily cloud backup
 
 [Service]
 Type=oneshot
-ExecStart=/home/raizen/.local/libexec/noba/cloud-backup.sh
+ExecStart=%h/.local/libexec/noba/cloud-backup.sh
 
 [Install]
 WantedBy=multi-user.target

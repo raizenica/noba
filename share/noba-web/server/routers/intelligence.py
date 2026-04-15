@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – AI ops, incident management, service dependencies, and config drift endpoints."""
 from __future__ import annotations
 
@@ -8,13 +11,23 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..agent_store import (
-    _agent_cmd_lock, _agent_cmd_results, _agent_commands,
-    _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
-    _agent_websockets, _agent_ws_lock,
+    _AGENT_MAX_AGE,
+    _agent_cmd_lock,
+    _agent_cmd_results,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_websockets,
+    _agent_ws_lock,
 )
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body,
-    _require_admin, _require_operator, db,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    db,
     handle_errors,
 )
 from ..yaml_config import read_yaml_settings
@@ -359,8 +372,9 @@ async def api_trigger_drift_check(request: Request, auth=Depends(_require_operat
     """Trigger an immediate drift check across all baselines."""
     username, _ = auth
     ip = _client_ip(request)
-    from ..scheduler import drift_checker
     import threading
+
+    from ..scheduler import drift_checker
     threading.Thread(
         target=drift_checker.run_check_now, daemon=True, name="drift-check-manual"
     ).start()
@@ -426,7 +440,7 @@ async def api_ai_chat(request: Request, auth=Depends(_require_operator)):
         raise
     except Exception as e:
         logger.error("AI chat error: %s", e)
-        raise HTTPException(502, f"LLM request failed: {e}")
+        raise HTTPException(502, "LLM request failed") from None
 
 
 @router.post("/api/ai/analyze-alert/{alert_id}")
@@ -465,7 +479,7 @@ async def api_ai_analyze_alert(alert_id: int, auth=Depends(_require_operator)):
         raise
     except Exception as e:
         logger.error("AI analyze-alert error: %s", e)
-        raise HTTPException(502, f"LLM request failed: {e}")
+        raise HTTPException(502, "LLM request failed") from None
 
 
 @router.post("/api/ai/analyze-logs")
@@ -497,7 +511,7 @@ async def api_ai_analyze_logs(request: Request, auth=Depends(_require_operator))
         raise
     except Exception as e:
         logger.error("AI analyze-logs error: %s", e)
-        raise HTTPException(502, f"LLM request failed: {e}")
+        raise HTTPException(502, "LLM request failed") from None
 
 
 @router.post("/api/ai/summarize-incident/{incident_id}")
@@ -536,7 +550,7 @@ async def api_ai_summarize_incident(incident_id: int, auth=Depends(_require_oper
         raise
     except Exception as e:
         logger.error("AI summarize-incident error: %s", e)
-        raise HTTPException(502, f"LLM request failed: {e}")
+        raise HTTPException(502, "LLM request failed") from None
 
 
 # ── Prediction endpoints ──────────────────────────────────────────────────────
@@ -569,4 +583,4 @@ async def api_ai_test(auth=Depends(_require_admin)):
         raise
     except Exception as e:
         logger.error("AI test error: %s", e)
-        raise HTTPException(502, f"LLM connection test failed: {e}")
+        raise HTTPException(502, "LLM connection test failed") from None

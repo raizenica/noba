@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Task queue abstraction (Celery or thread fallback).
 
 When NOBA_CELERY_BROKER is set and celery is installed, long-running jobs
@@ -66,6 +69,7 @@ if _celery_app:
         """Run a noba script via Celery worker."""
         import shlex
         import subprocess
+
         from .config import SCRIPT_DIR, SCRIPT_MAP
         sfile = os.path.join(SCRIPT_DIR, SCRIPT_MAP.get(script_key, ""))
         if not os.path.isfile(sfile):

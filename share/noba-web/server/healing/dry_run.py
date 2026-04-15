@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Dry-run pipeline simulation.
 
 Runs the full healing pipeline logic without executing any action.
@@ -105,8 +108,8 @@ def simulate_heal_event(
         }
 
         # Pre-flight check
-        from .preflight import run_preflight
         from ..remediation import FALLBACK_CHAINS
+        from .preflight import run_preflight
 
         fallback_handlers = FALLBACK_CHAINS.get(plan.action_type)
         if fallback_handlers:
@@ -114,6 +117,7 @@ def simulate_heal_event(
             if db is not None:
                 try:
                     import json
+
                     from .capabilities import CapabilityManifest
                     row = db.get_capability_manifest(event.target)
                     if row:
@@ -142,8 +146,8 @@ def simulate_heal_event(
             }
 
         # Rollback plan
-        from .snapshots import is_reversible
         from ..remediation import ACTION_TYPES
+        from .snapshots import is_reversible
 
         defn = ACTION_TYPES.get(plan.action_type, {})
         if is_reversible(plan.action_type):

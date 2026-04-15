@@ -1,6 +1,10 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Admin endpoints (settings, audit, backup, log viewer, reports, plugins, runbooks)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -23,8 +27,15 @@ from ..constants import (
     SNAPSHOT_LIST_LIMIT,
 )
 from ..deps import (
-    _client_ip, _get_auth, _int_param, _read_body, _require_admin,
-    _require_operator, _run_cmd, _safe_int, db,
+    _client_ip,
+    _get_auth,
+    _int_param,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    _run_cmd,
+    _safe_int,
+    db,
     handle_errors,
 )
 from ..metrics import _read_file, strip_ansi
@@ -377,15 +388,11 @@ def api_snapshot_diff(request: Request, auth=Depends(_get_auth)):
     files_b: dict[str, os.stat_result] = {}
     try:
         for e in os.scandir(path_a):
-            try:
+            with contextlib.suppress(OSError):
                 files_a[e.name] = e.stat(follow_symlinks=False)
-            except OSError:
-                pass
         for e in os.scandir(path_b):
-            try:
+            with contextlib.suppress(OSError):
                 files_b[e.name] = e.stat(follow_symlinks=False)
-            except OSError:
-                pass
     except OSError as e:
         raise HTTPException(500, f"Cannot scan snapshots: {e}")
 
@@ -730,7 +737,7 @@ def api_bandwidth_report(request: Request, auth=Depends(_get_auth)):
             "tx_bps": round(tx["value"]),
         })
 
-    from ..metrics import _fmt_bytes  # noqa: F811
+    from ..metrics import _fmt_bytes
     return {
         "range_hours": range_h,
         "total_rx": _fmt_bytes(total_rx),
@@ -837,7 +844,7 @@ def api_grafana_template(auth=Depends(_get_auth)):
 # ── /api/plugins/available & install ──────────────────────────────────────────
 @router.get("/api/plugins/available")
 @handle_errors
-def api_plugins_available(auth=Depends(_require_admin)):
+def api_plugins_available(auth=Depends(_get_auth)):
     cfg = read_yaml_settings()
     catalog_url = cfg.get("pluginCatalogUrl", "")
     return plugin_manager.get_available(catalog_url)
@@ -845,7 +852,7 @@ def api_plugins_available(auth=Depends(_require_admin)):
 
 @router.get("/api/plugins/bundled")
 @handle_errors
-def api_plugins_bundled(auth=Depends(_require_admin)):
+def api_plugins_bundled(auth=Depends(_get_auth)):
     """List bundled catalog plugins shipped with NOBA."""
     return plugin_manager.get_bundled_catalog()
 

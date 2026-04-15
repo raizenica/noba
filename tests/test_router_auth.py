@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Integration tests for the auth router (share/noba-web/server/routers/auth.py)."""
 from __future__ import annotations
 
@@ -5,6 +8,14 @@ import time
 from unittest.mock import patch
 
 import pytest
+
+
+def _has_pyotp() -> bool:
+    try:
+        import pyotp  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +276,9 @@ class TestTotpSetup:
         resp = client.post("/api/auth/totp/setup")
         assert resp.status_code == 401
 
+    @pytest.mark.skipif(
+        not _has_pyotp(), reason="pyotp not installed"
+    )
     def test_viewer_can_setup(self, client, viewer_headers):
         resp = client.post("/api/auth/totp/setup", headers=viewer_headers)
         assert resp.status_code == 200
@@ -273,6 +287,9 @@ class TestTotpSetup:
         assert "provisioning_uri" in data
         assert "otpauth://" in data["provisioning_uri"]
 
+    @pytest.mark.skipif(
+        not _has_pyotp(), reason="pyotp not installed"
+    )
     def test_admin_can_setup(self, client, admin_headers):
         resp = client.post("/api/auth/totp/setup", headers=admin_headers)
         assert resp.status_code == 200

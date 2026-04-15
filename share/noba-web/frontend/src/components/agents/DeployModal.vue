@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, computed } from 'vue'
 import AppModal from '../ui/AppModal.vue'
@@ -11,6 +13,31 @@ const emit = defineEmits(['close', 'deployed'])
 
 const { post, get } = useApi()
 const modals = useModalsStore()
+
+// ── Server URL validation ─────────────────────────────────────────────────────
+const serverUrl = ref(window.location.origin)
+
+const urlWarnings = computed(() => {
+  const url = serverUrl.value.trim()
+  if (!url) return [{ level: 'error', msg: 'Server URL is required' }]
+  const warnings = []
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname
+    if (['localhost', '127.0.0.1', '::1'].includes(host))
+      return [{ level: 'error', msg: "Agents cannot reach localhost — use your server's network address" }]
+    if (!host.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(host))
+      warnings.push({ level: 'warn', msg: `"${host}" is a short hostname — use FQDN or IP instead.` })
+    if (parsed.protocol === 'http:')
+      warnings.push({ level: 'warn', msg: 'HTTP sends agent credentials in cleartext. Use HTTPS in production.' })
+    if (parsed.protocol === 'https:' && /^\d+\.\d+\.\d+\.\d+$/.test(host))
+      warnings.push({ level: 'info', msg: "IP-based HTTPS — SSL verification will be auto-disabled for the agent." })
+  } catch {
+    return [{ level: 'error', msg: 'Invalid URL format' }]
+  }
+  return warnings
+})
+const hasUrlError = computed(() => urlWarnings.value.some(w => w.level === 'error'))
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const deployTab   = ref('remote')
@@ -29,7 +56,7 @@ const installCmd  = ref('')
 const scriptLoading = ref(false)
 
 // ── Derived ───────────────────────────────────────────────────────────────────
-const canDeploy = computed(() => !!deployHost.value && !!deployUser.value && !deploying.value)
+const canDeploy = computed(() => !!deployHost.value && !!deployUser.value && !deploying.value && !hasUrlError.value)
 
 const resultIsError = computed(() =>
   deployResult.value.toLowerCase().includes('error') ||
@@ -48,6 +75,7 @@ async function deploy() {
       ssh_user:  deployUser.value,
       ssh_pass:  deployPass.value,
       ssh_port:  deployPort.value,
+      server_url: serverUrl.value,
     })
     if (data?.status === 'ok') {
       deployResult.value = `Success! Agent deployed to ${deployHost.value}`
@@ -130,6 +158,18 @@ function switchTab(tab) {
         <div>
           <label class="field-label">Port</label>
           <input v-model.number="deployPort" class="field-input" type="number" min="1" max="65535" style="font-size:.75rem">
+        </div>
+      </div>
+
+      <div style="margin-bottom:.6rem">
+        <label class="field-label">Server URL <span style="color:var(--text-muted);font-weight:400">(agent connects back to this)</span></label>
+        <input v-model="serverUrl" class="field-input" type="text" placeholder="https://noba.example.com:8080" style="font-size:.75rem"
+               :style="hasUrlError ? 'border-color:var(--danger)' : ''">
+        <div v-for="w in urlWarnings" :key="w.msg"
+             style="font-size:.68rem;margin-top:.25rem;display:flex;align-items:flex-start;gap:.3rem"
+             :style="w.level === 'error' ? 'color:var(--danger)' : w.level === 'info' ? 'color:var(--text-muted)' : 'color:var(--warning, #f5a623)'">
+          <i class="fas" :class="w.level === 'error' ? 'fa-times-circle' : w.level === 'info' ? 'fa-info-circle' : 'fa-exclamation-triangle'" style="margin-top:.1rem;flex-shrink:0"></i>
+          <span>{{ w.msg }}</span>
         </div>
       </div>
 

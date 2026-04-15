@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """smoke.py — API smoke test that hits every endpoint.
 
 Rapidly validates that all API routes respond without 500 errors.

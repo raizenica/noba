@@ -34,7 +34,7 @@ alertRules:
     severity: critical
     healing:
       action: agent_command
-      hostname: dnsa01
+      hostname: host-a
       command: restart_service
       params:
         service: unbound
@@ -425,8 +425,8 @@ Supported providers (all via HTTP API, no SDK dependency):
 **1. Ops Chat Interface**
 - New "AI Assistant" panel accessible from sidebar or Ctrl+Shift+K
 - Chat with context — the LLM sees: current alert state, recent incidents, agent status, metric summaries
-- Ask natural language questions: "Why is dnsa01's CPU high?", "What changed in the last hour?"
-- Responses include actionable suggestions with one-click buttons: "Restart nginx on dnsa01" → executes agent command
+- Ask natural language questions: "Why is host-a's CPU high?", "What changed in the last hour?"
+- Responses include actionable suggestions with one-click buttons: "Restart nginx on host-a" → executes agent command
 
 **2. Alert Analysis**
 - When an alert fires, optionally auto-generate an AI summary
@@ -533,7 +533,7 @@ Current state:
 - CPU: {avg}%, Memory: {avg}%, Disk: {usage}
 
 You can suggest agent commands. Format actionable commands as:
-[ACTION:restart_service:dnsa01:{"service":"nginx"}]
+[ACTION:restart_service:host-a:{"service":"nginx"}]
 The UI will render these as clickable buttons.
 ```
 

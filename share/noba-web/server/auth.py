@@ -1,6 +1,10 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Authentication, token management, and rate limiting."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -10,7 +14,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from .config import AUTH_CONFIG, USER_DB, TOKEN_TTL_H, _PW_MIN_LEN
+from .config import _PW_MIN_LEN, AUTH_CONFIG, TOKEN_TTL_H, USER_DB
 
 
 def _get_db():
@@ -21,7 +25,7 @@ def _get_db():
 logger = logging.getLogger("noba")
 
 _USERNAME_RE = re.compile(r"^[^\s:/\\]{1,64}$")
-_PBKDF2_ITERS = 200_000
+_PBKDF2_ITERS = 600_000  # OWASP minimum for PBKDF2-HMAC-SHA256
 
 # ── Password helpers ──────────────────────────────────────────────────────────
 
@@ -29,7 +33,7 @@ def pbkdf2_hash(password: str, salt: str | None = None) -> str:
     if salt is None:
         salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _PBKDF2_ITERS)
-    return f"pbkdf2:{salt}:{dk.hex()}"
+    return f"pbkdf2:{_PBKDF2_ITERS}:{salt}:{dk.hex()}"
 
 
 def valid_username(name: str) -> bool:
@@ -50,12 +54,39 @@ def verify_password(stored: str, password: str, *, username: str = "") -> bool:
     if not stored:
         return False
     if stored.startswith("pbkdf2:"):
-        parts = stored.split(":", 2)
-        if len(parts) != 3:
+        parts = stored.split(":", 3)
+        if len(parts) == 4:
+            # New format: pbkdf2:iterations:salt:hash
+            _, iters_str, salt, expected = parts
+            try:
+                iters = int(iters_str)
+            except (ValueError, TypeError):
+                return False
+        elif len(parts) == 3:
+            # Legacy format: pbkdf2:salt:hash (200k iterations)
+            _, salt, expected = parts
+            iters = 200_000
+        else:
             return False
-        _, salt, expected = parts
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _PBKDF2_ITERS)
-        return secrets.compare_digest(expected, dk.hex())
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iters)
+        match = secrets.compare_digest(expected, dk.hex())
+        # Auto-upgrade to current iteration count on successful login
+        if match and iters < _PBKDF2_ITERS and username:
+            try:
+                new_hash = pbkdf2_hash(password)
+                users.update_password(username, new_hash)
+                logging.getLogger("noba").info(
+                    "Upgraded PBKDF2 iterations for %s: %d→%d",
+                    username, iters, _PBKDF2_ITERS,
+                )
+            except Exception as exc:
+                # Non-fatal: login still succeeds with the old-iteration
+                # hash; the upgrade will retry on next successful login.
+                logging.getLogger("noba").warning(
+                    "PBKDF2 iteration upgrade failed for %s (will retry on next login): %s",
+                    username, exc,
+                )
+        return match
     # legacy sha256 format: salt:hexhash — auto-migrate to pbkdf2 on success
     if ":" not in stored:
         return False
@@ -74,8 +105,14 @@ def _migrate_legacy_hash(username: str, password: str) -> None:
         new_hash = pbkdf2_hash(password)
         users.update_password(username, new_hash)
         logging.getLogger("noba").info("Migrated legacy hash for user %s to PBKDF2", username)
-    except Exception:
-        pass  # non-fatal — will retry on next login
+    except Exception as exc:
+        # Non-fatal — login still succeeds with the legacy hash. Log so
+        # operators can investigate persistent migration failures
+        # (typically write-permission issues on users.conf).
+        logging.getLogger("noba").warning(
+            "Legacy hash migration failed for %s (will retry on next login): %s",
+            username, exc,
+        )
 
 
 # ── TOTP helpers ──────────────────────────────────────────────────────────────
@@ -83,10 +120,12 @@ def _migrate_legacy_hash(username: str, password: str) -> None:
 def generate_totp_secret() -> str:
     """Generate a new TOTP secret for 2FA setup."""
     try:
-        import pyotp
+        import pyotp  # noqa: PLC0415
         return pyotp.random_base32()
-    except ImportError:
-        return secrets.token_hex(20)
+    except ImportError as exc:
+        raise RuntimeError(
+            "pyotp package is required for TOTP 2FA but not installed"
+        ) from exc
 
 def verify_totp(secret: str, code: str) -> bool:
     """Verify a TOTP code against a secret."""
@@ -168,10 +207,8 @@ class UserStore:
                 os.replace(tmp, USER_DB)
         except Exception:
             if os.path.exists(tmp):
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(tmp)
-                except OSError:
-                    pass
 
     def get(self, username: str) -> tuple[str, str] | None:
         with self._lock:

@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Containers, processes, game servers, WoL."""
 from __future__ import annotations
 
@@ -10,7 +13,6 @@ import time
 import psutil
 
 from .util import _cache, _run, validate_service_name
-
 
 logger = logging.getLogger("noba")
 
@@ -179,7 +181,6 @@ def probe_game_server(host: str, port: int) -> dict:
 
 def query_source_server(host: str, port: int) -> dict:
     """Query a Valve Source engine game server using A2S_INFO protocol."""
-    import struct  # noqa: F401
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.settimeout(3)

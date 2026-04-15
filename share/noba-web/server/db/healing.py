@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – DB functions for the self-healing pipeline (ledger, trust, suggestions)."""
 from __future__ import annotations
 
@@ -5,7 +8,6 @@ import json
 import sqlite3
 import threading
 import time
-
 
 # ── Heal Ledger ───────────────────────────────────────────────────────────────
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – DB automation functions (CRUD, job runs, approvals, maintenance, playbooks)."""
 from __future__ import annotations
 
@@ -815,8 +818,9 @@ def _get_active_maintenance_windows(
       matches the cron expression.
     Disabled windows (enabled=0) are never returned.
     """
-    from ..scheduler import _match_cron
     from datetime import datetime, timezone
+
+    from ..scheduler import _match_cron
 
     now = int(time.time())
     try:

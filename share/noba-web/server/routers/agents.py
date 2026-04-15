@@ -1,35 +1,59 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Agent management: report, list, detail, bulk command, WebSocket."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import secrets
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
 from ..agent_config import (
-    RISK_LEVELS, check_role_permission,
+    RISK_LEVELS,
+    check_role_permission,
     validate_command_params,
+)
+from ..agent_store import (
+    _AGENT_MAX_AGE,
+    _COMMAND_DELIVERY_TIMEOUT,
+    _STREAM_LINES_MAX,
+    _agent_cmd_lock,
+    _agent_cmd_ready,
+    _agent_cmd_results,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+    _agent_stream_lines,
+    _agent_stream_lines_lock,
+    _agent_websockets,
+    _agent_ws_lock,
+    _delivered_commands,
+    notify_rdp_subscribers,
+    notify_terminal_subscribers,
+    pop_clipboard_request,
 )
 from ..constants import (
     STREAM_BUFFER_MAX,
     WS_CLOSE_NORMAL,
 )
-from ..agent_store import (
-    _agent_cmd_lock, _agent_cmd_ready, _agent_cmd_results, _agent_commands,
-    _delivered_commands, _COMMAND_DELIVERY_TIMEOUT,
-    _agent_data, _agent_data_lock, _AGENT_MAX_AGE,
-    _agent_stream_lines, _agent_stream_lines_lock, _STREAM_LINES_MAX,
-    _agent_websockets, _agent_ws_lock,
-    notify_rdp_subscribers,
-    notify_terminal_subscribers,
-    pop_clipboard_request,
-)
 from ..deps import (
-    _client_ip, _get_auth, _read_body,
-    _require_operator, db,
+    _client_ip,
+    _get_auth,
+    _read_body,
+    _require_operator,
+    db,
     handle_errors,
 )
 from ..yaml_config import read_yaml_settings
@@ -38,6 +62,8 @@ logger = logging.getLogger("noba")
 _ws_logger = logging.getLogger("noba.agent.ws")
 
 _WEB_DIR = Path(__file__).resolve().parent.parent.parent  # share/noba-web/
+_HOSTNAME_RE = __import__("re").compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+_HOSTNAME_WS_RE = __import__("re").compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$')
 
 router = APIRouter(tags=["agents"])
 
@@ -225,30 +251,36 @@ def _check_auto_update(hostname: str, body: dict, pending: list) -> None:
         server_agent_path = _WEB_DIR.parent / "noba-agent.pyz"
         server_version = None
         if server_agent_path.exists():
-            with zipfile.ZipFile(server_agent_path) as zf:
-                with zf.open("__main__.py") as f:
-                    for raw in f:
-                        line = raw.decode("utf-8", errors="replace")
-                        if line.startswith("VERSION"):
-                            server_version = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            break
-        if server_version and server_version != agent_version:
-            if not any(c.get("type") == "update_agent" for c in pending):
-                pending.append({
-                    "id": f"auto-update-{int(time.time())}",
-                    "type": "update_agent",
-                    "params": {},
-                    "queued_by": "auto-update",
-                    "queued_at": int(time.time()),
-                })
-                logger.info(
-                    "Auto-update queued for %s: %s -> %s",
-                    hostname, agent_version, server_version,
-                )
+            # Combined nested context manager — single with-statement
+            # closes both the zipfile and the inner stream on any exit path.
+            with zipfile.ZipFile(server_agent_path) as zf, zf.open("__main__.py") as f:
+                for raw in f:
+                    line = raw.decode("utf-8", errors="replace")
+                    if line.startswith("VERSION"):
+                        server_version = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+        if (
+            server_version
+            and server_version != agent_version
+            and not any(c.get("type") == "update_agent" for c in pending)
+        ):
+            pending.append({
+                "id": f"auto-update-{int(time.time())}",
+                "type": "update_agent",
+                "params": {},
+                "queued_by": "auto-update",
+                "queued_at": int(time.time()),
+            })
+            logger.info(
+                "Auto-update queued for %s: %s -> %s",
+                hostname, agent_version, server_version,
+            )
     except HTTPException:
         raise
-    except Exception:
-        pass
+    except Exception as exc:
+        # Auto-update enqueue is best-effort — log so operators can notice
+        # persistent failures but don't block agent check-in on it.
+        logger.debug("Auto-update enqueue failed for %s: %s", hostname, exc)
 
 
 # ── Agent endpoints ───────────────────────────────────────────────────────────
@@ -259,12 +291,12 @@ async def api_agent_report(request: Request):
     key = request.headers.get("X-Agent-Key", "")
     if not key:
         raise HTTPException(401, "Missing X-Agent-Key")
-    cfg = read_yaml_settings()
-    valid_keys = [k.strip() for k in cfg.get("agentKeys", "").split(",") if k.strip()]
-    if not valid_keys or key not in valid_keys:
+    if not _validate_agent_key(key):
         raise HTTPException(403, "Invalid agent key")
     body = await _read_body(request)
     hostname = body.get("hostname", "unknown")[:253]
+    if not _HOSTNAME_RE.match(hostname):
+        raise HTTPException(400, "Invalid hostname")
     body["_received"] = time.time()
     body["_ip"] = _client_ip(request)
 
@@ -381,8 +413,8 @@ async def agent_websocket(ws: WebSocket):
             await ws.close(code=4002, reason="Expected identify message")
             return
         hostname = ident.get("hostname", "")
-        if not hostname:
-            await ws.close(code=4002, reason="No hostname")
+        if not hostname or not _HOSTNAME_WS_RE.match(hostname):
+            await ws.close(code=4002, reason="Invalid or missing hostname")
             return
 
         with _agent_ws_lock:
@@ -442,10 +474,8 @@ async def agent_websocket(ws: WebSocket):
                     target_q = pop_clipboard_request(req_id)
                     if target_q is not None:
                         import asyncio as _asyncio
-                        try:
+                        with contextlib.suppress(_asyncio.QueueFull):
                             target_q.put_nowait(msg)
-                        except _asyncio.QueueFull:
-                            pass
                 else:
                     # No request_id — fall back to broadcast (older agents)
                     notify_rdp_subscribers(hostname, msg)
@@ -474,7 +504,7 @@ def api_agents(auth=Depends(_get_auth)):
     now = time.time()
     with _agent_data_lock:
         agents = []
-        for hostname, data in sorted(_agent_data.items()):
+        for _hostname, data in sorted(_agent_data.items()):
             age = now - data.get("_received", 0)
             agents.append({
                 **{k: v for k, v in data.items() if not k.startswith("_")},

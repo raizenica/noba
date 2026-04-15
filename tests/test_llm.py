@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for the LLM module: client init, context builder, action extraction, and API endpoints."""
 from __future__ import annotations
 

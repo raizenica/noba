@@ -10,7 +10,7 @@ hero:
       link: /guide/getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/raizenica/noba
+      link: https://github.com/raizenica/noba-ce
   image:
     src: /images/dashboard.png
     alt: NOBA Dashboard

@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Integration tests for the integration_instances router."""
 from __future__ import annotations
 
@@ -282,17 +285,13 @@ class TestConnectionTest:
         )
         assert resp.status_code == 403
 
-    def test_operator_can_test(self, client, operator_headers):
-        with patch("server.routers.integration_instances._is_safe_url", return_value=True), \
-             patch("httpx.AsyncClient.get") as mock_get:
-            mock_get.return_value = type("R", (), {"status_code": 200})()
-            resp = client.post(
-                "/api/integrations/instances/test-connection",
-                json={"url": "https://external.example.com", "platform": "prometheus"},
-                headers=operator_headers,
-            )
-            assert resp.status_code == 200
-            assert resp.json()["success"] is True
+    def test_operator_returns_403(self, client, operator_headers):
+        resp = client.post(
+            "/api/integrations/instances/test-connection",
+            json={"url": "https://external.example.com", "platform": "prometheus"},
+            headers=operator_headers,
+        )
+        assert resp.status_code == 403
 
     def test_admin_can_test(self, client, admin_headers):
         with patch("server.routers.integration_instances._is_safe_url", return_value=True), \
@@ -306,11 +305,11 @@ class TestConnectionTest:
             assert resp.status_code == 200
             assert resp.json()["success"] is True
 
-    def test_no_url_returns_error(self, client, operator_headers):
+    def test_no_url_returns_error(self, client, admin_headers):
         resp = client.post(
             "/api/integrations/instances/test-connection",
             json={"platform": "generic"},
-            headers=operator_headers,
+            headers=admin_headers,
         )
         assert resp.status_code == 200
         assert resp.json()["success"] is False
@@ -357,8 +356,8 @@ class TestSSRFProtection:
             mock_dns.return_value = [(2, 1, 6, "", ("10.0.0.5", 80))]
             assert _is_safe_url("http://evil.example.com/api") is False
 
-    def test_integration_endpoint_allows_private_ip(self, client, operator_headers):
-        """test-connection must NOT block private IPs — operators configure local devices."""
+    def test_integration_endpoint_allows_private_ip(self, client, admin_headers):
+        """test-connection must NOT block private IPs — admins configure local devices."""
         with patch("server.routers.integration_instances.httpx.AsyncClient") as mock_client:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
@@ -368,7 +367,7 @@ class TestSSRFProtection:
             resp = client.post(
                 "/api/integrations/instances/test-connection",
                 json={"url": "http://192.168.1.100/api", "platform": "truenas"},
-                headers=operator_headers,
+                headers=admin_headers,
             )
         assert resp.status_code == 200
         assert resp.json().get("success") is True

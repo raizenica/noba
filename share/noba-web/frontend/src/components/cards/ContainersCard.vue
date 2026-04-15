@@ -1,12 +1,16 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { computed } from 'vue'
 import { useDashboardStore } from '../../stores/dashboard'
 import { useAuthStore } from '../../stores/auth'
+import { useNotificationsStore } from '../../stores/notifications'
 import { useApi } from '../../composables/useApi'
 import DashboardCard from './DashboardCard.vue'
 
 const dashboard  = useDashboardStore()
 const auth       = useAuthStore()
+const notif      = useNotificationsStore()
 const { post }   = useApi()
 
 const containers = computed(() => dashboard.live.containers || [])
@@ -15,7 +19,10 @@ const isOperator = computed(() => auth.isOperator)
 async function containerAction(name, action) {
   try {
     await post('/api/container-control', { name, action })
-  } catch { /* silent */ }
+    notif.addToast(`Container ${name}: ${action} sent`, 'success')
+  } catch (e) {
+    notif.addToast(`Container ${action} failed: ${e.message || 'Unknown error'}`, 'error')
+  }
 }
 </script>
 

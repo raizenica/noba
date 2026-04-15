@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
@@ -44,7 +46,7 @@ async function testNotification() {
   testing.value = true
   testResult.value = null
   try {
-    await post('/api/admin/test-notifications')
+    await post('/api/notifications/test')
     testResult.value = { ok: true, msg: 'Test notification sent!' }
   } catch (e) {
     testResult.value = { ok: false, msg: 'Failed — check your credentials.' }

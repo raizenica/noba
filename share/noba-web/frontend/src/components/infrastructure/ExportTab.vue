@@ -1,8 +1,12 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, computed } from 'vue'
+import { useAuthStore } from '../../stores/auth'
 import { useDashboardStore } from '../../stores/dashboard'
 import { useNotificationsStore } from '../../stores/notifications'
 
+const authStore      = useAuthStore()
 const dashboardStore = useDashboardStore()
 const notif          = useNotificationsStore()
 
@@ -24,13 +28,22 @@ async function generateIaC() {
     const ep = fmt === 'docker-compose' ? '/api/export/docker-compose'
              : fmt === 'shell' ? '/api/export/shell'
              : '/api/export/ansible'
-    const qs = new URLSearchParams()
-    if (iacHostname.value) qs.set('hostname', iacHostname.value)
-    if (iacDiscover.value) qs.set('discover', 'true')
-    const qstr = qs.toString()
-    const resp = await fetch(ep + (qstr ? `?${qstr}` : ''), {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('noba_token')}` },
-    })
+    const discover = iacDiscover.value
+    const fetchOpts = { headers: { 'Authorization': `Bearer ${authStore.token}` } }
+    let resp
+    if (discover) {
+      // POST when discovery is needed (side-effect: sends commands to agents)
+      fetchOpts.method = 'POST'
+      fetchOpts.headers['Content-Type'] = 'application/json'
+      fetchOpts.body = JSON.stringify({ hostname: iacHostname.value || null, discover: true })
+      resp = await fetch(ep, fetchOpts)
+    } else {
+      // GET for read-only export from cached data
+      const qs = new URLSearchParams()
+      if (iacHostname.value) qs.set('hostname', iacHostname.value)
+      const qstr = qs.toString()
+      resp = await fetch(ep + (qstr ? `?${qstr}` : ''), fetchOpts)
+    }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     iacWarning.value = resp.headers.get('X-Noba-Discovery-Warning') || ''
     iacOutput.value = await resp.text()

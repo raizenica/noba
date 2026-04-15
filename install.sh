@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # install.sh – Smart installer for Noba Automation Suite
 # Version: 3.5.0
 
@@ -9,6 +11,14 @@ readonly INSTALLER_VERSION="3.5.0"
 # ── Safety ─────────────────────────────────────────────────────────────────────
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
     echo "⚠ Running as root is not recommended. Use a regular user with sudo."
+fi
+
+export CAN_SUDO=true
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    if ! command -v sudo &>/dev/null || ! sudo -n true 2>/dev/null; then
+        CAN_SUDO=false
+        echo "Note: Running without sudo — some features (systemd service, port 443) will be skipped."
+    fi
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -509,13 +519,15 @@ fi
 # 4. Web dashboard
 # ── Python dependencies for web dashboard ────────────────────────────────────
 header "Python Dependencies"
-_py_deps=(fastapi "uvicorn[standard]" psutil pyyaml httpx websocket-client cryptography defusedxml)
+_py_deps=(fastapi "uvicorn[standard]" psutil pyyaml httpx websocket-client cryptography defusedxml python-multipart lxml)
 if [[ "$DRY_RUN" == true ]]; then
     dry "pip install ${_py_deps[*]}"
 else
-    if python3 -m pip install --quiet --upgrade "${_py_deps[@]}" 2>/dev/null; then
+    if python3 -m pip install --user "${_py_deps[@]}" 2>/dev/null; then
         say_ok "Python packages: ${_py_deps[*]}"
-    elif pip3 install --quiet --upgrade "${_py_deps[@]}" 2>/dev/null; then
+    elif python3 -m pip install --user --break-system-packages "${_py_deps[@]}" 2>/dev/null; then
+        say_ok "Python packages: ${_py_deps[*]} (--break-system-packages)"
+    elif pip3 install --user "${_py_deps[@]}" 2>/dev/null; then
         say_ok "Python packages: ${_py_deps[*]}"
     else
         say_warn "Could not install Python packages automatically."

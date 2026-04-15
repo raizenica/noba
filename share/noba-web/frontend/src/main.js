@@ -1,3 +1,5 @@
+// Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+// NOBA Command Center — Licensed under Apache 2.0.
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import router from './router'
@@ -17,5 +19,5 @@ app.use(router)
 app.mount('#app')
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js')
+  navigator.serviceWorker.register('/service-worker.js').catch(() => {})
 }

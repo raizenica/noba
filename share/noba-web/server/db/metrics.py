@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – DB metric functions (insert, query, prune, trend)."""
 from __future__ import annotations
 
@@ -93,8 +96,10 @@ def get_history(
 def prune_history(
     conn: sqlite3.Connection,
     lock: threading.Lock,
+    days: int | None = None,
 ) -> None:
-    cutoff = int(time.time()) - HISTORY_RETENTION_DAYS * 86400
+    retention = days if days is not None else HISTORY_RETENTION_DAYS
+    cutoff = int(time.time()) - retention * 86400
     try:
         with lock:
             c = conn.execute(
@@ -105,7 +110,7 @@ def prune_history(
                 return
             conn.execute("DELETE FROM metrics WHERE timestamp < ?", (cutoff,))
             conn.commit()
-            logger.info("History pruned: %d rows older than %d days", stale, HISTORY_RETENTION_DAYS)
+            logger.info("History pruned: %d rows older than %d days", stale, retention)
         if stale > 50_000:
             # Reclaim free pages incrementally — avoids the stop-the-world
             # lock of a full VACUUM on a 24/7 time-series database.
@@ -291,8 +296,8 @@ class _MetricsMixin:
                            range_hours=range_hours, resolution=resolution,
                            anomaly=anomaly, raw=raw)
 
-    def prune_history(self) -> None:
-        prune_history(self._get_conn(), self._lock)
+    def prune_history(self, days: int | None = None) -> None:
+        prune_history(self._get_conn(), self._lock, days=days)
 
     def get_trend(self, metric: str, range_hours: int = 168,
                   projection_hours: int = 168) -> dict:

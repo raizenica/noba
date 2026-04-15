@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Healing pipeline API endpoints."""
 from __future__ import annotations
 
@@ -9,8 +12,20 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..agent_store import _agent_cmd_lock, _agent_commands, _agent_data, _agent_data_lock
-from ..deps import _get_auth, _int_param, _require_admin, _require_operator, db, handle_errors
+from ..agent_store import (
+    _agent_cmd_lock,
+    _agent_commands,
+    _agent_data,
+    _agent_data_lock,
+)
+from ..deps import (
+    _get_auth,
+    _int_param,
+    _require_admin,
+    _require_operator,
+    db,
+    handle_errors,
+)
 
 logger = logging.getLogger("noba")
 
@@ -238,10 +253,9 @@ async def api_validate_dependencies(request: Request, auth=Depends(_get_auth)):
             return False
 
         for t in targets:
-            if t not in visited:
-                if _has_cycle(t):
-                    errors.append("Cycle detected in dependency graph.")
-                    break
+            if t not in visited and _has_cycle(t):
+                errors.append("Cycle detected in dependency graph.")
+                break
 
     if errors:
         return {"valid": False, "errors": errors}
@@ -416,8 +430,13 @@ async def api_chaos_run(request: Request, auth=Depends(_require_admin)):
 @router.get("/api/healing/health")
 @handle_errors
 def api_healing_health(auth=Depends(_get_auth)):
-    """Return component health summary from the watchdog."""
+    """Return component health summary from the watchdog.
 
+    Honesty contract: if the watchdog isn't initialised we return
+    ``degraded: None`` + ``status: "unknown"`` — NOT a fake ``degraded: False``.
+    The frontend treats ``null`` as a third state ("we don't know") and
+    surfaces it in the UI, rather than incorrectly reporting "all good".
+    """
     try:
         from ..healing import _watchdog
         if _watchdog is not None:
@@ -425,5 +444,8 @@ def api_healing_health(auth=Depends(_get_auth)):
     except (ImportError, AttributeError):
         pass
 
-    # Default healthy response when no watchdog is initialized
-    return {"degraded": False}
+    return {
+        "degraded": None,
+        "status": "unknown",
+        "reason": "watchdog not initialised",
+    }

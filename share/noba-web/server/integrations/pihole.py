@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Pi-hole integration with v6/v5 fallback and session caching."""
 from __future__ import annotations
 
@@ -6,8 +9,14 @@ import time
 
 import httpx
 
-from .base import _client, _http_get
 from ..config import VERSION
+from .base import _http_get, get_category_client
+
+# CF-9: dedicated per-category httpx pool so a slow Pi-hole doesn't starve
+# other integrations. The legacy module-level `_client` name is preserved so
+# that existing tests continue to patch `server.integrations.pihole._client`.
+_CATEGORY = "dns"
+_client = get_category_client(_CATEGORY)
 
 # ── Pi-hole v6 session cache ────────────────────────────────────────────────
 _pihole_sessions: dict[str, tuple[str, float]] = {}
@@ -50,12 +59,14 @@ def get_pihole(url: str, token: str, password: str = "") -> dict | None:
 
     try:
         data = _http_get(f"{base}/api/stats/summary", hdrs)
+        queries = data.get("queries", {})
+        gravity = data.get("gravity", {})
         return {
-            "queries": data.get("queries", {}).get("total", 0),
-            "blocked": data.get("ads", {}).get("blocked", 0),
-            "percent": round(data.get("ads", {}).get("percentage", 0.0), 1),
-            "status":  data.get("gravity", {}).get("status", "unknown"),
-            "domains": f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}",
+            "queries": queries.get("total", 0),
+            "blocked": queries.get("blocked", 0),
+            "percent": round(queries.get("percent_blocked", 0.0), 1),
+            "status":  "enabled" if gravity.get("domains_being_blocked", 0) > 0 else "disabled",
+            "domains": f"{gravity.get('domains_being_blocked', 0):,}",
         }
     except (httpx.HTTPError, KeyError, ValueError):
         # If auth error and password set, clear cache and retry once
@@ -67,12 +78,14 @@ def get_pihole(url: str, token: str, password: str = "") -> dict | None:
                 hdrs["sid"] = sid
                 try:
                     data = _http_get(f"{base}/api/stats/summary", hdrs)
+                    queries = data.get("queries", {})
+                    gravity = data.get("gravity", {})
                     return {
-                        "queries": data.get("queries", {}).get("total", 0),
-                        "blocked": data.get("ads", {}).get("blocked", 0),
-                        "percent": round(data.get("ads", {}).get("percentage", 0.0), 1),
-                        "status":  data.get("gravity", {}).get("status", "unknown"),
-                        "domains": f"{data.get('gravity', {}).get('domains_being_blocked', 0):,}",
+                        "queries": queries.get("total", 0),
+                        "blocked": queries.get("blocked", 0),
+                        "percent": round(queries.get("percent_blocked", 0.0), 1),
+                        "status":  "enabled" if gravity.get("domains_being_blocked", 0) > 0 else "disabled",
+                        "domains": f"{gravity.get('domains_being_blocked', 0):,}",
                     }
                 except (httpx.HTTPError, KeyError, ValueError):
                     pass

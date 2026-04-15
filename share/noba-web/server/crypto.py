@@ -1,4 +1,8 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Transparent config value encryption using Fernet."""
+
 from __future__ import annotations
 
 import logging
@@ -22,7 +26,7 @@ def _get_fernet():
     try:
         from cryptography.fernet import Fernet
     except ImportError:
-        logger.debug("cryptography package not installed -- encryption disabled")
+        logger.warning("cryptography package not installed -- encryption disabled")
         return None
 
     if os.path.isfile(_KEY_FILE):
@@ -41,18 +45,27 @@ def _get_fernet():
 
 
 def encrypt_value(value: str) -> str:
-    """Encrypt a string value. Returns 'ENC:...' prefixed ciphertext."""
+    """Encrypt a string value. Returns 'ENC:...' prefixed ciphertext.
+
+    Fail-closed: raises RuntimeError if the cryptography package is missing.
+    Never silently returns cleartext — that would defeat the point of
+    opt-in at-rest encryption.
+    """
     if not value or value.startswith(_ENC_PREFIX):
         return value  # already encrypted or empty
     f = _get_fernet()
     if f is None:
-        return value  # no encryption available
+        raise RuntimeError("Encryption unavailable — install 'cryptography' package")
     token = f.encrypt(value.encode("utf-8"))
     return _ENC_PREFIX + token.decode("ascii")
 
 
 def decrypt_value(value: str) -> str:
-    """Decrypt an 'ENC:...' value. Returns plaintext. Non-encrypted values pass through."""
+    """Decrypt an 'ENC:...' value. Returns plaintext. Non-encrypted values pass through.
+
+    Fail-closed: raises ValueError on decrypt failure instead of returning the
+    ciphertext to the caller (which would silently leak it into logs / UI).
+    """
     if not isinstance(value, str) or not value.startswith(_ENC_PREFIX):
         return value  # not encrypted
     f = _get_fernet()
@@ -62,9 +75,9 @@ def decrypt_value(value: str) -> str:
     try:
         token = value[len(_ENC_PREFIX) :].encode("ascii")
         return f.decrypt(token).decode("utf-8")
-    except Exception as e:
-        logger.error("Failed to decrypt config value: %s", e)
-        return value  # return as-is on failure (don't break startup)
+    except Exception:
+        logger.error("Decryption failed for value")
+        raise ValueError("Failed to decrypt value") from None
 
 
 def is_encrypted(value: str) -> bool:

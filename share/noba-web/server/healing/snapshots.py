@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Pre-heal state snapshots and rollback.
 
 Captures target state before each heal action. If the heal fails
@@ -15,12 +18,52 @@ logger = logging.getLogger("noba")
 def _fetch_target_state(target: str, action_type: str, params: dict) -> dict:
     """Fetch current state of a target before healing.
 
-    This is a best-effort capture. Failures return empty dict
-    (the heal still proceeds, just without rollback capability).
+    This is a best-effort capture. Failures return partial dict
+    (the heal still proceeds, just without full rollback capability).
     """
-    # In production, this queries docker inspect, systemctl status, etc.
-    # For now, returns empty — will be populated as action handlers are wired.
-    return {}
+    import subprocess
+
+    state: dict = {"target": target, "action_type": action_type}
+    try:
+        if action_type in ("restart_container", "scale_container"):
+            r = subprocess.run(
+                ["docker", "inspect", "--format",
+                 '{"status":"{{.State.Status}}","image":"{{.Config.Image}}","restartCount":{{.RestartCount}}}',
+                 target],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0:
+                import json
+                state["container"] = json.loads(r.stdout.strip())
+        elif action_type in ("restart_service",):
+            r = subprocess.run(
+                ["systemctl", "show", target, "--no-pager",
+                 "--property=ActiveState,SubState,MainPID,NRestarts"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0:
+                props = {}
+                for line in r.stdout.strip().splitlines():
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        props[k] = v
+                state["service"] = props
+        elif action_type == "clear_cache":
+            import shutil
+            cache_path = params.get("path", "/tmp")
+            usage = shutil.disk_usage(cache_path)
+            state["disk_before"] = {"used": usage.used, "free": usage.free}
+        elif action_type == "failover_dns":
+            r = subprocess.run(
+                ["cat", "/etc/resolv.conf"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                state["resolv_conf"] = r.stdout
+    except Exception as exc:
+        logger.debug("Snapshot capture failed for %s/%s: %s", target, action_type, exc)
+
+    return state
 
 
 def capture_snapshot(target: str, action_type: str, params: dict) -> dict:
@@ -95,7 +138,8 @@ def _execute_reverse_action(action_type: str, target: str, snapshot_state: dict)
             target=target,
         )
     except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        logger.error("Rollback execution failed for %s: %s", target, exc)
+        return {"success": False, "error": "Rollback execution failed"}
 
 
 def execute_rollback(*, action_type: str, target: str, snapshot_state: dict) -> dict:

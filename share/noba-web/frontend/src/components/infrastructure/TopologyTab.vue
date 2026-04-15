@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, computed } from 'vue'
 import { useApi } from '../../composables/useApi'
@@ -40,7 +42,7 @@ async function fetchImpactAnalysis(service) {
   if (!service) return
   topologyImpactService.value = service
   try {
-    const data = await get(`/api/topology/impact/${encodeURIComponent(service)}`)
+    const data = await get(`/api/dependencies/impact/${encodeURIComponent(service)}`)
     topologyImpact.value = data
   } catch { topologyImpact.value = { affected: [], count: 0 } }
 }
@@ -48,10 +50,10 @@ async function fetchImpactAnalysis(service) {
 async function addDependency() {
   if (!topoNewSource.value.trim() || !topoNewTarget.value.trim()) return
   try {
-    await post('/api/topology/dependencies', {
-      source_service: topoNewSource.value.trim(),
-      target_service: topoNewTarget.value.trim(),
-      dependency_type: topoNewType.value,
+    await post('/api/dependencies', {
+      source: topoNewSource.value.trim(),
+      target: topoNewTarget.value.trim(),
+      type: topoNewType.value,
     })
     notif.addToast('Dependency added', 'success')
     topoNewSource.value = ''
@@ -65,7 +67,7 @@ async function addDependency() {
 async function deleteDependency(id) {
   if (!await modals.confirm('Delete this dependency?')) return
   try {
-    await del(`/api/topology/dependencies/${id}`)
+    await del(`/api/dependencies/${id}`)
     notif.addToast('Dependency deleted', 'success')
     fetchTopology()
   } catch (e) {
@@ -75,7 +77,7 @@ async function deleteDependency(id) {
 
 async function discoverServices(hostname) {
   try {
-    await post(`/api/agents/${encodeURIComponent(hostname)}/discover-services`)
+    await post(`/api/dependencies/discover/${encodeURIComponent(hostname)}`)
     notif.addToast(`Discovery triggered on ${hostname}`, 'success')
   } catch (e) {
     notif.addToast('Discovery failed: ' + e.message, 'error')

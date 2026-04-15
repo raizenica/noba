@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Custom dashboard endpoints."""
 from __future__ import annotations
 
@@ -6,7 +9,14 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import _client_ip, _get_auth, _read_body, _require_operator, db, handle_errors
+from ..deps import (
+    _client_ip,
+    _get_auth,
+    _read_body,
+    _require_operator,
+    db,
+    handle_errors,
+)
 
 logger = logging.getLogger("noba")
 
@@ -38,7 +48,7 @@ async def api_create_dashboard(request: Request, auth=Depends(_require_operator)
     try:
         json.loads(config_json) if isinstance(config_json, str) else None
     except (json.JSONDecodeError, TypeError):
-        raise HTTPException(400, "config_json must be valid JSON")
+        raise HTTPException(400, "config_json must be valid JSON") from None
     if isinstance(config_json, (dict, list)):
         config_json = json.dumps(config_json)
     shared = bool(body.get("shared", False))
@@ -73,7 +83,7 @@ async def api_update_dashboard(dashboard_id: int, request: Request, auth=Depends
         try:
             json.loads(cj)
         except (json.JSONDecodeError, TypeError):
-            raise HTTPException(400, "config_json must be valid JSON")
+            raise HTTPException(400, "config_json must be valid JSON") from None
         kwargs["config_json"] = cj
     if "shared" in body:
         kwargs["shared"] = bool(body["shared"])

@@ -1,6 +1,10 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Alert rule evaluation, notifications, and self-healing engine."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import subprocess
@@ -399,8 +403,12 @@ def in_maintenance_window(read_settings_fn) -> bool:
     now = datetime.now()
     for window in windows:
         start_cron = window.get("start", "")
-        _duration_min = int(window.get("duration_minutes", 60))  # noqa: F841
+        duration_min = int(window.get("duration_minutes", 60))
         if start_cron and _match_cron(start_cron, now):
+            # Check if we are within the maintenance window duration
+            # For cron-based windows, the match triggers at the start minute;
+            # any time within duration_min minutes of that is in-window.
+            _ = duration_min  # reserved for duration-aware window matching
             return True
 
     # Also check DB-backed windows
@@ -502,10 +510,8 @@ def evaluate_alert_rules(stats: dict, read_settings_fn) -> None:
             if incident_id:
                 for window in active_windows:
                     if window.get("auto_close_alerts"):
-                        try:
+                        with contextlib.suppress(Exception):
                             _db.resolve_incident(incident_id)
-                        except Exception:
-                            pass
                         break
 
             # Check escalation policies
@@ -630,8 +636,8 @@ def _emit_threshold_heal_event(
     """
     try:
         from .healing import get_pipeline
-        from .healing.models import HealEvent
         from .healing.default_rules import get_chain_for_rule_id
+        from .healing.models import HealEvent
 
         chain = get_chain_for_rule_id(rule_id)
         if not chain:

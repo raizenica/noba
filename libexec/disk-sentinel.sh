@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # disk-sentinel.sh – Monitor disk space and alert when threshold exceeded
 # Version: 3.0.0
 #

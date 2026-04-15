@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Tiered approval manager with escalation and emergency override.
 
 Determines whether a heal action needs human approval based on:
@@ -182,14 +185,9 @@ def check_emergency_override(
 
     # Check consecutive failure count threshold
     required_failures = conditions.get("consecutive_failures")
-    if required_failures is not None:
-        if consecutive_failures < required_failures:
-            return False
+    if required_failures is not None and consecutive_failures < required_failures:
+        return False
 
     # Check how long approval has been waiting
     required_wait = conditions.get("no_response_minutes")
-    if required_wait is not None:
-        if minutes_waiting < required_wait:
-            return False
-
-    return True
+    return not (required_wait is not None and minutes_waiting < required_wait)

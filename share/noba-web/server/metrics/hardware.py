@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Temperature, SMART, GPU, battery, IPMI metrics."""
 from __future__ import annotations
 
@@ -11,7 +14,6 @@ import subprocess
 import psutil
 
 from .util import _cache, _read_file, _run
-
 
 logger = logging.getLogger("noba")
 

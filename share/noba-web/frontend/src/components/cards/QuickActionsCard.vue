@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, computed } from 'vue'
 import { useApi } from '../../composables/useApi'
@@ -17,7 +19,7 @@ async function runScript(scriptName, args = '') {
   runningScript.value = true
   scriptOutput.value  = ''
   try {
-    const res = await post('/api/run-script', { script: scriptName, args })
+    const res = await post('/api/run', { script: scriptName, args })
     scriptOutput.value = res?.output || res?.result || 'Done.'
   } catch (e) {
     scriptOutput.value = 'Error: ' + e.message

@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for agent_command automation type in workflow engine and alert healing."""
 from __future__ import annotations
 
@@ -235,13 +238,13 @@ class TestAlertHealAgentCommand:
         from server.alerts import _execute_heal_agent_command
         mock_wait.return_value = {"status": "ok", "id": "abc123"}
         result = _execute_heal_agent_command(
-            {"hostname": "dnsa01", "command": "restart_service",
+            {"hostname": "host-a", "command": "restart_service",
              "params": {"service": "unbound"}},
             rule_id="rule1",
         )
         assert result is True
         mock_wait.assert_called_once_with(
-            "dnsa01", "restart_service", {"service": "unbound"},
+            "host-a", "restart_service", {"service": "unbound"},
             timeout=30, queued_by="heal:rule1",
         )
 

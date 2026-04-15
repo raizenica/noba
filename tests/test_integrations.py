@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for server.integrations -- all integration drivers.
 
 Covers: base class, simple drivers, cookie-based auth (UniFi, qBittorrent),
@@ -948,7 +951,7 @@ class TestOmv:
 
 
 class TestXcpng:
-    @patch("server.integrations.simple_infra._client")
+    @patch("server.integrations.simple_infra._hypervisor_client")
     def test_filters_control_domains(self, mock_client):
         from server.integrations.simple import get_xcpng
         login_resp = _mock_response(json_data={"result": "session-id"})
@@ -1041,10 +1044,10 @@ class TestPikvm:
 
 
 class TestK8s:
-    @patch("server.integrations.simple_infra.httpx.get")
-    def test_counts_pods_and_namespaces(self, mock_get):
+    @patch("server.integrations.simple_infra._container_runtime_client")
+    def test_counts_pods_and_namespaces(self, mock_client):
         from server.integrations.simple import get_k8s
-        mock_get.return_value = _mock_response(json_data={"items": [
+        mock_client.get.return_value = _mock_response(json_data={"items": [
             {"metadata": {"name": "p1", "namespace": "default"}, "status": {"phase": "Running"}},
             {"metadata": {"name": "p2", "namespace": "kube-system"}, "status": {"phase": "Pending"}},
         ]})
@@ -1055,7 +1058,7 @@ class TestK8s:
 
 
 class TestGitea:
-    @patch("server.integrations.simple_infra._client")
+    @patch("server.integrations.simple_infra._git_devops_client")
     def test_uses_x_total_count_header(self, mock_client):
         from server.integrations.simple import get_gitea
         resp = _mock_response(json_data={"data": []}, headers={"x-total-count": "42"})
@@ -1063,7 +1066,7 @@ class TestGitea:
         result = get_gitea("http://gitea:3000", "token")
         assert result["repos"] == 42
 
-    @patch("server.integrations.simple_infra._client")
+    @patch("server.integrations.simple_infra._git_devops_client")
     def test_falls_back_to_body(self, mock_client):
         from server.integrations.simple import get_gitea
         resp = _mock_response(json_data={"data": [{"id": 1}, {"id": 2}]}, headers={})
@@ -1073,7 +1076,7 @@ class TestGitea:
 
 
 class TestGitlab:
-    @patch("server.integrations.simple_infra._client")
+    @patch("server.integrations.simple_infra._git_devops_client")
     def test_uses_x_total_header(self, mock_client):
         from server.integrations.simple import get_gitlab
         resp = _mock_response(json_data=[], headers={"x-total": "55"})
@@ -1083,7 +1086,7 @@ class TestGitlab:
 
 
 class TestGithub:
-    @patch("server.integrations.simple_infra._client")
+    @patch("server.integrations.simple_infra._git_devops_client")
     def test_returns_repo_count(self, mock_client):
         from server.integrations.simple import get_github
         resp = _mock_response(json_data=[{"id": 1}, {"id": 2}])
@@ -1102,7 +1105,7 @@ class TestPaperless:
 
 
 class TestVaultwarden:
-    @patch("server.integrations.simple_infra._client")
+    @patch("server.integrations.simple_infra._security_client")
     def test_returns_online(self, mock_client):
         from server.integrations.simple import get_vaultwarden
         mock_client.get.return_value = _mock_response()
@@ -1415,10 +1418,11 @@ class TestPihole:
             })
             mock_client.post.return_value = auth_resp
 
+            # Pi-hole v6 schema: blocked + percent_blocked live under `queries`,
+            # and status is derived from gravity.domains_being_blocked > 0.
             mock_get.return_value = {
-                "queries": {"total": 50000},
-                "ads": {"blocked": 5000, "percentage": 10.0},
-                "gravity": {"status": "enabled", "domains_being_blocked": 100000},
+                "queries": {"total": 50000, "blocked": 5000, "percent_blocked": 10.0},
+                "gravity": {"domains_being_blocked": 100000},
             }
 
             result = get_pihole("http://pihole:80", "", password="mypassword")
@@ -1426,6 +1430,7 @@ class TestPihole:
             assert result["blocked"] == 5000
             assert result["percent"] == 10.0
             assert result["domains"] == "100,000"
+            assert result["status"] == "enabled"
 
     @patch("server.integrations.pihole._http_get")
     def test_v6_with_token_as_sid(self, mock_get):

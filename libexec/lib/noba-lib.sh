@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
 # noba-lib.sh – Shared functions for Noba automation scripts
 # Version: 3.1.0
 # Must be sourced, not executed.
@@ -374,8 +376,9 @@ hash_password() {
 import hashlib, secrets, sys
 password = sys.argv[1]
 salt = secrets.token_hex(16)
-dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 200_000)
-print(f"pbkdf2:{salt}:{dk.hex()}")
+iters = 600_000
+dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), iters)
+print(f"pbkdf2:{iters}:{salt}:{dk.hex()}")
 PYEOF
 }
 
@@ -419,13 +422,14 @@ set_password() {
     local hash
     hash=$(hash_password "$password")
 
-    local tmp="$auth_dir/auth.conf.tmp"
-    touch "$tmp"
+    local tmp
+    tmp=$(mktemp "${auth_dir}/auth.conf.XXXXXX")
+    trap 'rm -f "$tmp"' RETURN
     chmod 600 "$tmp"
     printf "%s:%s:admin\n" "$username" "$hash" > "$tmp"
     mv "$tmp" "$auth_dir/auth.conf"
 
-    log_success "Credentials saved to $auth_dir/auth.conf  (PBKDF2-SHA256, 200k rounds)"
+    log_success "Credentials saved to $auth_dir/auth.conf  (PBKDF2-SHA256, 600k rounds)"
     create_default_yaml "$yaml_file"
 }
 
@@ -573,13 +577,17 @@ add_user() {
     local hash
     hash=$(hash_password "$password")
 
+    local tmp
+    tmp=$(mktemp "${NOBA_USER_DB}.XXXXXX")
+    trap 'rm -f "$tmp"' RETURN
+    chmod 600 "$tmp"
+
     {
         cat "$NOBA_USER_DB"
         printf "%s:%s:%s\n" "$username" "$hash" "$role"
-    } > "$NOBA_USER_DB.tmp"
+    } > "$tmp"
 
-    chmod 600 "$NOBA_USER_DB.tmp"
-    mv "$NOBA_USER_DB.tmp" "$NOBA_USER_DB"
+    mv "$tmp" "$NOBA_USER_DB"
 
     log_success "User '$username' added (role: $role)"
 }
@@ -603,10 +611,14 @@ remove_user() {
         return 1
     fi
 
-    awk -F: -v u="$username" '$1!=u' "$NOBA_USER_DB" > "$NOBA_USER_DB.tmp"
+    local tmp
+    tmp=$(mktemp "${NOBA_USER_DB}.XXXXXX")
+    trap 'rm -f "$tmp"' RETURN
+    chmod 600 "$tmp"
 
-    chmod 600 "$NOBA_USER_DB.tmp"
-    mv "$NOBA_USER_DB.tmp" "$NOBA_USER_DB"
+    awk -F: -v u="$username" '$1!=u' "$NOBA_USER_DB" > "$tmp"
+
+    mv "$tmp" "$NOBA_USER_DB"
 
     log_success "User '$username' removed"
 }
@@ -624,14 +636,18 @@ change_password() {
     local hash
     hash=$(hash_password "$password")
 
+    local tmp
+    tmp=$(mktemp "${NOBA_USER_DB}.XXXXXX")
+    trap 'rm -f "$tmp"' RETURN
+    chmod 600 "$tmp"
+
     awk -F: -v u="$username" -v h="$hash" '
         BEGIN {OFS=FS}
         $1==u {$2=h}
         {print}
-    ' "$NOBA_USER_DB" > "$NOBA_USER_DB.tmp"
+    ' "$NOBA_USER_DB" > "$tmp"
 
-    chmod 600 "$NOBA_USER_DB.tmp"
-    mv "$NOBA_USER_DB.tmp" "$NOBA_USER_DB"
+    mv "$tmp" "$NOBA_USER_DB"
 
     log_success "Password updated for '$username'"
 }

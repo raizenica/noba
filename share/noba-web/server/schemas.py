@@ -1,9 +1,11 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Pydantic schemas for request validation."""
 from __future__ import annotations
 
 import re
 from urllib.parse import urlparse
-
 
 _SECRET_PATTERNS = re.compile(
     r"(token|key|pass|secret|password|credential|auth)", re.IGNORECASE

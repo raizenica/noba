@@ -1,8 +1,11 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Linked social provider persistence."""
 from __future__ import annotations
 
-import time
 import sqlite3
+import time
 
 
 def _ensure_table(conn):

@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
@@ -79,7 +81,7 @@ async function addStatusUpdate(incId) {
 async function resolveStatusIncident(incId) {
   if (!await modals.confirm('Mark this incident as resolved?')) return
   try {
-    await put(`/api/status/incidents/${incId}`, { status: 'resolved', resolved: true })
+    await post(`/api/status/incidents/${incId}/resolve`)
     await fetchIncidents()
   } catch { /* silent */ }
 }

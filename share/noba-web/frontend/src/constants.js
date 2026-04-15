@@ -1,3 +1,5 @@
+// Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+// NOBA Command Center — Licensed under Apache 2.0.
 // Noba -- Centralized constants for timing and limit values used across the frontend.
 
 // ── Dashboard SSE / polling ─────────────────────────────────────────────────
@@ -7,7 +9,7 @@ export const POLLING_INTERVAL_MS = 5000          // dashboard polling interval
 // ── Logs view ───────────────────────────────────────────────────────────────
 export const LOG_AUTO_REFRESH_MS = 5000          // auto-refresh interval for system logs
 export const STREAM_DEFAULT_BACKLOG = 50         // default backlog lines for live stream
-export const STREAM_BUFFER_MAX_LINES = -2000     // slice() arg to cap stream line buffer
+export const STREAM_BUFFER_MAX_LINES = 2000      // max lines to keep in live stream buffer
 
 // ── Healing view ────────────────────────────────────────────────────────────
 export const HEALING_FETCH_ALL_INTERVAL_MS = 30000  // healing store fetchAll interval

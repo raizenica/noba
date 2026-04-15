@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Chaos testing framework for controlled fault injection.
 
 Defines scenarios that intentionally break things and validates the
@@ -167,6 +170,42 @@ def check_expectation(expectation: dict, *, actual: dict) -> dict:
     }
 
 
+def _evaluate_expectation(check: str, target: str):
+    """Evaluate a chaos test expectation against current system state."""
+    try:
+        from ..deps import db as _db
+        if check == "heal_triggered":
+            recent = _db.list_heal_ledger(limit=5)
+            return any(e.get("target") == target for e in recent)
+        elif check == "action_taken":
+            recent = _db.list_heal_ledger(limit=5)
+            for e in recent:
+                if e.get("target") == target:
+                    return e.get("action_type", "")
+            return ""
+        elif check == "verified":
+            recent = _db.list_heal_ledger(limit=5)
+            for e in recent:
+                if e.get("target") == target:
+                    return e.get("outcome") == "verified"
+            return False
+        elif check == "heal_triggered_for":
+            recent = _db.list_heal_ledger(limit=10)
+            return any(e.get("target") == target for e in recent)
+        elif check == "downstream_suppressed":
+            recent = _db.list_heal_ledger(limit=10)
+            return any(e.get("outcome") == "suppressed" for e in recent)
+        elif check == "root_cause_identified":
+            recent = _db.list_heal_ledger(limit=10)
+            for e in recent:
+                if e.get("root_cause"):
+                    return e["root_cause"]
+            return None
+    except Exception as exc:
+        logger.debug("Chaos expectation check failed: %s", exc)
+    return None
+
+
 class ChaosRunner:
     """Runs chaos test scenarios."""
 
@@ -214,15 +253,58 @@ class ChaosRunner:
                 )
             result["status"] = "dry_run_complete"
         else:
-            # Live mode: actual injection would happen here.
-            # Live injection requires access to docker/systemd/etc which is
-            # environment-specific; return a placeholder for now.
-            result["status"] = "live_not_implemented"
-            result["message"] = (
-                "Live chaos testing requires environment-specific injection handlers. "
-                "Use dry-run mode for validation, or implement injection handlers "
-                "for your environment."
-            )
+            # Live mode: execute the injection and validate expectations
+            inject = scenario.inject
+            action = inject.get("action", "")
+            target = inject.get("target", "")
+
+            try:
+                from ..remediation import execute_action
+                inject_result = execute_action(
+                    action, inject,
+                    triggered_by="chaos_test", trigger_type="chaos",
+                    target=target,
+                )
+                result["inject_result"] = inject_result
+                logger.info("Chaos inject %s on %s: %s", action, target, inject_result.get("success"))
+
+                # Wait for healing pipeline to respond
+                settle = inject.get("settle_seconds", 30)
+                time.sleep(settle)
+
+                # Validate expectations against current state
+                for exp in scenario.expectations:
+                    check = exp.get("check")
+                    expected = exp.get("value")
+                    actual = _evaluate_expectation(check, target)
+                    passed = actual == expected
+                    result["expectations"].append({
+                        "check": check,
+                        "expected": expected,
+                        "actual": actual,
+                        "passed": passed,
+                    })
+
+                all_passed = all(e["passed"] for e in result["expectations"] if e["passed"] is not None)
+                result["status"] = "passed" if all_passed else "failed"
+
+            except Exception as exc:
+                logger.error("Chaos live injection failed: %s", exc)
+                result["status"] = "error"
+                result["error"] = "Chaos injection execution failed"
+
+            # Teardown: restore original state if defined
+            if scenario.teardown:
+                try:
+                    teardown_action = scenario.teardown.get("action", "")
+                    if teardown_action:
+                        execute_action(
+                            teardown_action, scenario.teardown,
+                            triggered_by="chaos_teardown", trigger_type="chaos",
+                            target=scenario.teardown.get("target", target),
+                        )
+                except Exception as exc:
+                    logger.error("Chaos teardown failed: %s", exc)
 
         result["completed_at"] = time.time()
         result["duration_s"] = round(result["completed_at"] - result["started_at"], 3)

@@ -1,6 +1,10 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Endpoint monitoring, uptime, status page, and health score endpoints."""
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from pathlib import Path
@@ -9,11 +13,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .. import deps as _deps
-from ..deps import handle_errors
 from ..agent_store import _agent_data, _agent_data_lock
 from ..deps import (
-    _client_ip, _get_auth, _read_body,
-    _require_admin, _require_operator, db,
+    _client_ip,
+    _get_auth,
+    _read_body,
+    _require_admin,
+    _require_operator,
+    db,
+    handle_errors,
 )
 from ..yaml_config import read_yaml_settings
 
@@ -153,9 +161,7 @@ def api_public_status() -> dict:
     any_major = any(i["severity"] == "major" for i in active_incidents)
     if any_critical:
         overall = "major_outage"
-    elif any_major or any(s["status"] == "degraded" for s in enriched):
-        overall = "degraded"
-    elif has_active:
+    elif any_major or any(s["status"] == "degraded" for s in enriched) or has_active:
         overall = "degraded"
 
     # 90-day uptime history
@@ -322,10 +328,8 @@ async def api_create_endpoint(request: Request, auth=Depends(_require_admin)):
             kwargs["method"] = m
     for int_field in ("expected_status", "check_interval", "timeout", "notify_cert_days"):
         if int_field in body:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 kwargs[int_field] = int(body[int_field])
-            except (TypeError, ValueError):
-                pass
     if "agent_hostname" in body:
         kwargs["agent_hostname"] = body["agent_hostname"] or None
     if "enabled" in body:
@@ -358,10 +362,8 @@ async def api_update_endpoint(monitor_id: int, request: Request, auth=Depends(_r
             kwargs["method"] = m
     for int_field in ("expected_status", "check_interval", "timeout", "notify_cert_days"):
         if int_field in body:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 kwargs[int_field] = int(body[int_field])
-            except (TypeError, ValueError):
-                pass
     if "agent_hostname" in body:
         kwargs["agent_hostname"] = body["agent_hostname"] or None
     if "enabled" in body:

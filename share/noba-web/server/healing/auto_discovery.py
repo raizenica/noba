@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba -- Co-failure auto-discovery for dependency suggestions.
 
 Analyzes historical heal outcomes to detect targets that frequently

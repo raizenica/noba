@@ -1,7 +1,11 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Cron-like scheduler for automations."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import subprocess
@@ -11,7 +15,7 @@ from datetime import datetime
 
 from .db import db
 from .runner import job_runner
-from .workflow_engine import _AUTO_BUILDERS, _run_workflow, _run_parallel_workflow
+from .workflow_engine import _AUTO_BUILDERS, _run_parallel_workflow, _run_workflow
 
 logger = logging.getLogger("noba")
 
@@ -83,10 +87,8 @@ class FSTriggerWatcher:
             path = t.get("path", "")
             auto_id = t.get("automation_id", "")
             if path and auto_id and os.path.exists(path):
-                try:
+                with contextlib.suppress(OSError):
                     self._watches[path] = {"mtime": os.path.getmtime(path), "auto_id": auto_id}
-                except OSError:
-                    pass
         if self._watches:
             self._thread = threading.Thread(target=self._loop, daemon=True, name="fs-trigger")
             self._thread.start()
@@ -178,8 +180,8 @@ class Scheduler:
     def _tick(self) -> None:
         now = datetime.now()
         # Check maintenance windows (reuse alerts.py logic)
-        from .yaml_config import read_yaml_settings
         from .alerts import in_maintenance_window
+        from .yaml_config import read_yaml_settings
         if in_maintenance_window(read_yaml_settings):
             logger.info("Maintenance window active, skipping scheduled automations")
             return
@@ -200,8 +202,8 @@ class Scheduler:
         # Every 15 minutes: run predictive healing evaluation
         if now.minute % 15 == 0:
             try:
-                from .healing.predictive import run_predictive_cycle
                 from .healing import get_pipeline
+                from .healing.predictive import run_predictive_cycle
 
                 events = run_predictive_cycle()
                 if events:
@@ -215,9 +217,9 @@ class Scheduler:
         # Hourly: generate heal suggestions and evaluate trust promotions
         if now.minute == 0:  # once per hour
             try:
-                from .healing.ledger import generate_suggestions
-                from .healing.governor import evaluate_promotions
                 from .healing.auto_discovery import run_auto_discovery
+                from .healing.governor import evaluate_promotions
+                from .healing.ledger import generate_suggestions
                 generate_suggestions(db)
                 promotion_suggestions = evaluate_promotions(db)
                 for s in promotion_suggestions:
@@ -231,8 +233,8 @@ class Scheduler:
 
             # Hourly: evaluate health score thresholds
             try:
-                from .healing.health_triggers import evaluate_health_thresholds
                 from .healing import get_pipeline as _get_pipeline
+                from .healing.health_triggers import evaluate_health_thresholds
                 # Health score categories are cached from the last /api/health-score
                 # call. Use the latest cached result if available.
                 _cached_hs = getattr(db, '_cached_health_score', None)
@@ -271,6 +273,7 @@ class Scheduler:
             return
 
         import json as _json
+
         from .remediation import execute_action
 
         for approval in pending_exec:
@@ -578,9 +581,14 @@ def _run_endpoint_check(monitor: dict) -> dict:
 
 def _dispatch_agent_endpoint_check(monitor: dict) -> dict:
     """Send endpoint_check command to an agent and process the result."""
-    from .agent_store import _agent_cmd_lock, _agent_cmd_ready, _agent_cmd_results, _agent_commands
-
     import uuid
+
+    from .agent_store import (
+        _agent_cmd_lock,
+        _agent_cmd_ready,
+        _agent_cmd_results,
+        _agent_commands,
+    )
     cmd_id = str(uuid.uuid4())
     hostname = monitor["agent_hostname"]
     cmd = {
@@ -780,8 +788,13 @@ class DriftChecker:
         if not baselines:
             return
         from .agent_store import (
-            _agent_cmd_lock, _agent_cmd_results, _agent_commands,
-            _agent_data, _agent_data_lock, _agent_websockets, _agent_ws_lock,
+            _agent_cmd_lock,
+            _agent_cmd_results,
+            _agent_commands,
+            _agent_data,
+            _agent_data_lock,
+            _agent_websockets,
+            _agent_ws_lock,
         )
         # Build list of online agents
         now_ts = time.time()

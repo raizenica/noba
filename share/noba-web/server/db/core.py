@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Thread-safe SQLite database layer (core)."""
 from __future__ import annotations
 
@@ -8,11 +11,28 @@ import threading
 
 from ..config import HISTORY_DB
 from . import (
-    agents, alerts, api_keys, audit, automations, backup_verify,
-    baselines, dashboards, dependencies, endpoints, healing,
-    integrations, linked_providers, metrics, network,
-    notifications, security, status_page, tokens,
-    user_dashboards, user_preferences, webhooks,
+    agents,
+    alerts,
+    api_keys,
+    audit,
+    automations,
+    backup_verify,
+    baselines,
+    dashboards,
+    dependencies,
+    endpoints,
+    healing,
+    integrations,
+    linked_providers,
+    metrics,
+    network,
+    notifications,
+    security,
+    status_page,
+    tokens,
+    user_dashboards,
+    user_preferences,
+    webhooks,
 )
 from .agents import _AgentsMixin
 from .alerts import _AlertsMixin

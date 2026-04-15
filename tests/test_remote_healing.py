@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Tests for remote agent healing dispatch, approval race guard, and action map."""
 from __future__ import annotations
 
@@ -58,7 +61,7 @@ class TestAgentCommandMap:
 
 class TestTryAgentDispatch:
     @patch("server.agent_store.queue_agent_command_and_wait")
-    @patch("server.agent_store.get_online_agents", return_value=["pve", "pve-siteb"])
+    @patch("server.agent_store.get_online_agents", return_value=["pve", "site-b"])
     def test_dispatches_to_online_agent(self, mock_online, mock_queue):
         mock_queue.return_value = {"status": "ok", "output": "restarted"}
         result = _try_agent_dispatch("restart_container", {"container": "nginx"}, "pve")
@@ -72,7 +75,7 @@ class TestTryAgentDispatch:
 
     @patch("server.agent_store.get_online_agents", return_value=["pve"])
     def test_returns_none_for_offline_agent(self, mock_online):
-        result = _try_agent_dispatch("restart_container", {"container": "nginx"}, "pve-siteb")
+        result = _try_agent_dispatch("restart_container", {"container": "nginx"}, "site-b")
         assert result is None  # falls through to local
 
     @patch("server.agent_store.get_online_agents", return_value=["pve"])

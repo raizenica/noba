@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
 import { useApi } from '../../composables/useApi'
@@ -54,7 +56,7 @@ const threadRef        = ref(null)
 const userList = ref([])
 async function fetchUserList() {
   try {
-    const data = await get('/api/users')
+    const data = await get('/api/admin/users')
     userList.value = Array.isArray(data) ? data : []
   } catch { /* silent */ }
 }

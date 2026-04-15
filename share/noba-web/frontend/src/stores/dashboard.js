@@ -1,5 +1,7 @@
+// Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+// NOBA Command Center — Licensed under Apache 2.0.
 import { defineStore } from 'pinia'
-import { ref, shallowRef, shallowReactive } from 'vue'
+import { ref, shallowReactive } from 'vue'
 import { useAuthStore } from './auth'
 import { SSE_HEARTBEAT_TIMEOUT_MS, POLLING_INTERVAL_MS } from '../constants'
 

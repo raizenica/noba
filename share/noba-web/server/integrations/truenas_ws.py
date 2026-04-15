@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """TrueNAS integration via JSON-RPC 2.0 over WebSocket.
 
 Replaces the deprecated REST API (removed in TrueNAS 26.04).
@@ -16,7 +19,7 @@ import logging
 import ssl
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 logger = logging.getLogger("noba")
 
@@ -80,10 +83,8 @@ def _connect(url: str, api_key: str):
                 return
             except Exception:
                 # Stale connection
-                try:
+                with suppress(Exception):
                     cached["ws"].close()
-                except Exception:
-                    pass
                 del _ws_cache[url]
 
     # New connection
@@ -193,24 +194,24 @@ def get_truenas(url: str, key: str) -> dict | None:
 
 def _get_truenas_rest(url: str, key: str) -> dict | None:
     """Legacy REST API fallback (deprecated in TrueNAS 26.04)."""
-    from .base import _http_get
-
     import httpx
+
+    from .base import _http_get
 
     hdrs = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
     base = url.rstrip("/")
     result = {"apps": [], "alerts": [], "vms": [], "status": "offline"}
     try:
-        for app in _http_get(f"{base}/api/v2.0/app", hdrs):
+        for app in _http_get(f"{base}/api/v2.0/app", hdrs, category="nas"):
             result["apps"].append({"name": app.get("name", "?"), "state": app.get("state", "?")})
-        for alert in _http_get(f"{base}/api/v2.0/alert/list", hdrs):
+        for alert in _http_get(f"{base}/api/v2.0/alert/list", hdrs, category="nas"):
             if alert.get("level") in ("WARNING", "CRITICAL") and not alert.get("dismissed"):
                 result["alerts"].append({
                     "level": alert.get("level"),
                     "text": alert.get("formatted", "Unknown Alert"),
                 })
         try:
-            for vm in _http_get(f"{base}/api/v2.0/vm", hdrs):
+            for vm in _http_get(f"{base}/api/v2.0/vm", hdrs, category="nas"):
                 result["vms"].append({
                     "id": vm.get("id"),
                     "name": vm.get("name", "?"),
@@ -219,8 +220,9 @@ def _get_truenas_rest(url: str, key: str) -> dict | None:
         except (httpx.HTTPError, KeyError, ValueError) as e:
             logger.warning("TrueNAS VM fetch (REST fallback): %s", e)
         result["status"] = "online"
-    except (httpx.HTTPError, KeyError, ValueError):
-        pass
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        logger.debug("TrueNAS REST fallback failed: %s", exc)
+        result["error"] = "Connection failed"
     return result
 
 
@@ -231,10 +233,8 @@ def cleanup_stale_connections() -> None:
         stale = [url for url, info in _ws_cache.items()
                  if now - info.get("last_used", 0) > _CACHE_EXPIRY]
         for url in stale:
-            try:
+            with suppress(Exception):
                 _ws_cache[url]["ws"].close()
-            except Exception:
-                pass
             del _ws_cache[url]
         if stale:
             logger.debug("Cleaned %d stale TrueNAS WebSocket connections", len(stale))

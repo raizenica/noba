@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useApi } from '../../composables/useApi'
@@ -35,6 +37,7 @@ const endpointCount = ref(null)
 onMounted(async () => {
   tickRelative()
   tickInterval = setInterval(tickRelative, 1000)
+  fetchHealthScore()
   try {
     const eps = await get('/api/endpoints')
     endpointCount.value = Array.isArray(eps) ? eps.length : null
@@ -47,8 +50,11 @@ onUnmounted(() => {
 
 async function fetchHealthScore() {
   try {
-    healthScore.value = await get('/api/health-score')
-  } catch { /* silent */ }
+    const result = await get('/api/health-score')
+    healthScore.value = result
+  } catch (e) {
+    console.warn('[HealthScoreGauge] fetch failed:', e.message || e)
+  }
 }
 
 function infraScoreColor(score) {

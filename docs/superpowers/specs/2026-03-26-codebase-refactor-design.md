@@ -507,7 +507,7 @@ dependency detected at runtime — unchanged.
 #### Test targets
 
 Proxmox VE nodes (pve01, pve02) — full agent functionality including metric
-reporting, command execution, and terminal. dnsa01 (Raspberry Pi 5) — RDP
+reporting, command execution, and terminal. host-a (Raspberry Pi 5) — RDP
 capture and input injection via Mutter D-Bus.
 
 ---

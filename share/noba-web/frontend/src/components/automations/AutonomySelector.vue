@@ -1,5 +1,7 @@
+<!-- Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved. -->
+<!-- NOBA Command Center — Licensed under Apache 2.0. -->
 <script setup>
-const model = defineModel({ default: 'execute' })
+const model = defineModel({ type: String, default: 'execute' })
 const levels = [
   { value: 'execute',  label: 'Execute',  desc: 'Run immediately',        icon: 'fa-bolt',  color: 'var(--success)' },
   { value: 'approve',  label: 'Approve',  desc: 'Queue for approval',     icon: 'fa-clock', color: 'var(--warning)' },

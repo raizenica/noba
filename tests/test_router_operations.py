@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Integration tests for the operations router (share/noba-web/server/routers/operations.py)."""
 from __future__ import annotations
 
@@ -713,7 +716,13 @@ class TestProcessesCurrent:
 # ===========================================================================
 
 class TestExportAnsible:
-    """GET /api/export/ansible — admin only."""
+    """GET /api/export/ansible — operator+ (read-only from cache).
+    POST /api/export/ansible — operator+ (with optional discovery).
+
+    Tightened from viewer → operator in the honesty-gap sweep: an Ansible
+    playbook reveals full infrastructure topology (hostnames, services,
+    ports, paths) which is an info-disclosure risk for viewer accounts.
+    """
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/ansible")
@@ -751,20 +760,38 @@ class TestExportAnsible:
         # hostname should be passed as 5th positional arg or keyword
         assert "myhost" in str(call_kwargs)
 
+    def test_post_discover_viewer_returns_403(self, client, viewer_headers):
+        resp = client.post("/api/export/ansible",
+                           json={"discover": True}, headers=viewer_headers)
+        assert resp.status_code == 403
+
+    def test_post_discover_operator_can_access(self, client, operator_headers):
+        with patch("server.iac_export.generate_ansible",
+                   return_value="---\n"):
+            resp = client.post("/api/export/ansible",
+                               json={"discover": True}, headers=operator_headers)
+        assert resp.status_code == 200
+
 
 # ===========================================================================
 # GET /api/export/docker-compose  (operator+)
 # ===========================================================================
 
 class TestExportDockerCompose:
-    """GET /api/export/docker-compose — admin only, hostname required."""
+    """GET /api/export/docker-compose — operator+ (read-only from cache).
+    POST /api/export/docker-compose — operator+ (with optional discovery).
+
+    Tightened from viewer → operator — a docker-compose file reveals full
+    container topology and must not be readable by viewer-role accounts.
+    """
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/docker-compose?hostname=h1")
         assert resp.status_code == 401
 
     def test_viewer_returns_403(self, client, viewer_headers):
-        resp = client.get("/api/export/docker-compose?hostname=h1", headers=viewer_headers)
+        resp = client.get("/api/export/docker-compose?hostname=h1",
+                          headers=viewer_headers)
         assert resp.status_code == 403
 
     def test_operator_can_access(self, client, operator_headers):
@@ -798,14 +825,20 @@ class TestExportDockerCompose:
 # ===========================================================================
 
 class TestExportShell:
-    """GET /api/export/shell — admin only, hostname required."""
+    """GET /api/export/shell — operator+ (read-only from cache).
+    POST /api/export/shell — operator+ (with optional discovery).
+
+    Tightened from viewer → operator — a shell provisioning script
+    reveals hostnames, installed packages, and service paths.
+    """
 
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/export/shell?hostname=h1")
         assert resp.status_code == 401
 
     def test_viewer_returns_403(self, client, viewer_headers):
-        resp = client.get("/api/export/shell?hostname=h1", headers=viewer_headers)
+        resp = client.get("/api/export/shell?hostname=h1",
+                          headers=viewer_headers)
         assert resp.status_code == 403
 
     def test_operator_can_access(self, client, operator_headers):

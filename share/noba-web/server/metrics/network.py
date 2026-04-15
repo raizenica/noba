@@ -1,3 +1,6 @@
+# Copyright (c) 2024-2026 Kevin Van Nieuwenhove. All rights reserved.
+# NOBA Command Center — Licensed under Apache 2.0.
+
 """Noba – Network interfaces, connections, monitoring, VPN."""
 from __future__ import annotations
 
@@ -8,7 +11,6 @@ import time
 import psutil
 
 from .util import _fmt_bytes, _run, validate_ip
-
 
 logger = logging.getLogger("noba")
 
@@ -227,8 +229,8 @@ def check_device_presence(ips: list[str]) -> list[dict]:
 
 # ── Certificate expiry ────────────────────────────────────────────────────────
 def check_cert_expiry(hosts: list[str]) -> list[dict]:
-    import ssl
     import socket as _socket
+    import ssl
     from datetime import datetime, timezone
     results = []
     for host in hosts:
