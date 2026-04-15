@@ -44,7 +44,7 @@ jobs:
             install.sh Dockerfile docker-compose.yml \
             README.md LICENSE CHANGELOG.md CONTRIBUTING.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: noba-tarball
           path: noba-*.tar.gz
@@ -71,7 +71,7 @@ jobs:
           sed -i "s/^Version:.*/Version:        ${V}/" noba.spec
           rpmbuild -ba noba.spec
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: noba-rpm
           path: ~/rpmbuild/RPMS/noarch/
@@ -136,7 +136,7 @@ jobs:
 
           dpkg-deb --build ${PKG}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: noba-deb
           path: noba_*.deb
@@ -193,7 +193,7 @@ jobs:
           chown -R builder:builder .
           su builder -c "makepkg -sf --noconfirm"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: noba-arch
           path: noba-*.pkg.tar.zst
